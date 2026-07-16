@@ -88,9 +88,10 @@ an ADR in `docs/adr/`.
 
 | Area | Decision |
 |---|---|
-| Language | Go 1.24+. Binary and module both named `drift` |
+| Language | Go 1.24+. Binary and module both named `drift`. `go.mod` pins the floor at 1.24, not whatever toolchain is installed |
+| Layout | Entry point at root `main.go`; packages under `internal/` (`internal/git` is the Git layer). `internal/` makes them unimportable outside the module, which is right for an app binary — no `pkg/` public API this tool has no reason to offer |
 | TUI framework | Bubble Tea, with Lip Gloss for styling and Bubbles for text input |
-| Git access | Shell out via `os/exec`, parse machine-readable output (`for-each-ref`, `status --porcelain`, `rev-list --count`). No Git library — this is how lazygit works and is the fastest path |
+| Git access | Shell out via `os/exec`, parse machine-readable output (`for-each-ref`, `status --porcelain`, `rev-list --count`). No Git library — this is how lazygit works and is the fastest path. Every call takes a `context.Context`, so a hung `fetch` is cancellable from the UI |
 | State | Elm-style `Model`/`Update`/`View`. Git calls run as async `Cmd`s so the UI never blocks; results return as messages |
 | Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets + unmergeable globs, hand-edited) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free |
 | Config resolution | A **search path**, today holding exactly one entry: `<.git>/drift/config.json`. Local-only, because the author has no rights to commit repo-wide files. Defining it as a search path now makes a committed team-wide config a purely additive change later, with no migration |
@@ -140,4 +141,3 @@ type Store struct { Tickets []Ticket }
 - The author's real `Target` refs for their own `config.json` (any count).
 - The workflow directory path, and confirmation of the `.uwe` glob, for the author's
   own config (area 4).
-- Confirm targets compare as `origin/<name>` post-fetch (recommended) vs local refs.
