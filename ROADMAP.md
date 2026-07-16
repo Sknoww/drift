@@ -17,8 +17,8 @@ Status: ✅ shipped · 🛠️ in progress · ⏳ next · ⏸️ deferred
 Dependency-ordered. Each row is a coming session's headline — one line on what it
 is; link its spec/ADR once one exists.
 
-1. ⏳ **Git wrapper layer** — small `os/exec` shell-outs returning structured data.
-   No checkouts, no Git library:
+1. ✅ **Git wrapper layer** — `internal/git`. Small `os/exec` shell-outs returning
+   structured data. No checkouts, no Git library:
    - `localBranches()` — `git for-each-ref --format=%(refname:short) refs/heads`
    - `currentBranch()` — `git branch --show-current` (`""` if detached)
    - `isDirty()` — `git status --porcelain` non-empty. Note: working-tree dirty
