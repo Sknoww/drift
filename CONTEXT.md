@@ -93,9 +93,9 @@ an ADR in `docs/adr/`.
 | TUI framework | Bubble Tea, with Lip Gloss for styling and Bubbles for text input |
 | Git access | Shell out via `os/exec`, parse machine-readable output (`for-each-ref`, `status --porcelain`, `rev-list --count`). No Git library — this is how lazygit works and is the fastest path. Every call takes a `context.Context`, so a hung `fetch` is cancellable from the UI |
 | State | Elm-style `Model`/`Update`/`View`. Git calls run as async `Cmd`s so the UI never blocks; results return as messages |
-| Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets + unmergeable globs, hand-edited) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free |
+| Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets + unmergeable globs) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free. `config.json` is always hand-editable and Drift never rewrites one that exists, but hand-editing is not the *only* way in: a first-run wizard seeds targets from real refs (roadmap area 4), and the placeholder is the fallback for when it's declined or unavailable |
 | Config resolution | A **search path**, today holding exactly one entry: `<.git>/drift/config.json`. Local-only, because the author has no rights to commit repo-wide files. Defining it as a search path now makes a committed team-wide config a purely additive change later, with no migration |
-| Grouping | **Manual pairing.** Ticket ID substring-matches candidate branches to pre-filter; the user confirms and assigns targets. Branch naming is inconsistent, so target is **never** parsed from the branch name. Optional pattern-based *pre-assignment* for teams with rigid conventions is deferred (roadmap area 8) and would still never be silent |
+| Grouping | **Manual pairing.** Ticket ID substring-matches candidate branches to pre-filter; the user confirms and assigns targets. Branch naming is inconsistent, so target is **never** parsed from the branch name. Optional pattern-based *pre-assignment* for teams with rigid conventions is deferred (roadmap area 9) and would still never be silent |
 | Invocation | Run from inside the repo, lazygit-style |
 | Backend | None. The core is fully local and offline; Jira and GitLab are deferred, optional lookup sources only |
 | Build target | macOS primary; Linux/Windows fine (Bubble Tea is cross-platform, so not a constraint) |
@@ -140,4 +140,4 @@ type Store struct { Tickets []Ticket }
 
 - The author's real `Target` refs for their own `config.json` (any count).
 - The workflow directory path, and confirmation of the `.uwe` glob, for the author's
-  own config (area 4).
+  own config (area 5).

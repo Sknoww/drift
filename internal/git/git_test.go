@@ -259,6 +259,69 @@ func TestFetchAndAheadBehindAgainstRemote(t *testing.T) {
 	}
 }
 
+func TestGitDir(t *testing.T) {
+	dir := newRepo(t)
+
+	got, err := New(dir).GitDir(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("GitDir() = %q, want an absolute path", got)
+	}
+	if filepath.Base(got) != ".git" {
+		t.Errorf("GitDir() = %q, want it to end in .git", got)
+	}
+	if _, err := os.Stat(got); err != nil {
+		t.Errorf("GitDir() = %q, which does not exist: %v", got, err)
+	}
+}
+
+func TestGitDirFromSubdirectory(t *testing.T) {
+	// Drift is invoked from wherever the user is standing, not the repo root.
+	dir := newRepo(t)
+	sub := filepath.Join(dir, "nested", "deeper")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	want, err := New(dir).GitDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := New(sub).GitDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("GitDir() from a subdirectory = %q, want %q", got, want)
+	}
+}
+
+func TestGitDirInWorktree(t *testing.T) {
+	// The case that justifies asking git instead of joining <root>/.git: in a
+	// linked worktree .git is a file, and the real git dir lives elsewhere.
+	dir := newRepo(t)
+	wt := filepath.Join(t.TempDir(), "linked")
+	git(t, dir, "worktree", "add", "--quiet", "-b", "wt-branch", wt)
+
+	got, err := New(wt).GitDir(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == filepath.Join(wt, ".git") {
+		t.Errorf("GitDir() in a worktree = %q, but .git there is a file, not the git dir", got)
+	}
+	info, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("GitDir() = %q, which does not exist: %v", got, err)
+	}
+	if !info.IsDir() {
+		t.Errorf("GitDir() = %q, want a directory", got)
+	}
+}
+
 func TestErrorsOutsideARepo(t *testing.T) {
 	dir := t.TempDir() // not a repo
 	r := New(dir)

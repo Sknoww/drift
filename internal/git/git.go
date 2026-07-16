@@ -131,3 +131,14 @@ func (r *Repo) Fetch(ctx context.Context) error {
 	_, err := r.run(ctx, "fetch", "--quiet")
 	return err
 }
+
+// GitDir reports the absolute path of the repository's git directory. Asking
+// git rather than joining <root>/.git is what makes this correct in a linked
+// worktree or a submodule, where .git is a file pointing elsewhere.
+func (r *Repo) GitDir(ctx context.Context) (string, error) {
+	out, err := r.run(ctx, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
