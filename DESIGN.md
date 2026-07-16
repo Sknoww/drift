@@ -20,27 +20,43 @@ the home row. "Looks like raw text output" is a bug.
   The selected row is a highlighted band. 📝 Pin actual Lip Gloss colors on first
   build.
 - **Panels** — Lip Gloss bordered and titled. 📝 Border style + title placement TBD.
-- **Density** — a ticket is one row; expanding it lists its 2–3 branches one per row
-  beneath. The whole point is seeing a ticket's fan-out without scrolling.
+- **Density** — a ticket is one row; expanding it lists its branches one per row
+  beneath, one per target it aims at. Seeing a ticket's whole fan-out without
+  scrolling is the point — but the target count is config-driven and unbounded, so
+  "fits on screen" is a goal, not an invariant. An expanded ticket whose fan-out
+  overflows must scroll gracefully rather than break the layout.
 - **Status cluster** — per branch: target label · `↓behind ↑ahead` · dirty dot ·
-  checked-out marker. Fixed order, aligned into columns so the eye scans down.
+  checked-out marker. Fixed order, aligned into columns so the eye scans down. The
+  target label is **variable width** — column widths are computed from the config's
+  longest `Target.Key`, never hardcoded.
 
 **The Model holds:** loaded `Config` + `Store`; current screen; cursor position; which
 ticket is expanded; a computed status map keyed by `ticketID + branch`; a
 `textinput.Model`; add-flow state; window size; last error.
 
 **Screens:** Dashboard (tickets, selected one expanded to its branches) · Add ticket
-(ID entry) · Add ticket (pairing checklist).
+(ID entry) · Add ticket (pairing checklist, with the target picker as an overlay on
+top of it).
 
 ## 2. Components 📝
 
 - **Ticket row** — ID, optional title, collapsed/expanded affordance.
 - **Branch row** — branch name + the status cluster above.
-- **Candidate checklist** (add flow) — space toggles; a number/cycle key assigns the
-  target per selected branch. Must make "which target does this map to?" unmissable —
-  an unassigned selection is an error state, since the software never guesses.
-- **Diff panel** (area 4) — the `.uwe` incoming diff, styled, read-only. This panel
-  is the replacement for opening GitLab; it earns real polish.
+- **Candidate checklist** (add flow) — space toggles a branch. Must make "which target
+  does this map to?" unmissable — an unassigned selection is an error state, since the
+  software never guesses.
+- **Target picker overlay** ✅ — the general mechanism for assigning a target to a
+  selected candidate branch. The original number/cycle-key idea assumed three targets
+  and does not survive an unbounded config: number keys run out at 9, and cycling
+  through 12 targets to reach the last one is miserable. The picker lists every
+  configured target in config order, showing `Key` and `Ref` so the choice is
+  unambiguous when keys are terse. Number keys stay as an accelerator for the first 9
+  (see §3) — the picker is the mechanism, numbers are the shortcut. Because targets are
+  unbounded, the overlay scrolls and never assumes its list fits.
+- **Diff panel** (area 4) — the incoming diff for an unmergeable file, styled,
+  read-only. This panel is the replacement for opening the web UI to hunt for changes;
+  it earns real polish. **Plain text for every unmergeable format, always** —
+  format-specific rendering is a different product and explicitly out of scope.
 
 ## 3. Motion & interaction 📝
 
@@ -57,7 +73,21 @@ detail. Dashboard:
 | `f` | Fetch, then refresh |
 | `q` / `ctrl+c` | Quit |
 
-Add flow: `space` toggles a candidate, `enter` saves, `esc` cancels.
+Add flow (pairing checklist):
+
+| Key | Action |
+|---|---|
+| `j` / `k` / arrows | Move |
+| `space` | Toggle candidate branch |
+| `t` | Open the target picker for the selected candidate |
+| `1`–`9` | Accelerator: assign the Nth configured target directly, no picker |
+| `enter` | Save |
+| `esc` | Cancel |
+
+Target picker overlay: `j` / `k` move, `enter` selects, `esc` cancels — deliberately
+the same shape as the dashboard, so the overlay needs no learning. Targets past the
+9th are reachable only through the picker, which is exactly why it's the mechanism and
+the number keys are only a shortcut.
 
 Git work runs as async `Cmd`s, so every one of these stays responsive — the UI must
 never freeze on a fetch. 📝 Loading/empty/error states TBD: at minimum an empty

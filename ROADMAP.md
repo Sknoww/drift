@@ -27,20 +27,35 @@ is; link its spec/ADR once one exists.
    - `candidateBranches(ticketID)` — local branches containing the ID, case-insensitive
    - `fetch()` — `git fetch --quiet`, so ahead/behind reflects the server
 2. ⏳ **Config & store** — `Config`/`Store` types and JSON persistence under
-   `<.git>/drift/`. First run writes a placeholder `config.json` marked "edit me"
-   and prints its path.
+   `<.git>/drift/`, resolved through the config search path (`CONTEXT.md`). First run
+   writes a placeholder `config.json` marked "edit me" and prints its path. Targets are
+   a list of any length; the placeholder must not imply otherwise.
 3. ⏳ **Dashboard + manual pairing + status** — add/list/delete tickets, pair
    candidate branches to targets, show per-branch dirty + `↓behind ↑ahead`. This is
    the minimum useful tool: ship it and dogfood it while building the rest.
-4. ⏳ **`.uwe` detection + diff panel** — after a fetch, flag each `.uwe` file that
-   changed upstream on its target *and* has local edits, and show that exact diff.
-   Replaces the "open GitLab and hunt for what changed" step. Non-`.uwe` changes
-   merge normally and are never surfaced.
+4. ⏳ **Unmergeable detection + diff panel** — resolve the unmergeable set via the
+   hybrid rule in `CONTEXT.md` (`git check-attr merge` first, config globs additive).
+   After a fetch, flag each unmergeable file that changed upstream on its target *and*
+   has local edits, and show that exact diff, plain text. Replaces the "open the web UI
+   and hunt for what changed" step. Mergeable changes merge normally and are never
+   surfaced. Includes writing the `-merge` attribute on request, to either
+   `.gitattributes` or `$GIT_DIR/info/attributes` at the user's choice.
 5. ⏳ **One-key shelve sequence** — stash → merge target main → pop, as one keypress
-   per branch. Stops and hands back to the web app the moment a `.uwe` conflict
-   appears; the reconciliation itself stays manual, always.
+   per branch. Stops and hands back the moment an unmergeable conflict appears; the
+   reconciliation itself stays manual, always.
 6. ⏸️ **Jira lookup** — deferred. Optional prefill (ticket title) and discovery
    ("assigned to me"). Slots in as a pure lookup source; the core must never depend
    on it and must work fully offline with hand-typed IDs.
-7. ⏸️ **GitLab API (MR/pipeline status)** — deferred. Never a foundation: the `.uwe`
-   diff comes from local Git after a fetch, so the core needs no GitLab access.
+7. ⏸️ **GitLab API (MR/pipeline status)** — deferred. Never a foundation: the
+   unmergeable diff comes from local Git after a fetch, so the core needs no GitLab
+   access.
+8. ⏸️ **Pattern-based target pre-assignment** — deferred. For teams with rigid branch
+   naming (unlike the author's), let config map name patterns to targets so the add
+   flow arrives pre-filled. Strictly an accelerator on the pairing checklist: the user
+   still confirms, and an unmatched branch stays unassigned rather than guessed.
+   Manual pairing (area 3) remains the mechanism underneath.
+9. ⏸️ **Unmergeable handoff command** — deferred. Let each unmergeable class in config
+   name an external command (open the workflow web app, `open -a Unity`, launch Power
+   BI). Drift will never reconcile these files — that's permanent — but it can compress
+   "stop, find the right tool, hunt for what changed" into one keypress that shows the
+   diff and launches the tool. Extends areas 4/5; never a prerequisite for them.
