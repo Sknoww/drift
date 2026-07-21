@@ -108,3 +108,15 @@ is; link its spec/ADR once one exists.
     BI). Drift will never reconcile these files — that's permanent — but it can compress
     "stop, find the right tool, hunt for what changed" into one keypress that shows the
     diff and launches the tool. Extends areas 5/7; never a prerequisite for them.
+12. ⏸️ **Custom keymaps** — deferred. Rebind any action via a user-global
+    `~/.config/drift/keymap.json` (XDG), added as a user-global entry on the config
+    search path — the additive move the search path was designed for. Defaults are a
+    considered starting point, not sacred; an override rebinds any action, and an action
+    left unbound keeps its default.
+    - **The structural half is not deferred:** every screen dispatches on a *named
+      action*, never a key literal, starting with the dashboard (area 3). That makes
+      customization a pure override layer instead of a retrofit — see `DESIGN.md` §3
+    - Conflicts (two actions bound to one key) are surfaced, never silently shadowed —
+      the same "never guess" rule as pairing
+    - Drift's first config outside `<.git>/drift/`; keymaps are per-user, so a per-repo
+      home would be the wrong scope

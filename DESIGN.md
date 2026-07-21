@@ -60,8 +60,12 @@ top of it).
 
 ## 3. Motion & interaction 📝
 
-**The keymap is a contract** — these bindings are a decision, not an implementation
-detail. Dashboard:
+**Named actions are the contract; keys are a rebindable default.** The *actions* below
+(move, expand, add, fetch, `local_only`…) are the stable interface every screen
+dispatches on — never a raw key literal, so customization is a pure override layer and
+not a retrofit. The default **keys** are considered, not sacred: a user-global keymap
+(area 12) can rebind any action, and any action left unbound keeps the default here.
+Dashboard:
 
 | Key | Action |
 |---|---|
