@@ -53,7 +53,7 @@ top of it).
   unambiguous when keys are terse. Number keys stay as an accelerator for the first 9
   (see §3) — the picker is the mechanism, numbers are the shortcut. Because targets are
   unbounded, the overlay scrolls and never assumes its list fits.
-- **Diff panel** (area 4) — the incoming diff for an unmergeable file, styled,
+- **Diff panel** (area 5) — the incoming diff for an unmergeable file, styled,
   read-only. This panel is the replacement for opening the web UI to hunt for changes;
   it earns real polish. **Plain text for every unmergeable format, always** —
   format-specific rendering is a different product and explicitly out of scope.
@@ -71,6 +71,7 @@ detail. Dashboard:
 | `d` | Delete selected ticket |
 | `r` | Refresh statuses |
 | `f` | Fetch, then refresh |
+| `l` | Manage local-only changes (area 6) |
 | `q` / `ctrl+c` | Quit |
 
 Add flow (pairing checklist):

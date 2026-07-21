@@ -66,22 +66,45 @@ is; link its spec/ADR once one exists.
    and hunt for what changed" step. Mergeable changes merge normally and are never
    surfaced. Includes writing the `-merge` attribute on request, to either
    `.gitattributes` or `$GIT_DIR/info/attributes` at the user's choice.
-6. ⏳ **One-key shelve sequence** — stash → merge target main → pop, as one keypress
+6. ⏳ **Local-only changes** — a first-class, *visible* manager for changes you keep on
+   this machine but never commit: logging tweaks, local config, scratch files. A mix of
+   tracked and untracked paths under one list. Spec: `docs/specs/local-only-changes.md`.
+   - **Tracked** paths → `git update-index --skip-worktree`; **untracked** paths → a
+     drift-fenced block in `$GIT_DIR/info/exclude`. Drift routes each path by whether Git
+     tracks it — the user marks a change, never a mechanism
+   - **Git's own flags are the source of truth**, exactly as with unmergeables: list via
+     `git ls-files -v` (the `S` tag) plus the fenced exclude block; the store holds only
+     a per-path note. Drift can never fall out of sync, and Git stays correct when drift
+     isn't running
+   - The whole win over raw `skip-worktree` is **visibility** — the flag hides a file from
+     `git status`, so people forget it exists. Drift surfaces the held set so it's never lost
+   - Repo/worktree-global by nature: `skip-worktree` is an index flag, not per-branch —
+     exactly right for "keep my log tweak on every branch I check out"
+   - New area-1 calls: set/clear skip-worktree, list `ls-files -v`, a name-only
+     changed-files diff for area 7's collision check. Exclude I/O is file-level, off `gitDir()`
+7. ⏳ **One-key shelve sequence** — stash → merge target main → pop, as one keypress
    per branch. Stops and hands back the moment an unmergeable conflict appears; the
    reconciliation itself stays manual, always.
-7. ⏸️ **Jira lookup** — deferred. Optional prefill (ticket title) and discovery
+   - **Rides local-only changes through untouched.** Plain `git stash` (no `-u`) ignores
+     skip-worktree files and untracked files, so both survive stash → merge → pop with no
+     re-apply step — the auto-preserve area 6 promises
+   - **The one collision it must catch:** before merging, intersect the incoming
+     changed-file set with the held set. If the target main changed a file you hold locally,
+     halt *before* the merge and surface it — same shape as an unmergeable handoff, never a
+     silent clobber. No collision → fully automatic
+8. ⏸️ **Jira lookup** — deferred. Optional prefill (ticket title) and discovery
    ("assigned to me"). Slots in as a pure lookup source; the core must never depend
    on it and must work fully offline with hand-typed IDs.
-8. ⏸️ **GitLab API (MR/pipeline status)** — deferred. Never a foundation: the
+9. ⏸️ **GitLab API (MR/pipeline status)** — deferred. Never a foundation: the
    unmergeable diff comes from local Git after a fetch, so the core needs no GitLab
    access.
-9. ⏸️ **Pattern-based target pre-assignment** — deferred. For teams with rigid branch
-   naming (unlike the author's), let config map name patterns to targets so the add
-   flow arrives pre-filled. Strictly an accelerator on the pairing checklist: the user
-   still confirms, and an unmatched branch stays unassigned rather than guessed.
-   Manual pairing (area 3) remains the mechanism underneath.
-10. ⏸️ **Unmergeable handoff command** — deferred. Let each unmergeable class in config
+10. ⏸️ **Pattern-based target pre-assignment** — deferred. For teams with rigid branch
+    naming (unlike the author's), let config map name patterns to targets so the add
+    flow arrives pre-filled. Strictly an accelerator on the pairing checklist: the user
+    still confirms, and an unmatched branch stays unassigned rather than guessed.
+    Manual pairing (area 3) remains the mechanism underneath.
+11. ⏸️ **Unmergeable handoff command** — deferred. Let each unmergeable class in config
     name an external command (open the workflow web app, `open -a Unity`, launch Power
     BI). Drift will never reconcile these files — that's permanent — but it can compress
     "stop, find the right tool, hunt for what changed" into one keypress that shows the
-    diff and launches the tool. Extends areas 5/6; never a prerequisite for them.
+    diff and launches the tool. Extends areas 5/7; never a prerequisite for them.

@@ -78,6 +78,35 @@ choice**, and both destinations are first-class:
 Either destination means Drift teaches Git the constraint rather than routing around
 it, so Git behaves correctly even when Drift isn't running.
 
+## Local-only changes (first-class concept)
+
+Full rules: [`docs/specs/local-only-changes.md`](./docs/specs/local-only-changes.md).
+Some working-tree changes belong on **this machine only** and must never reach a commit
+— a bumped log level in a committed config, a local `docker-compose.override.yml`, a
+scratch script. IntelliJ change lists solve this inside the IDE, and that boundary is
+the weakness: a terminal `git commit -am`, CI, or a teammate's tooling ignores them.
+Drift sits above Git, so it holds these with Git's **own** primitives — protection that
+stops at no boundary — and then does what raw Git can't: makes the held set **visible**.
+
+The design copies the unmergeable decision's shape exactly:
+
+- **Two primitives, routed by whether Git tracks the path.** Tracked →
+  `git update-index --skip-worktree`; untracked → a Drift-fenced block in
+  `$GIT_DIR/info/exclude`. The user marks a change, never a mechanism.
+- **Git's own flags are the source of truth**, never a Drift registry: held-tracked is
+  read from `git ls-files -v` (the `S` tag), held-untracked from the fenced exclude
+  block. The store persists only a per-path note, which can never contradict Git and is
+  reconciled away if orphaned. As with unmergeables, Git stays correct when Drift isn't
+  running.
+- **Repo/worktree-global, not per-branch** — `skip-worktree` is an index flag, and one
+  worktree has one index. That is the use case ("keep my log tweak on every branch"),
+  not a limitation; the UI must not imply per-branch scope.
+- **Rides the shelve sequence untouched.** Plain `git stash` (no `-u`) ignores
+  skip-worktree and untracked files, so both survive stash → merge → pop with no
+  re-apply. The one hazard — the target main changed a file you hold locally — is caught
+  *before* the merge by intersecting the incoming changed-file set with the held set,
+  then surfaced like an unmergeable handoff. Drift never clobbers it silently.
+
 ---
 
 ## Architecture decisions
@@ -95,7 +124,7 @@ an ADR in `docs/adr/`.
 | State | Elm-style `Model`/`Update`/`View`. Git calls run as async `Cmd`s so the UI never blocks; results return as messages |
 | Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets + unmergeable globs) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free. `config.json` is always hand-editable and Drift never rewrites one that exists, but hand-editing is not the *only* way in: a first-run wizard seeds targets from real refs (roadmap area 4), and the placeholder is the fallback for when it's declined or unavailable |
 | Config resolution | A **search path**, today holding exactly one entry: `<.git>/drift/config.json`. Local-only, because the author has no rights to commit repo-wide files. Defining it as a search path now makes a committed team-wide config a purely additive change later, with no migration |
-| Grouping | **Manual pairing.** Ticket ID substring-matches candidate branches to pre-filter; the user confirms and assigns targets. Branch naming is inconsistent, so target is **never** parsed from the branch name. Optional pattern-based *pre-assignment* for teams with rigid conventions is deferred (roadmap area 9) and would still never be silent |
+| Grouping | **Manual pairing.** Ticket ID substring-matches candidate branches to pre-filter; the user confirms and assigns targets. Branch naming is inconsistent, so target is **never** parsed from the branch name. Optional pattern-based *pre-assignment* for teams with rigid conventions is deferred (roadmap area 10) and would still never be silent |
 | Invocation | Run from inside the repo, lazygit-style |
 | Backend | None. The core is fully local and offline; Jira and GitLab are deferred, optional lookup sources only |
 | Build target | macOS primary; Linux/Windows fine (Bubble Tea is cross-platform, so not a constraint) |
@@ -127,7 +156,19 @@ type Ticket struct {
     Title    string // optional; a later Jira lookup could fill this
     Branches []TicketBranch
 }
-type Store struct { Tickets []Ticket }
+
+// LocalOnly — annotation for a path held back from commits. Git's own flags decide
+// *whether* a path is held (skip-worktree bit for tracked, info/exclude for untracked);
+// this records only the human context, reconciled against Git on load so it can never
+// contradict reality. Kind (tracked/untracked) is derived at read time, never stored.
+type LocalOnly struct {
+    Path string // repo-relative
+    Note string // why it's held, e.g. "debug log level" — optional
+}
+type Store struct {
+    Tickets   []Ticket
+    LocalOnly []LocalOnly // flat, repo-global — never tied to a ticket
+}
 ```
 
 **Ahead/behind is the key signal**, computed per branch against the fresh
