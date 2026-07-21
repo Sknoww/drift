@@ -23,7 +23,10 @@ the home row. "Looks like raw text output" is a bug.
   `border/faint 240`, `selected band bg 236`, `error 203`.
 - **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
   title (`drift`) sits on its own line above the panel, with the checked-out branch or
-  a refresh spinner to its right.
+  a refresh spinner to its right. The panel spans the **full terminal width** (computed
+  in `screenView` from the window size less the app/panel frame), so every screen —
+  and the area-5 diff panel to come — shares one full-width layout rather than a snug
+  content-sized box. Before the first `WindowSizeMsg` it falls back to content sizing.
 - **Density** — a ticket is one row; expanding it lists its branches one per row
   beneath, one per target it aims at. Seeing a ticket's whole fan-out without
   scrolling is the point — but the target count is config-driven and unbounded, so
@@ -79,6 +82,7 @@ Dashboard:
 | `d` | Delete selected ticket |
 | `r` | Refresh statuses |
 | `f` | Fetch, then refresh |
+| `esc` | Cancel an in-flight fetch (no-op when idle) |
 | `l` | Manage local-only changes (area 6) |
 | `q` / `ctrl+c` | Quit |
 
@@ -103,5 +107,10 @@ never freeze on a fetch. States ✅ (built with the dashboard): a **loading** sp
 in the header while a status sweep is in flight; an **empty** dashboard that teaches
 how to seed tickets; a one-line **error/notice** row under the panel that surfaces a
 failed sweep (or a stale-status warning after a failed fetch) without tearing down the
-view. 📝 Still open: a fetch is async but not yet *cancellable* (no esc-to-cancel a
-hung fetch), and the selection band hugs its text rather than spanning the row.
+view. ✅ (polish closing area 3): `esc` **cancels an in-flight fetch** — the git
+process is killed (the fetch runs on a cancellable context) and its now-stale sweep is
+discarded via a monotonic sweep id, so a hung fetch never traps the user. A plain
+refresh is local and fast, so it stays non-cancellable. The **selection band fills the
+panel's full inner width** (which now spans the terminal — see §1 Panels) rather than
+hugging its text; the band width is applied once every row is built (`selectBand` in
+`view.go`).

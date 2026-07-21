@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"drift/internal/git"
 	"drift/internal/store"
@@ -54,7 +55,7 @@ func TestDefaultDashboardKeysCoverTable(t *testing.T) {
 		"j": ActionMoveDown, "k": ActionMoveUp,
 		"enter": ActionToggleExpand, " ": ActionToggleExpand,
 		"a": ActionAdd, "d": ActionDelete,
-		"r": ActionRefresh, "f": ActionFetch,
+		"r": ActionRefresh, "f": ActionFetch, "esc": ActionCancel,
 		"l": ActionLocalOnly, "q": ActionQuit, "ctrl+c": ActionQuit,
 	}
 	for key, action := range want {
@@ -411,7 +412,116 @@ func TestApplyStatusFetchErrorSurfaces(t *testing.T) {
 	}
 }
 
+func TestApplyStatusDropsStaleSweep(t *testing.T) {
+	m := newModel()
+	m.sweepID = 5 // a newer sweep is the one we're waiting on
+	got := m.applyStatus(statusMsg{id: 3, current: "old", err: context.Canceled})
+	if got.current == "old" {
+		t.Error("a superseded sweep was folded in")
+	}
+	if got.err != nil {
+		t.Error("a superseded sweep's error surfaced")
+	}
+}
+
+// --- cancellable fetch ----------------------------------------------------
+
+func TestFetchIsCancellable(t *testing.T) {
+	m := newModel()
+
+	next, cmd := m.startSweep(true)
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("fetch returned no command")
+	}
+	if m.fetchCancel == nil || !m.loading {
+		t.Fatalf("fetch not marked in-flight: cancel=%v loading=%v", m.fetchCancel != nil, m.loading)
+	}
+	if !strings.Contains(m.notice, "esc to cancel") {
+		t.Errorf("fetch notice should advertise cancel: %q", m.notice)
+	}
+	fetchID := m.sweepID
+
+	// esc cancels: spinner stops, fetch is released, a notice explains.
+	next, _ = m.dispatch(ActionCancel)
+	m = next.(Model)
+	if m.fetchCancel != nil {
+		t.Error("cancel left the fetch in-flight")
+	}
+	if m.loading {
+		t.Error("cancel did not stop the spinner")
+	}
+	if !strings.Contains(m.notice, "cancel") {
+		t.Errorf("cancel notice = %q", m.notice)
+	}
+
+	// The cancelled fetch's sweep, landing late, must not clobber state.
+	got := m.applyStatus(statusMsg{id: fetchID, current: "stale", err: context.Canceled})
+	if got.current == "stale" || got.err != nil {
+		t.Errorf("cancelled sweep folded in: current=%q err=%v", got.current, got.err)
+	}
+}
+
+func TestEscIsNoOpWithoutFetch(t *testing.T) {
+	// esc on an idle dashboard has nothing to cancel.
+	next, cmd := newModel().dispatch(ActionCancel)
+	m := next.(Model)
+	if cmd != nil {
+		t.Error("idle esc issued a command")
+	}
+	if m.notice != "" || m.loading {
+		t.Errorf("idle esc changed state: notice=%q loading=%v", m.notice, m.loading)
+	}
+}
+
+func TestRefreshIsNotCancellable(t *testing.T) {
+	// A plain refresh is local and fast; esc must not abort it.
+	next, _ := newModel().startSweep(false)
+	m := next.(Model)
+	if m.fetchCancel != nil {
+		t.Fatal("plain refresh should not be cancellable")
+	}
+	next, _ = m.dispatch(ActionCancel)
+	if !next.(Model).loading {
+		t.Error("esc during a refresh aborted it")
+	}
+}
+
 // --- view -----------------------------------------------------------------
+
+func TestSelectBandSpansWidestRow(t *testing.T) {
+	m := newModel()
+	rows := []string{"short", "a decidedly longer row", "mid"}
+
+	out := m.selectBand(rows, 0)
+	if got, want := lipgloss.Width(out[0]), lipgloss.Width(rows[1]); got != want {
+		t.Errorf("band width = %d, want the widest row's %d", got, want)
+	}
+	if out[2] != rows[2] {
+		t.Error("selectBand disturbed a non-selected row")
+	}
+
+	// No active selection leaves every row untouched.
+	none := m.selectBand(rows, -1)
+	for i := range rows {
+		if none[i] != rows[i] {
+			t.Errorf("selectBand(-1) changed row %d", i)
+		}
+	}
+}
+
+func TestSelectBandFillsPanelWidth(t *testing.T) {
+	m := newModel()
+	m.width = 80 // once the size is known, the band fills the whole panel
+	rows := []string{"short", "a mid row"}
+	if m.contentWidth() <= lipgloss.Width(rows[1]) {
+		t.Fatal("precondition: an 80-col panel should exceed this content")
+	}
+	out := m.selectBand(rows, 0)
+	if got, want := lipgloss.Width(out[0]), m.contentWidth(); got != want {
+		t.Errorf("band width = %d, want the panel's inner width %d", got, want)
+	}
+}
 
 func TestViewEmptyStateTeaches(t *testing.T) {
 	m := New(git.New(t_nowhere), sampleConfig(), store.Store{})

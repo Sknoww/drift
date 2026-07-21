@@ -8,6 +8,8 @@
 package ui
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,6 +57,14 @@ type Model struct {
 	loading bool
 	spin    spinner.Model
 
+	// sweepID monotonically tags each status sweep; a sweep whose result carries
+	// a stale id (superseded by a newer sweep, or cancelled) is discarded rather
+	// than folded in. fetchCancel kills the in-flight fetch's git process — set
+	// only while a fetch is running, nil otherwise, so it doubles as "a fetch is
+	// in flight" and gates esc-to-cancel.
+	sweepID     int
+	fetchCancel context.CancelFunc
+
 	width, height int
 
 	notice string // transient one-line hint or error under the panel
@@ -100,6 +110,6 @@ func widestTargetKey(cfg store.Config) int {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spin.Tick,
-		loadStatusCmd(m.repo, m.cfg, m.store.Tickets),
+		loadStatusCmd(context.Background(), m.repo, m.cfg, m.store.Tickets, m.sweepID),
 	)
 }

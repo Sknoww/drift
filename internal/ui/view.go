@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"drift/internal/store"
 )
 
@@ -21,12 +23,18 @@ func (m Model) View() string {
 }
 
 // screenView is the shared frame — header, a bordered panel, an optional status
-// line, and a help line — so every screen sits in the same chrome.
+// line, and a help line — so every screen sits in the same chrome. The panel
+// spans the full terminal width so every screen (and the area-5 diff panel to
+// come) shares one full-width layout rather than a snug content-sized box.
 func (m Model) screenView(panel, help string) string {
 	var b strings.Builder
 	b.WriteString(m.header())
 	b.WriteString("\n")
-	b.WriteString(m.styles.panel.Render(panel))
+	panelStyle := m.styles.panel
+	if cw := m.contentWidth(); cw > 0 {
+		panelStyle = panelStyle.Width(cw)
+	}
+	b.WriteString(panelStyle.Render(panel))
 	b.WriteString("\n")
 	if line := m.statusLine(); line != "" {
 		b.WriteString(line)
@@ -69,8 +77,12 @@ func (m Model) body() string {
 	nameWidth := m.branchNameWidth()
 
 	var rows []string
+	selected := -1
 	for i, t := range m.store.Tickets {
-		rows = append(rows, m.ticketRow(i, t))
+		if i == m.cursor {
+			selected = len(rows) // the ticket headline is the selectable row
+		}
+		rows = append(rows, m.ticketRow(t))
 
 		// The delete confirmation is an inline prompt under its ticket, so the
 		// user sees exactly what is about to go.
@@ -89,7 +101,46 @@ func (m Model) body() string {
 			}
 		}
 	}
-	return strings.Join(rows, "\n")
+	return strings.Join(m.selectBand(rows, selected), "\n")
+}
+
+// contentWidth is the panel's inner content width: the terminal width less the
+// app padding and the panel's border+padding. It is the span a full-width panel
+// and its selection band fill. Returns 0 before the first WindowSizeMsg (size
+// still unknown), signalling callers to fall back to natural content sizing.
+func (m Model) contentWidth() int {
+	if m.width == 0 {
+		return 0
+	}
+	w := m.width - m.styles.app.GetHorizontalFrameSize() - m.styles.panel.GetHorizontalFrameSize()
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
+// selectBand highlights rows[selected] as a band filling the panel's full inner
+// width, so the selection reads as a row rather than hugging its text
+// (DESIGN.md §3). Before the size is known it falls back to the widest row. A
+// selected index outside the slice leaves every row untouched — screens with no
+// active selection pass -1.
+func (m Model) selectBand(rows []string, selected int) []string {
+	if selected < 0 || selected >= len(rows) {
+		return rows
+	}
+	w := 0
+	for _, r := range rows {
+		if lw := lipgloss.Width(r); lw > w {
+			w = lw
+		}
+	}
+	if cw := m.contentWidth(); cw > w {
+		w = cw // fill the whole panel, not just up to the widest row
+	}
+	out := make([]string, len(rows))
+	copy(out, rows)
+	out[selected] = m.styles.ticketSel.Width(w).Render(rows[selected])
+	return out
 }
 
 func (m Model) emptyState() string {
@@ -101,8 +152,9 @@ func (m Model) emptyState() string {
 }
 
 // ticketRow renders one ticket headline: expand affordance, ID, optional title.
-// The selected row carries a highlighted band.
-func (m Model) ticketRow(i int, t store.Ticket) string {
+// The selection band is applied by the caller (selectBand) once every row's
+// width is known, so this only produces the row's content.
+func (m Model) ticketRow(t store.Ticket) string {
 	affordance := "▸"
 	if m.expanded[t.ID] {
 		affordance = "▾"
@@ -111,10 +163,6 @@ func (m Model) ticketRow(i int, t store.Ticket) string {
 	line := affordance + " " + t.ID
 	if t.Title != "" {
 		line += "  " + t.Title
-	}
-
-	if i == m.cursor {
-		return m.styles.ticketSel.Render(line)
 	}
 	return m.styles.ticket.Render(line)
 }
@@ -239,8 +287,9 @@ func (m Model) pairingBody() string {
 	}
 
 	lines = append(lines, "")
+	head := len(lines) // first candidate row; the cursor indexes from here
 	nameWidth := m.candidateNameWidth()
-	for i, c := range m.add.candidates {
+	for _, c := range m.add.candidates {
 		box := "[ ]"
 		if c.included {
 			box = "[x]"
@@ -255,13 +304,9 @@ func (m Model) pairingBody() string {
 			}
 		}
 
-		line := fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign)
-		if i == m.add.cursor {
-			line = m.styles.ticketSel.Render(line)
-		}
-		lines = append(lines, line)
+		lines = append(lines, fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(m.selectBand(lines, head+m.add.cursor), "\n")
 }
 
 // pickerBody lists every configured target for the selected candidate, showing
@@ -271,19 +316,16 @@ func (m Model) pickerBody() string {
 	cand := m.add.candidates[m.add.cursor].branch
 	lines := []string{m.styles.hint.Render("Target for " + cand), ""}
 
+	head := len(lines) // first target row; pickerCur indexes from here
 	for i, t := range m.cfg.Targets {
 		acc := "  "
 		if i < 9 {
 			acc = fmt.Sprintf("%d ", i+1)
 		}
-		line := fmt.Sprintf("%s %s  %s",
-			m.styles.help.Render(acc), padRight(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref))
-		if i == m.add.pickerCur {
-			line = m.styles.ticketSel.Render(line)
-		}
-		lines = append(lines, line)
+		lines = append(lines, fmt.Sprintf("%s %s  %s",
+			m.styles.help.Render(acc), padRight(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref)))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(m.selectBand(lines, head+m.add.pickerCur), "\n")
 }
 
 // candidateNameWidth is the widest candidate branch name, capped so a single

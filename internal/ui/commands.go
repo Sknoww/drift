@@ -20,6 +20,7 @@ type branchStatus struct {
 // computes the whole map so the view flips from "refreshing" to "current" in a
 // single frame rather than filling in row by row.
 type statusMsg struct {
+	id       int    // the sweepID this result belongs to; a stale id is discarded
 	current  string // checked-out branch, "" when detached
 	dirty    bool   // working-tree dirty — a property of the checked-out branch alone
 	byKey    map[string]branchStatus
@@ -63,19 +64,27 @@ func saveStateCmd(repo *git.Repo, st store.Store) tea.Cmd {
 }
 
 // loadStatusCmd sweeps every tracked branch against its target without fetching.
-// It backs the refresh action and the initial load.
-func loadStatusCmd(repo *git.Repo, cfg store.Config, tickets []store.Ticket) tea.Cmd {
+// It backs the refresh action and the initial load. The ctx is background for a
+// plain refresh (local and fast, nothing to cancel); id tags the result so a
+// superseded sweep is discarded.
+func loadStatusCmd(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []store.Ticket, id int) tea.Cmd {
 	return func() tea.Msg {
-		return sweep(context.Background(), repo, cfg, tickets, false)
+		msg := sweep(ctx, repo, cfg, tickets, false)
+		msg.id = id
+		return msg
 	}
 }
 
 // fetchThenLoadCmd fetches remote-tracking refs first, then sweeps, so
 // ahead/behind reflects the server. A failed fetch does not abort the sweep —
 // stale-but-shown beats blank, and fetchErr tells the user the numbers are old.
-func fetchThenLoadCmd(repo *git.Repo, cfg store.Config, tickets []store.Ticket) tea.Cmd {
+// The ctx is cancellable so esc can abort a hung fetch; id tags the result so
+// the cancelled sweep's message is dropped.
+func fetchThenLoadCmd(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []store.Ticket, id int) tea.Cmd {
 	return func() tea.Msg {
-		return sweep(context.Background(), repo, cfg, tickets, true)
+		msg := sweep(ctx, repo, cfg, tickets, true)
+		msg.id = id
+		return msg
 	}
 }
 

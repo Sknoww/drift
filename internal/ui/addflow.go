@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -243,11 +244,12 @@ func (m Model) savePairing() (tea.Model, tea.Cmd) {
 	m.notice = "added " + ticket.ID
 
 	// Persist, and sweep so the new ticket's rows get their ahead/behind.
+	m, id := m.supersedeSweeps()
 	m.loading = true
 	return m, tea.Batch(
 		m.spin.Tick,
 		saveStateCmd(m.repo, m.store),
-		loadStatusCmd(m.repo, m.cfg, m.store.Tickets),
+		loadStatusCmd(context.Background(), m.repo, m.cfg, m.store.Tickets, id),
 	)
 }
 

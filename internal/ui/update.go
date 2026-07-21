@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -84,8 +86,17 @@ func (m Model) activeKeys() Keymap {
 	}
 }
 
-// applyStatus folds a completed sweep into the model.
+// applyStatus folds a completed sweep into the model. A result carrying a stale
+// id — its sweep was superseded by a newer one, or cancelled mid-fetch — is
+// dropped so a slow or hung fetch can never clobber current state.
 func (m Model) applyStatus(msg statusMsg) Model {
+	if msg.id != m.sweepID {
+		return m
+	}
+	if m.fetchCancel != nil {
+		m.fetchCancel() // this sweep landed; release the fetch context
+		m.fetchCancel = nil
+	}
 	m.loading = false
 	m.err = msg.err
 	if msg.byKey != nil {
@@ -158,6 +169,9 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 	case ActionDelete:
 		return m.beginDelete()
 
+	case ActionCancel:
+		return m.cancelFetch(), nil
+
 	case ActionLocalOnly:
 		m.notice = "local-only changes arrive in area 6"
 		return m, nil
@@ -166,16 +180,44 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 }
 
 // startSweep flips into the loading state and fires the right sweep Cmd,
-// re-arming the spinner alongside it.
+// re-arming the spinner alongside it. Only the fetch path is cancellable — a
+// plain refresh is local and fast, so it runs on a background context.
 func (m Model) startSweep(fetch bool) (tea.Model, tea.Cmd) {
+	m, id := m.supersedeSweeps()
 	m.loading = true
 	m.notice = ""
-	sweep := loadStatusCmd(m.repo, m.cfg, m.store.Tickets)
 	if fetch {
-		m.notice = "fetching…"
-		sweep = fetchThenLoadCmd(m.repo, m.cfg, m.store.Tickets)
+		ctx, cancel := context.WithCancel(context.Background())
+		m.fetchCancel = cancel
+		m.notice = "fetching… (esc to cancel)"
+		return m, tea.Batch(m.spin.Tick, fetchThenLoadCmd(ctx, m.repo, m.cfg, m.store.Tickets, id))
 	}
-	return m, tea.Batch(m.spin.Tick, sweep)
+	return m, tea.Batch(m.spin.Tick, loadStatusCmd(context.Background(), m.repo, m.cfg, m.store.Tickets, id))
+}
+
+// supersedeSweeps invalidates any in-flight sweep and returns the id the next
+// sweep Cmd must stamp. It cancels a running fetch (killing its git process) and
+// bumps sweepID so the old sweep's result is discarded on arrival.
+func (m Model) supersedeSweeps() (Model, int) {
+	if m.fetchCancel != nil {
+		m.fetchCancel()
+		m.fetchCancel = nil
+	}
+	m.sweepID++
+	return m, m.sweepID
+}
+
+// cancelFetch aborts an in-flight fetch and hands control back at once: the git
+// process is killed and its now-stale sweep discarded, so a hung fetch never
+// traps the user. A no-op when no fetch is running (esc on an idle dashboard).
+func (m Model) cancelFetch() Model {
+	if m.fetchCancel == nil {
+		return m
+	}
+	m, _ = m.supersedeSweeps() // cancels + bumps sweepID so the result is dropped
+	m.loading = false
+	m.notice = "fetch canceled"
+	return m
 }
 
 // selectedTicket returns the ticket the cursor points at.

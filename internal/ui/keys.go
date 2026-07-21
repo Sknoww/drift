@@ -99,6 +99,7 @@ func DefaultDashboardKeys() Keymap {
 		"d":      ActionDelete,
 		"r":      ActionRefresh,
 		"f":      ActionFetch,
+		"esc":    ActionCancel, // aborts an in-flight fetch; a no-op otherwise
 		"l":      ActionLocalOnly,
 		"q":      ActionQuit,
 		"ctrl+c": ActionQuit,
