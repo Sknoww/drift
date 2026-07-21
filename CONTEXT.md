@@ -117,9 +117,9 @@ an ADR in `docs/adr/`.
 
 | Area | Decision |
 |---|---|
-| Language | Go 1.24+. Binary and module both named `drift`. `go.mod` pins the floor at 1.24, not whatever toolchain is installed |
-| Layout | Entry point at root `main.go`; packages under `internal/` (`internal/git` is the Git layer). `internal/` makes them unimportable outside the module, which is right for an app binary — no `pkg/` public API this tool has no reason to offer |
-| TUI framework | Bubble Tea, with Lip Gloss for styling and Bubbles for text input |
+| Language | Go 1.24+. Binary and module both named `drift`. The `go.mod` floor tracks the **minimum the chosen stack requires** — 1.24.2 today, raised there by the Charm libraries' own `go.mod` directives, not by the installed toolchain (1.26). The point stands: the floor is never bumped just because a newer toolchain is installed |
+| Layout | Entry point at root `main.go`; packages under `internal/` (`internal/git` is the Git layer, `internal/store` the config/state layer, `internal/ui` the Bubble Tea dashboard). `internal/` makes them unimportable outside the module, which is right for an app binary — no `pkg/` public API this tool has no reason to offer |
+| TUI framework | Bubble Tea, with Lip Gloss for styling and Bubbles for text input. Pinned to the **v1 line** (bubbletea v1.3.x, lipgloss v1.x, bubbles v1.0.x); the v2 tags are still pre-release |
 | Git access | Shell out via `os/exec`, parse machine-readable output (`for-each-ref`, `status --porcelain`, `rev-list --count`). No Git library — this is how lazygit works and is the fastest path. Every call takes a `context.Context`, so a hung `fetch` is cancellable from the UI |
 | State | Elm-style `Model`/`Update`/`View`. Git calls run as async `Cmd`s so the UI never blocks; results return as messages |
 | Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets + unmergeable globs) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free. `config.json` is always hand-editable and Drift never rewrites one that exists, but hand-editing is not the *only* way in: a first-run wizard seeds targets from real refs (roadmap area 4), and the placeholder is the fallback for when it's declined or unavailable |

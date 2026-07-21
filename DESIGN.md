@@ -12,14 +12,18 @@ the home row. "Looks like raw text output" is a bug.
 
 ---
 
-## 1. Foundations 📝
+## 1. Foundations 🚧
 
-- **Color roles** — meaning first, palette later. `behind > 0` is the one alarm that
-  matters (the target main moved under me) and reads as a warning color; `ahead` is
-  neutral. Dirty is a dot, not a color shift. The checked-out branch gets a marker.
-  The selected row is a highlighted band. 📝 Pin actual Lip Gloss colors on first
-  build.
-- **Panels** — Lip Gloss bordered and titled. 📝 Border style + title placement TBD.
+- **Color roles** ✅ — meaning first. `behind > 0` is the one alarm that matters (the
+  target main moved under me) and reads as a warning; `ahead` is neutral. Dirty is a
+  dot, not a color shift. The checked-out branch gets a marker. The selected row is a
+  highlighted band. Pinned on the first build (ANSI-256, in `internal/ui/styles.go`,
+  a considered-not-sacred starting point): `warning 214` (behind), `neutral 245`
+  (ahead / in-sync), `dirty dot 220`, `checked-out marker 39`, `title 39`,
+  `border/faint 240`, `selected band bg 236`, `error 203`.
+- **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
+  title (`drift`) sits on its own line above the panel, with the checked-out branch or
+  a refresh spinner to its right.
 - **Density** — a ticket is one row; expanding it lists its branches one per row
   beneath, one per target it aims at. Seeing a ticket's whole fan-out without
   scrolling is the point — but the target count is config-driven and unbounded, so
@@ -95,6 +99,9 @@ the same shape as the dashboard, so the overlay needs no learning. Targets past 
 the number keys are only a shortcut.
 
 Git work runs as async `Cmd`s, so every one of these stays responsive — the UI must
-never freeze on a fetch. 📝 Loading/empty/error states TBD: at minimum an empty
-dashboard needs to teach "press `a`", and a failed Git call needs to say so without
-tearing down the view.
+never freeze on a fetch. States ✅ (built with the dashboard): a **loading** spinner
+in the header while a status sweep is in flight; an **empty** dashboard that teaches
+how to seed tickets; a one-line **error/notice** row under the panel that surfaces a
+failed sweep (or a stale-status warning after a failed fetch) without tearing down the
+view. 📝 Still open: a fetch is async but not yet *cancellable* (no esc-to-cancel a
+hung fetch), and the selection band hugs its text rather than spanning the row.

@@ -40,9 +40,19 @@ is; link its spec/ADR once one exists.
      rewrites a config that exists, including a broken one
    - `LoadState()` / `SaveState()` — no `state.json` yet is an empty `Store`, not an
      error. Writes are atomic via temp-file + rename
-3. ⏳ **Dashboard + manual pairing + status** — add/list/delete tickets, pair
+3. 🛠️ **Dashboard + manual pairing + status** — add/list/delete tickets, pair
    candidate branches to targets, show per-branch dirty + `↓behind ↑ahead`. This is
    the minimum useful tool: ship it and dogfood it while building the rest.
+   - ✅ **Dashboard (read side)** — `internal/ui`, Bubble Tea. Ticket list, expand →
+     branch rows, async status sweep (dirty + `↓behind ↑ahead` vs each target),
+     `r` refresh / `f` fetch-then-refresh, empty + error states. Named-action dispatch
+     is in place from day one (`keys.go`), so area 12 is a pure override, not a retrofit
+   - ⏳ **Add / pair / delete (write side)** — ID entry → pairing checklist → target
+     picker overlay + `1`–`9` accelerators; `d` delete → `SaveState`. `a`/`d`/`l`
+     are bound and announce their status until built
+   - ⏳ **Polish carried over** — fetch is async (UI never blocks) but not yet
+     cancellable (no esc-to-cancel a hung fetch); the selection band hugs its text
+     rather than spanning the row width
 4. ⏳ **First-run setup wizard** — on first run in an unconfigured repo, pick the target
    mains from the repo's own refs and write `config.json`, instead of handing the user
    a JSON file to edit. Reuses area 3's picker; same rule as pairing — show real things,

@@ -1,8 +1,9 @@
 // Command drift is a terminal UI that organizes Git work by ticket.
 //
-// The Bubble Tea dashboard lands in roadmap area 3. Until then main is a smoke
-// check over the layers below it: run it inside a repo to see the git wrapper
-// and the store working.
+// It loads the per-repo config and state, then hands off to the Bubble Tea
+// dashboard (internal/ui). An unconfigured repo is not an error: drift points
+// the user at the config file to edit and exits, since a first-run wizard
+// (roadmap area 4) is not built yet.
 package main
 
 import (
@@ -11,8 +12,11 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"drift/internal/git"
 	"drift/internal/store"
+	"drift/internal/ui"
 )
 
 func main() {
@@ -44,32 +48,7 @@ func run() error {
 		return err
 	}
 
-	branch, err := repo.CurrentBranch(ctx)
-	if err != nil {
-		return err
-	}
-	if branch == "" {
-		branch = "(detached)"
-	}
-	dirty, err := repo.IsDirty(ctx)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("on %s (dirty: %t)\n", branch, dirty)
-	fmt.Printf("config: %s\n", paths.Config)
-
-	fmt.Printf("%d target(s):\n", len(cfg.Targets))
-	for _, t := range cfg.Targets {
-		fmt.Printf("  %s -> %s\n", t.Key, t.Ref)
-	}
-
-	fmt.Printf("%d tracked ticket(s):\n", len(state.Tickets))
-	for _, t := range state.Tickets {
-		fmt.Printf("  %s %s\n", t.ID, t.Title)
-		for _, b := range t.Branches {
-			fmt.Printf("    %s -> %s\n", b.Branch, b.TargetKey)
-		}
-	}
-	return nil
+	prog := tea.NewProgram(ui.New(repo, cfg, state), tea.WithAltScreen())
+	_, err = prog.Run()
+	return err
 }
