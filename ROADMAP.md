@@ -47,9 +47,10 @@ is; link its spec/ADR once one exists.
      branch rows, async status sweep (dirty + `↓behind ↑ahead` vs each target),
      `r` refresh / `f` fetch-then-refresh, empty + error states. Named-action dispatch
      is in place from day one (`keys.go`), so area 12 is a pure override, not a retrofit
-   - ⏳ **Add / pair / delete (write side)** — ID entry → pairing checklist → target
-     picker overlay + `1`–`9` accelerators; `d` delete → `SaveState`. `a`/`d`/`l`
-     are bound and announce their status until built
+   - ✅ **Add / pair / delete (write side)** — ID entry → pairing checklist → target
+     picker overlay + `1`–`9` accelerators; `d` delete behind a `y/n` confirm →
+     `SaveState`. Included-but-unassigned branches block the save (never a guessed
+     target); a bare ticket is allowed. `l` stays bound and announces until area 6
    - ⏳ **Polish carried over** — fetch is async (UI never blocks) but not yet
      cancellable (no esc-to-cancel a hung fetch); the selection band hugs its text
      rather than spanning the row width

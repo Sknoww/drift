@@ -9,10 +9,23 @@ package ui
 
 import (
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"drift/internal/git"
 	"drift/internal/store"
+)
+
+// screen is the surface the UI is currently on. The dashboard is the home;
+// the add flow and delete confirmation are transient screens the model returns
+// from to the dashboard. Every screen dispatches on named actions (keys.go).
+type screen int
+
+const (
+	screenDashboard     screen = iota
+	screenAddID                // add flow: ticket ID entry
+	screenPairing              // add flow: candidate checklist (+ picker overlay)
+	screenConfirmDelete        // y/n confirm before dropping a ticket
 )
 
 // Model is the whole dashboard state. The status map is keyed by
@@ -23,11 +36,17 @@ type Model struct {
 	cfg   store.Config
 	store store.Store
 
-	keys   Keymap
+	keys   keymaps
 	styles styles
+
+	screen screen
 
 	cursor   int             // index into cfg-ordered tickets; the selected ticket
 	expanded map[string]bool // ticket ID -> whether its branches are shown
+
+	input         textinput.Model // ticket ID entry, live only on screenAddID
+	add           addFlow         // pairing state, live only on screenPairing
+	pendingDelete string          // ticket ID awaiting delete confirmation
 
 	status  map[string]branchStatus
 	current string // checked-out branch, "" when detached
@@ -54,7 +73,7 @@ func New(repo *git.Repo, cfg store.Config, st store.Store) Model {
 		repo:           repo,
 		cfg:            cfg,
 		store:          st,
-		keys:           DefaultDashboardKeys(),
+		keys:           defaultKeymaps(),
 		styles:         newStyles(),
 		expanded:       make(map[string]bool),
 		status:         make(map[string]branchStatus),

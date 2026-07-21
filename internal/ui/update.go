@@ -8,8 +8,8 @@ import (
 )
 
 // Update is the single event sink. Key presses are resolved to a named action
-// through the keymap before anything happens, so no branch here ever tests a raw
-// key — that indirection is what makes area 12 a pure override.
+// through the active screen's keymap before anything happens, so no branch here
+// ever tests a raw key — that indirection is what makes area 12 a pure override.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -27,13 +27,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		return m.applyStatus(msg), nil
 
-	case tea.KeyMsg:
-		if action, ok := m.keys.action(msg.String()); ok {
-			return m.dispatch(action)
+	case candidatesMsg:
+		return m.applyCandidates(msg), nil
+
+	case saveStateMsg:
+		if msg.err != nil {
+			m.notice = "save failed: " + msg.err.Error()
 		}
 		return m, nil
+
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	}
+
+	// On the ID-entry screen, everything else (cursor blink) drives the input.
+	if m.screen == screenAddID {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
 	return m, nil
+}
+
+// handleKey resolves a key through the active screen's keymap. On the ID-entry
+// screen a key that binds to no action is a keystroke for the text input.
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.screen == screenAddID {
+		if action, ok := m.keys.addID.action(msg.String()); ok {
+			return m.dispatch(action)
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+	if action, ok := m.activeKeys().action(msg.String()); ok {
+		return m.dispatch(action)
+	}
+	return m, nil
+}
+
+// activeKeys is the keymap for the current screen — the picker overlay shadows
+// the pairing keymap while it is open.
+func (m Model) activeKeys() Keymap {
+	switch m.screen {
+	case screenAddID:
+		return m.keys.addID
+	case screenPairing:
+		if m.add.picker {
+			return m.keys.picker
+		}
+		return m.keys.pairing
+	case screenConfirmDelete:
+		return m.keys.confirmDelete
+	default:
+		return m.keys.dashboard
+	}
 }
 
 // applyStatus folds a completed sweep into the model.
@@ -57,13 +105,29 @@ func (m Model) applyStatus(msg statusMsg) Model {
 	return m
 }
 
-// dispatch runs one named action. Actions whose screens are not built yet report
-// where they are headed rather than doing nothing silently.
+// dispatch runs one named action, routed to the current screen. Quit is the one
+// action that means the same thing everywhere, so it is handled up front.
 func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
-	switch action {
-	case ActionQuit:
+	if action == ActionQuit {
 		return m, tea.Quit
+	}
+	switch m.screen {
+	case screenAddID:
+		return m.dispatchAddID(action)
+	case screenPairing:
+		return m.dispatchPairing(action)
+	case screenConfirmDelete:
+		return m.dispatchConfirmDelete(action)
+	default:
+		return m.dispatchDashboard(action)
+	}
+}
 
+// dispatchDashboard runs one named action on the home screen. Actions whose
+// screens are not built yet report where they are headed rather than doing
+// nothing silently.
+func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
+	switch action {
 	case ActionMoveUp:
 		if m.cursor > 0 {
 			m.cursor--
@@ -89,12 +153,10 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 		return m.startSweep(true)
 
 	case ActionAdd:
-		m.notice = "add ticket arrives next session — hand-edit state.json to seed tickets for now"
-		return m, nil
+		return m.beginAdd()
 
 	case ActionDelete:
-		m.notice = "delete arrives next session"
-		return m, nil
+		return m.beginDelete()
 
 	case ActionLocalOnly:
 		m.notice = "local-only changes arrive in area 6"

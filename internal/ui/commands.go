@@ -33,6 +33,35 @@ func statusKey(ticketID, branch string) string {
 	return ticketID + "\x00" + branch
 }
 
+// candidatesMsg carries a completed candidate-branch scan back into Update. The
+// id is echoed so a scan that lands after the flow moved on can be discarded.
+type candidatesMsg struct {
+	id       string
+	branches []string
+	err      error
+}
+
+// loadCandidatesCmd lists the local branches whose name contains the ticket ID,
+// off the UI thread. The user still confirms every match — this only pre-filters.
+func loadCandidatesCmd(repo *git.Repo, id string) tea.Cmd {
+	return func() tea.Msg {
+		got, err := repo.CandidateBranches(context.Background(), id)
+		return candidatesMsg{id: id, branches: got, err: err}
+	}
+}
+
+// saveStateMsg reports the result of persisting state.json.
+type saveStateMsg struct{ err error }
+
+// saveStateCmd writes the store to disk asynchronously. The in-memory model is
+// already updated by the time this runs; a failure is surfaced as a notice so
+// the user can retry rather than lose the edit silently.
+func saveStateCmd(repo *git.Repo, st store.Store) tea.Cmd {
+	return func() tea.Msg {
+		return saveStateMsg{err: store.SaveState(context.Background(), repo, st)}
+	}
+}
+
 // loadStatusCmd sweeps every tracked branch against its target without fetching.
 // It backs the refresh action and the initial load.
 func loadStatusCmd(repo *git.Repo, cfg store.Config, tickets []store.Ticket) tea.Cmd {

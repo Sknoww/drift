@@ -112,15 +112,271 @@ func TestDispatchQuit(t *testing.T) {
 	}
 }
 
-func TestDispatchUnbuiltActionsAnnounce(t *testing.T) {
-	for _, a := range []Action{ActionAdd, ActionDelete, ActionLocalOnly} {
-		next, cmd := newModel().dispatch(a)
-		if cmd != nil {
-			t.Errorf("%s: expected no command", a)
+func TestDispatchLocalOnlyAnnounces(t *testing.T) {
+	// local-only is still ahead (area 6); it must say where it's headed rather
+	// than do nothing.
+	next, cmd := newModel().dispatch(ActionLocalOnly)
+	if cmd != nil {
+		t.Error("local-only: expected no command")
+	}
+	if next.(Model).notice == "" {
+		t.Error("local-only: expected a notice explaining where it's headed")
+	}
+}
+
+// --- add flow -------------------------------------------------------------
+
+// pairingModel drives the model to the pairing checklist for a fresh ticket ID
+// with the given candidate branches already scanned in.
+func pairingModel(t *testing.T, id string, branches ...string) Model {
+	t.Helper()
+	m := newModel()
+
+	next, _ := m.dispatch(ActionAdd)
+	m = next.(Model)
+	if m.screen != screenAddID {
+		t.Fatalf("ActionAdd: screen = %v, want screenAddID", m.screen)
+	}
+
+	m.input.SetValue(id)
+	next, cmd := m.dispatch(ActionConfirm)
+	m = next.(Model)
+	if m.screen != screenPairing {
+		t.Fatalf("confirm ID: screen = %v, want screenPairing", m.screen)
+	}
+	if cmd == nil {
+		t.Fatal("confirm ID: expected a candidate-scan command")
+	}
+	return m.applyCandidates(candidatesMsg{id: id, branches: branches})
+}
+
+func TestAddIDRejectsEmptyAndDuplicate(t *testing.T) {
+	m := newModel()
+	next, _ := m.dispatch(ActionAdd)
+	m = next.(Model)
+
+	// Empty ID stays on the entry screen with a hint.
+	m.input.SetValue("   ")
+	next, _ = m.dispatch(ActionConfirm)
+	if got := next.(Model); got.screen != screenAddID || got.notice == "" {
+		t.Errorf("empty ID: screen=%v notice=%q, want stay + notice", got.screen, got.notice)
+	}
+
+	// An ID that already exists is refused.
+	m.input.SetValue("ABC-1")
+	next, _ = m.dispatch(ActionConfirm)
+	if got := next.(Model); got.screen != screenAddID || !strings.Contains(got.notice, "already tracked") {
+		t.Errorf("duplicate ID: screen=%v notice=%q, want stay + already-tracked", got.screen, got.notice)
+	}
+}
+
+func TestApplyCandidatesDropsStaleScan(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+	// A scan for a different ID (user moved on) must not overwrite the flow.
+	got := m.applyCandidates(candidatesMsg{id: "OTHER-1", branches: []string{"x", "y"}})
+	if len(got.add.candidates) != 1 || got.add.candidates[0].branch != "new-9-a" {
+		t.Errorf("stale scan applied: %+v", got.add.candidates)
+	}
+}
+
+func TestPairingAssignAndSave(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-perf", "new-9-main")
+
+	// Accelerator 1 assigns the first configured target (r2perf) to candidate 0.
+	next, _ := m.dispatch(ActionPickTarget(1))
+	m = next.(Model)
+	if c := m.add.candidates[0]; !c.included || c.targetKey != "r2perf" {
+		t.Fatalf("accelerator assign: %+v", c)
+	}
+
+	// Leave candidate 1 untouched (excluded), then save.
+	next, cmd := m.dispatch(ActionConfirm)
+	m = next.(Model)
+	if m.screen != screenDashboard {
+		t.Fatalf("after save: screen = %v, want dashboard", m.screen)
+	}
+	if cmd == nil {
+		t.Fatal("after save: expected a persist+sweep command")
+	}
+
+	tk, ok := m.store.Ticket("NEW-9")
+	if !ok {
+		t.Fatal("NEW-9 not added to store")
+	}
+	if len(tk.Branches) != 1 || tk.Branches[0].Branch != "new-9-perf" || tk.Branches[0].TargetKey != "r2perf" {
+		t.Errorf("saved branches wrong: %+v", tk.Branches)
+	}
+	if m.cursor != len(m.store.Tickets)-1 {
+		t.Errorf("new ticket not selected: cursor = %d", m.cursor)
+	}
+}
+
+func TestSaveBlocksIncludedButUnassigned(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+
+	// Include the candidate without giving it a target.
+	next, _ := m.dispatch(ActionToggleCandidate)
+	m = next.(Model)
+	if !m.add.candidates[0].included {
+		t.Fatal("toggle did not include the candidate")
+	}
+
+	next, _ = m.dispatch(ActionConfirm)
+	m = next.(Model)
+	if m.screen != screenPairing {
+		t.Errorf("blocked save should stay on pairing, got %v", m.screen)
+	}
+	if !strings.Contains(m.notice, "assign a target") {
+		t.Errorf("expected assign-a-target notice, got %q", m.notice)
+	}
+	if _, ok := m.store.Ticket("NEW-9"); ok {
+		t.Error("ticket saved despite an unassigned branch")
+	}
+}
+
+func TestSaveBareTicketAllowed(t *testing.T) {
+	m := pairingModel(t, "NEW-9") // no candidate branches at all
+	next, _ := m.dispatch(ActionConfirm)
+	m = next.(Model)
+	tk, ok := m.store.Ticket("NEW-9")
+	if !ok || len(tk.Branches) != 0 {
+		t.Errorf("bare ticket not saved cleanly: ok=%v ticket=%+v", ok, tk)
+	}
+}
+
+func TestPickerAssignsChosenTarget(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+
+	next, _ := m.dispatch(ActionOpenPicker)
+	m = next.(Model)
+	if !m.add.picker {
+		t.Fatal("picker did not open")
+	}
+	// Move to the second target (main) and select it.
+	next, _ = m.dispatch(ActionMoveDown)
+	m = next.(Model)
+	next, _ = m.dispatch(ActionConfirm)
+	m = next.(Model)
+
+	if m.add.picker {
+		t.Error("picker should close on select")
+	}
+	if c := m.add.candidates[0]; !c.included || c.targetKey != "main" {
+		t.Errorf("picker assign: %+v", c)
+	}
+}
+
+func TestPickTargetOutOfRangeIsNoOp(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+	// Config has two targets; slot 5 is empty.
+	next, _ := m.dispatch(ActionPickTarget(5))
+	m = next.(Model)
+	if c := m.add.candidates[0]; c.included || c.targetKey != "" {
+		t.Errorf("out-of-range accelerator assigned a target: %+v", c)
+	}
+	if m.notice == "" {
+		t.Error("expected a notice for the empty slot")
+	}
+}
+
+func TestAddCancelReturnsHome(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+	next, _ := m.dispatch(ActionCancel)
+	m = next.(Model)
+	if m.screen != screenDashboard {
+		t.Errorf("cancel: screen = %v, want dashboard", m.screen)
+	}
+	if _, ok := m.store.Ticket("NEW-9"); ok {
+		t.Error("cancel should not persist a ticket")
+	}
+}
+
+// --- delete flow ----------------------------------------------------------
+
+func TestDeleteConfirmRemovesTicket(t *testing.T) {
+	m := newModel() // cursor on ABC-1
+
+	next, _ := m.dispatch(ActionDelete)
+	m = next.(Model)
+	if m.screen != screenConfirmDelete || m.pendingDelete != "ABC-1" {
+		t.Fatalf("begin delete: screen=%v pending=%q", m.screen, m.pendingDelete)
+	}
+
+	next, cmd := m.dispatch(ActionConfirm)
+	m = next.(Model)
+	if cmd == nil {
+		t.Error("confirmed delete should persist")
+	}
+	if _, ok := m.store.Ticket("ABC-1"); ok {
+		t.Error("ABC-1 still present after confirmed delete")
+	}
+	if m.screen != screenDashboard {
+		t.Errorf("after delete: screen = %v, want dashboard", m.screen)
+	}
+}
+
+func TestDeleteCancelKeepsTicket(t *testing.T) {
+	m := newModel()
+	next, _ := m.dispatch(ActionDelete)
+	m = next.(Model)
+	next, cmd := m.dispatch(ActionCancel)
+	m = next.(Model)
+	if cmd != nil {
+		t.Error("cancelled delete should not persist")
+	}
+	if _, ok := m.store.Ticket("ABC-1"); !ok {
+		t.Error("ABC-1 removed despite cancel")
+	}
+	if m.screen != screenDashboard || m.pendingDelete != "" {
+		t.Errorf("cancel state: screen=%v pending=%q", m.screen, m.pendingDelete)
+	}
+}
+
+// --- add/delete views -----------------------------------------------------
+
+func TestPairingViewShowsChecklistAndAssignment(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-perf", "new-9-main")
+	// Include+assign the first, include-only the second.
+	next, _ := m.dispatch(ActionPickTarget(1))
+	m = next.(Model)
+	next, _ = m.dispatch(ActionMoveDown)
+	m = next.(Model)
+	next, _ = m.dispatch(ActionToggleCandidate)
+	m = next.(Model)
+
+	out := m.View()
+	for _, want := range []string{"new-9-perf", "new-9-main", "[x]", "→ r2perf", "pick a target"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pairing view missing %q:\n%s", want, out)
 		}
-		if next.(Model).notice == "" {
-			t.Errorf("%s: expected a notice explaining where it's headed", a)
+	}
+}
+
+func TestPickerViewListsTargets(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+	next, _ := m.dispatch(ActionOpenPicker)
+	out := next.(Model).View()
+	for _, want := range []string{"Target for new-9-a", "r2perf", "origin/main"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("picker view missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestConfirmDeleteViewShowsPrompt(t *testing.T) {
+	m := newModel()
+	next, _ := m.dispatch(ActionDelete)
+	out := next.(Model).View()
+	if !strings.Contains(out, "delete ABC-1 and its 2 pairings?") {
+		t.Errorf("confirm view missing prompt:\n%s", out)
+	}
+}
+
+func TestAddIDViewShowsInput(t *testing.T) {
+	m := newModel()
+	next, _ := m.dispatch(ActionAdd)
+	if out := next.(Model).View(); !strings.Contains(out, "New ticket") {
+		t.Errorf("add-ID view missing header:\n%s", out)
 	}
 }
 
