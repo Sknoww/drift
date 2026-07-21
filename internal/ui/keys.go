@@ -31,6 +31,11 @@ const (
 	ActionCancel          Action = "cancel"           // esc: back out one screen
 	ActionToggleCandidate Action = "toggle_candidate" // space: include/exclude a candidate branch
 	ActionOpenPicker      Action = "open_picker"      // t: open the target picker for the selection
+
+	// First-run wizard action: rename the selected target's key inline. Movement,
+	// ToggleCandidate (include a ref), Confirm (save), and Cancel (decline) are
+	// shared with the pairing checklist, so the wizard needs only this one verb.
+	ActionEditKey Action = "edit_key" // e: edit the selected target's key
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -72,6 +77,7 @@ type keymaps struct {
 	pairing       Keymap
 	picker        Keymap
 	confirmDelete Keymap
+	wizard        Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -81,6 +87,7 @@ func defaultKeymaps() keymaps {
 		pairing:       DefaultPairingKeys(),
 		picker:        DefaultPickerKeys(),
 		confirmDelete: DefaultConfirmDeleteKeys(),
+		wizard:        DefaultWizardKeys(),
 	}
 }
 
@@ -157,6 +164,24 @@ func DefaultConfirmDeleteKeys() Keymap {
 		"y":      ActionConfirm,
 		"enter":  ActionConfirm,
 		"n":      ActionCancel,
+		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultWizardKeys binds the first-run wizard: a checklist of remote refs with
+// space to include one as a target, e to rename its key, enter to save, esc to
+// decline (back to the hand-edit fallback). Deliberately the same move/space/
+// enter/esc shape as the pairing checklist, so the wizard needs no learning.
+func DefaultWizardKeys() Keymap {
+	return Keymap{
+		"j":      ActionMoveDown,
+		"down":   ActionMoveDown,
+		"k":      ActionMoveUp,
+		"up":     ActionMoveUp,
+		" ":      ActionToggleCandidate,
+		"e":      ActionEditKey,
+		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
 		"ctrl+c": ActionQuit,
 	}

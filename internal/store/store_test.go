@@ -49,6 +49,60 @@ const goodConfig = `{
   ]
 }`
 
+func TestSaveConfigRoundTrips(t *testing.T) {
+	// The wizard's write path: SaveConfig lays down real targets, and a
+	// subsequent LoadConfig must read them back as a usable config — not a
+	// placeholder, and passing validation.
+	repo, _ := driftDir(t)
+	ctx := context.Background()
+
+	cfg := Config{Targets: []Target{
+		{Key: "main", Ref: "origin/main"},
+		{Key: "perf", Ref: "origin/release-perf"},
+	}}
+	if err := SaveConfig(ctx, repo, cfg); err != nil {
+		t.Fatalf("SaveConfig() = %v", err)
+	}
+
+	got, _, err := LoadConfig(ctx, repo)
+	if err != nil {
+		t.Fatalf("LoadConfig() after SaveConfig = %v, want a clean load", err)
+	}
+	if len(got.Targets) != 2 || got.Targets[0] != cfg.Targets[0] || got.Targets[1] != cfg.Targets[1] {
+		t.Errorf("round-tripped targets = %+v, want %+v", got.Targets, cfg.Targets)
+	}
+}
+
+func TestSaveConfigRejectsInvalid(t *testing.T) {
+	// SaveConfig validates before writing, so a bad target set is reported
+	// rather than persisted into a config the dashboard can't use. It must also
+	// leave no file behind for LoadConfig to later trip over.
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{"no targets", Config{}},
+		{"empty key", Config{Targets: []Target{{Key: "", Ref: "origin/main"}}}},
+		{"empty ref", Config{Targets: []Target{{Key: "main", Ref: ""}}}},
+		{"duplicate keys", Config{Targets: []Target{
+			{Key: "main", Ref: "origin/main"},
+			{Key: "main", Ref: "upstream/main"},
+		}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, dir := driftDir(t)
+			if err := SaveConfig(ctx, repo, tc.cfg); err == nil {
+				t.Fatal("SaveConfig() = nil error, want a validation error")
+			}
+			if _, err := os.Stat(filepath.Join(dir, "config.json")); !os.IsNotExist(err) {
+				t.Errorf("SaveConfig() wrote a file for an invalid config; stat err = %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadConfigFirstRunWritesPlaceholder(t *testing.T) {
 	repo, dir := driftDir(t)
 	ctx := context.Background()

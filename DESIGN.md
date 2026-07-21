@@ -43,7 +43,9 @@ ticket is expanded; a computed status map keyed by `ticketID + branch`; a
 
 **Screens:** Dashboard (tickets, selected one expanded to its branches) · Add ticket
 (ID entry) · Add ticket (pairing checklist, with the target picker as an overlay on
-top of it).
+top of it) · First-run wizard (a checklist of the repo's remote refs, each an editable
+`Key`←`Ref` row; own Bubble Tea program, runs before the dashboard when the repo is
+unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dashboard Model).
 
 ## 2. Components 📝
 

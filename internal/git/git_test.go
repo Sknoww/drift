@@ -259,6 +259,43 @@ func TestFetchAndAheadBehindAgainstRemote(t *testing.T) {
 	}
 }
 
+func TestRemoteBranches(t *testing.T) {
+	// The wizard offers these as targets, so the real shape is what matters:
+	// a clone with several branches pushed to origin, listed by their
+	// origin/<name> short form — which is exactly a Target.Ref.
+	origin := newRepo(t)
+	git(t, origin, "branch", "release-perf")
+	git(t, origin, "branch", "release-to-store")
+
+	clone := t.TempDir()
+	git(t, clone, "clone", "--quiet", origin, clone)
+	r := New(clone)
+
+	got, err := r.RemoteBranches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// origin/HEAD is a symref to the default branch, not a branch to pick — it
+	// must be filtered out.
+	want := []string{"origin/main", "origin/release-perf", "origin/release-to-store"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("RemoteBranches() = %v, want %v", got, want)
+	}
+}
+
+func TestRemoteBranchesNoRemote(t *testing.T) {
+	// A repo with no remote has nothing to offer — an empty list, not an error.
+	// main.go gates the wizard on this to fall back to the placeholder path.
+	dir := newRepo(t)
+	got, err := New(dir).RemoteBranches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("RemoteBranches() with no remote = %v, want empty", got)
+	}
+}
+
 func TestGitDir(t *testing.T) {
 	dir := newRepo(t)
 

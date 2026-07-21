@@ -236,6 +236,26 @@ func (c Config) Target(key string) (Target, bool) {
 	return Target{}, false
 }
 
+// SaveConfig writes cfg to the first entry on the search path, the same file
+// LoadConfig seeds a placeholder into. It is the first-run wizard's write path
+// (roadmap area 4): the wizard builds real targets from real refs, so Drift
+// writes the config the user would otherwise hand-edit.
+//
+// It validates before writing, so a bad set of targets (none, empty fields,
+// duplicate keys) is reported rather than persisted into a broken config. It
+// does not itself guard against overwriting a good config — callers reach it
+// only after LoadConfig has reported the repo unconfigured.
+func SaveConfig(ctx context.Context, r gitDirer, cfg Config) error {
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	paths, err := Resolve(ctx, r)
+	if err != nil {
+		return err
+	}
+	return writeJSON(paths.Config, cfg)
+}
+
 // LoadState reads state.json. A repo with no state file yet is not an error —
 // it is an empty Store, which is exactly what a repo tracking no tickets has.
 func LoadState(ctx context.Context, r gitDirer) (Store, Paths, error) {

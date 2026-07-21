@@ -31,7 +31,7 @@ func (m Model) screenView(panel, help string) string {
 	b.WriteString(m.header())
 	b.WriteString("\n")
 	panelStyle := m.styles.panel
-	if cw := m.contentWidth(); cw > 0 {
+	if cw := contentWidth(m.styles, m.width); cw > 0 {
 		panelStyle = panelStyle.Width(cw)
 	}
 	b.WriteString(panelStyle.Render(panel))
@@ -101,18 +101,22 @@ func (m Model) body() string {
 			}
 		}
 	}
-	return strings.Join(m.selectBand(rows, selected), "\n")
+	return strings.Join(selectBand(m.styles, m.width, rows, selected), "\n")
 }
 
 // contentWidth is the panel's inner content width: the terminal width less the
 // app padding and the panel's border+padding. It is the span a full-width panel
 // and its selection band fill. Returns 0 before the first WindowSizeMsg (size
 // still unknown), signalling callers to fall back to natural content sizing.
-func (m Model) contentWidth() int {
-	if m.width == 0 {
+//
+// It is a free function on (styles, width) rather than a method so the dashboard
+// and the first-run wizard (wizard.go) share one implementation of the
+// full-width frame.
+func contentWidth(s styles, width int) int {
+	if width == 0 {
 		return 0
 	}
-	w := m.width - m.styles.app.GetHorizontalFrameSize() - m.styles.panel.GetHorizontalFrameSize()
+	w := width - s.app.GetHorizontalFrameSize() - s.panel.GetHorizontalFrameSize()
 	if w < 1 {
 		return 1
 	}
@@ -123,8 +127,9 @@ func (m Model) contentWidth() int {
 // width, so the selection reads as a row rather than hugging its text
 // (DESIGN.md §3). Before the size is known it falls back to the widest row. A
 // selected index outside the slice leaves every row untouched — screens with no
-// active selection pass -1.
-func (m Model) selectBand(rows []string, selected int) []string {
+// active selection pass -1. Shared by the dashboard and the wizard, hence a free
+// function on (styles, width).
+func selectBand(s styles, width int, rows []string, selected int) []string {
 	if selected < 0 || selected >= len(rows) {
 		return rows
 	}
@@ -134,12 +139,12 @@ func (m Model) selectBand(rows []string, selected int) []string {
 			w = lw
 		}
 	}
-	if cw := m.contentWidth(); cw > w {
+	if cw := contentWidth(s, width); cw > w {
 		w = cw // fill the whole panel, not just up to the widest row
 	}
 	out := make([]string, len(rows))
 	copy(out, rows)
-	out[selected] = m.styles.ticketSel.Width(w).Render(rows[selected])
+	out[selected] = s.ticketSel.Width(w).Render(rows[selected])
 	return out
 }
 
@@ -306,7 +311,7 @@ func (m Model) pairingBody() string {
 
 		lines = append(lines, fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign))
 	}
-	return strings.Join(m.selectBand(lines, head+m.add.cursor), "\n")
+	return strings.Join(selectBand(m.styles, m.width, lines, head+m.add.cursor), "\n")
 }
 
 // pickerBody lists every configured target for the selected candidate, showing
@@ -325,7 +330,7 @@ func (m Model) pickerBody() string {
 		lines = append(lines, fmt.Sprintf("%s %s  %s",
 			m.styles.help.Render(acc), padRight(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref)))
 	}
-	return strings.Join(m.selectBand(lines, head+m.add.pickerCur), "\n")
+	return strings.Join(selectBand(m.styles, m.width, lines, head+m.add.pickerCur), "\n")
 }
 
 // candidateNameWidth is the widest candidate branch name, capped so a single

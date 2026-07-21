@@ -58,6 +58,31 @@ func (r *Repo) LocalBranches(ctx context.Context) ([]string, error) {
 	return lines(out), nil
 }
 
+// RemoteBranches lists every remote-tracking branch by its short name
+// (e.g. "origin/main"), in git's own sort order. These are the refs the
+// first-run wizard offers as targets: a target is compared against its
+// origin/<name> ref, so offering local branches would produce targets that
+// silently compare against the wrong thing (roadmap area 4).
+//
+// The "<remote>/HEAD" symref — which %(refname:short) shortens to the bare
+// remote name, e.g. "origin" — is dropped: it is a pointer to a remote's
+// default branch, not a branch to pick. Every real remote-tracking branch
+// shortens to "<remote>/<branch>", so requiring a slash filters it out.
+func (r *Repo) RemoteBranches(ctx context.Context) ([]string, error) {
+	out, err := r.run(ctx, "for-each-ref", "--format=%(refname:short)", "refs/remotes")
+	if err != nil {
+		return nil, err
+	}
+	var got []string
+	for _, b := range lines(out) {
+		if !strings.Contains(b, "/") {
+			continue
+		}
+		got = append(got, b)
+	}
+	return got, nil
+}
+
 // CurrentBranch reports the checked-out branch, or "" when HEAD is detached.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := r.run(ctx, "branch", "--show-current")

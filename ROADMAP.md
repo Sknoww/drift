@@ -55,22 +55,26 @@ is; link its spec/ADR once one exists.
      process, discards the stale sweep via a monotonic sweep id); a plain refresh is
      local and stays non-cancellable. Panels now span the full terminal width and the
      selection band fills the panel instead of hugging its text
-4. ⏳ **First-run setup wizard** — on first run in an unconfigured repo, pick the target
+4. ✅ **First-run setup wizard** — on first run in an unconfigured repo, pick the target
    mains from the repo's own refs and write `config.json`, instead of handing the user
-   a JSON file to edit. Reuses area 3's picker; same rule as pairing — show real things,
-   let the user choose, never guess.
-   - Offers **remote** refs (`git for-each-ref refs/remotes` — a new call on the area 1
-     wrapper). Targets are compared against `origin/<target>`, so a wizard offering
-     local branches would silently produce targets that compare against the wrong thing
-   - `Target.Key` defaults to the ref's short name, editable; `Ref` is the picked ref,
-     so a target can never be a typo
-   - Any number of targets, including one. The wizard must no more imply a count than
-     the placeholder does
+   a JSON file to edit. Runs as its own Bubble Tea program (`internal/ui/wizard.go`)
+   before the dashboard; `main.go` wires it into the `ErrPlaceholderConfig` path and
+   `store.SaveConfig` writes the chosen targets. Same rule as pairing — show real
+   things, let the user choose, never guess.
+   - Offers **remote** refs (`RemoteBranches` — `git for-each-ref refs/remotes`, the new
+     area-1 call, `<remote>/HEAD` filtered out). Targets are compared against
+     `origin/<target>`, so a wizard offering local branches would silently produce
+     targets that compare against the wrong thing
+   - `Target.Key` defaults to the ref's short name (remote prefix stripped), editable
+     inline (`e`); `Ref` is the picked ref, so a target can never be a typo
+   - Any number of targets, including one. The wizard no more implies a count than the
+     placeholder does; save blocks only on nothing-selected, an empty key, or a
+     duplicate key — the guards `SaveConfig`'s `validate()` would reject anyway
    - Targets only. Unmergeable globs are typed patterns, not a list to pick from, and
      area 5 already owns that surface
-   - The area 2 placeholder path stays as the fallback — wizard declined, non-interactive
-     run, or a config that exists but is broken. The wizard is the front door, not the
-     only one
+   - The area 2 placeholder path stays as the fallback — wizard declined (`esc`),
+     non-interactive run (stdin/stdout not a TTY), no remote refs to offer, or a config
+     that exists but is broken. The wizard is the front door, not the only one
 5. ⏳ **Unmergeable detection + diff panel** — resolve the unmergeable set via the
    hybrid rule in `CONTEXT.md` (`git check-attr merge` first, config globs additive).
    After a fetch, flag each unmergeable file that changed upstream on its target *and*

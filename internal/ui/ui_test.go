@@ -493,7 +493,7 @@ func TestSelectBandSpansWidestRow(t *testing.T) {
 	m := newModel()
 	rows := []string{"short", "a decidedly longer row", "mid"}
 
-	out := m.selectBand(rows, 0)
+	out := selectBand(m.styles, m.width, rows, 0)
 	if got, want := lipgloss.Width(out[0]), lipgloss.Width(rows[1]); got != want {
 		t.Errorf("band width = %d, want the widest row's %d", got, want)
 	}
@@ -502,7 +502,7 @@ func TestSelectBandSpansWidestRow(t *testing.T) {
 	}
 
 	// No active selection leaves every row untouched.
-	none := m.selectBand(rows, -1)
+	none := selectBand(m.styles, m.width, rows, -1)
 	for i := range rows {
 		if none[i] != rows[i] {
 			t.Errorf("selectBand(-1) changed row %d", i)
@@ -514,11 +514,11 @@ func TestSelectBandFillsPanelWidth(t *testing.T) {
 	m := newModel()
 	m.width = 80 // once the size is known, the band fills the whole panel
 	rows := []string{"short", "a mid row"}
-	if m.contentWidth() <= lipgloss.Width(rows[1]) {
+	if contentWidth(m.styles, m.width) <= lipgloss.Width(rows[1]) {
 		t.Fatal("precondition: an 80-col panel should exceed this content")
 	}
-	out := m.selectBand(rows, 0)
-	if got, want := lipgloss.Width(out[0]), m.contentWidth(); got != want {
+	out := selectBand(m.styles, m.width, rows, 0)
+	if got, want := lipgloss.Width(out[0]), contentWidth(m.styles, m.width); got != want {
 		t.Errorf("band width = %d, want the panel's inner width %d", got, want)
 	}
 }
