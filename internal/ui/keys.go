@@ -36,6 +36,12 @@ const (
 	// ToggleCandidate (include a ref), Confirm (save), and Cancel (decline) are
 	// shared with the pairing checklist, so the wizard needs only this one verb.
 	ActionEditKey Action = "edit_key" // e: edit the selected target's key
+
+	// Diff-panel actions (area 5). Scrolling within a file is left to the
+	// viewport's own keys (j/k/arrows/pgup/pgdn); these two only step between the
+	// colliding files, and Cancel backs out to the dashboard.
+	ActionNextFile Action = "next_file" // tab: next colliding file
+	ActionPrevFile Action = "prev_file" // shift+tab: previous colliding file
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -78,6 +84,7 @@ type keymaps struct {
 	picker        Keymap
 	confirmDelete Keymap
 	wizard        Keymap
+	diff          Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -88,6 +95,7 @@ func defaultKeymaps() keymaps {
 		picker:        DefaultPickerKeys(),
 		confirmDelete: DefaultConfirmDeleteKeys(),
 		wizard:        DefaultWizardKeys(),
+		diff:          DefaultDiffKeys(),
 	}
 }
 
@@ -184,6 +192,20 @@ func DefaultWizardKeys() Keymap {
 		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
 		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultDiffKeys binds the diff panel: tab/shift+tab step between the colliding
+// files, esc backs out to the dashboard. Every other key — j/k, arrows, pgup/
+// pgdn — is left unbound so it falls through to the viewport's own scrolling,
+// which is why the panel needs no bespoke scroll bindings here.
+func DefaultDiffKeys() Keymap {
+	return Keymap{
+		"tab":       ActionNextFile,
+		"shift+tab": ActionPrevFile,
+		"esc":       ActionCancel,
+		"q":         ActionQuit,
+		"ctrl+c":    ActionQuit,
 	}
 }
 

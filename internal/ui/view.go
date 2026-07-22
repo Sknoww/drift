@@ -17,6 +17,8 @@ func (m Model) View() string {
 		return m.addIDView()
 	case screenPairing:
 		return m.pairingView()
+	case screenDiff:
+		return m.diffView()
 	default: // dashboard, and the delete confirmation drawn over it
 		return m.dashboardView()
 	}
@@ -75,12 +77,13 @@ func (m Model) body() string {
 	}
 
 	nameWidth := m.branchNameWidth()
+	sel, selOK := m.selectedRow() // the semantic cursor row
 
 	var rows []string
 	selected := -1
-	for i, t := range m.store.Tickets {
-		if i == m.cursor {
-			selected = len(rows) // the ticket headline is the selectable row
+	for ti, t := range m.store.Tickets {
+		if selOK && !sel.isBranch() && sel.ticket == ti {
+			selected = len(rows) // the ticket headline is the selected row
 		}
 		rows = append(rows, m.ticketRow(t))
 
@@ -93,7 +96,10 @@ func (m Model) body() string {
 		}
 
 		if m.expanded[t.ID] {
-			for _, br := range t.Branches {
+			for bi, br := range t.Branches {
+				if selOK && sel.isBranch() && sel.ticket == ti && sel.branch == bi {
+					selected = len(rows) // a branch row is selectable in its own right
+				}
 				rows = append(rows, m.branchRow(t.ID, br, nameWidth))
 			}
 			if len(t.Branches) == 0 {
@@ -194,7 +200,8 @@ func (m Model) branchNameWidth() int {
 
 // branchRow renders one paired branch beneath its ticket, with the status
 // cluster in the fixed order from DESIGN.md §1: target · ↓behind ↑ahead ·
-// dirty · checked-out marker.
+// dirty · checked-out marker, then the area-5 unmergeable marker at the end so
+// it never disturbs the aligned columns.
 func (m Model) branchRow(ticketID string, br store.TicketBranch, nameWidth int) string {
 	st := m.status[statusKey(ticketID, br.Branch)]
 
@@ -212,7 +219,15 @@ func (m Model) branchRow(ticketID string, br store.TicketBranch, nameWidth int) 
 		marker = m.styles.marker.Render("▸ ")
 	}
 
-	return fmt.Sprintf("%s   %s   %s  %s%s", name, target, ab, dirty, marker)
+	row := fmt.Sprintf("%s   %s   %s  %s%s", name, target, ab, dirty, marker)
+
+	// An unmergeable collision is the signal this whole area exists to surface:
+	// the target moved under a file that must be reconciled by hand. Flag it with
+	// a count; enter on the row opens the diff. Trailing so alignment is untouched.
+	if n := len(st.unmergeable); n > 0 {
+		row += "  " + m.styles.unmerge.Render(fmt.Sprintf("⚠ %d unmergeable", n))
+	}
+	return row
 }
 
 // renderAheadBehind draws the ↓behind ↑ahead pair, or the reason it is absent:
@@ -253,7 +268,7 @@ func (m Model) help() string {
 		return m.styles.help.Render("y confirm · n cancel")
 	}
 	return m.styles.help.Render(
-		"j/k move · enter expand · r refresh · f fetch · a add · d delete · l local · q quit",
+		"j/k move · enter expand/diff · r refresh · f fetch · a add · d delete · l local · q quit",
 	)
 }
 

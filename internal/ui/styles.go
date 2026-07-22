@@ -16,6 +16,7 @@ var (
 	colFaint   = lipgloss.Color("240") // hints, help line
 	colSelBG   = lipgloss.Color("236") // selected row band
 	colErr     = lipgloss.Color("203") // error text
+	colUnmerge = lipgloss.Color("170") // unmergeable collision — reconcile by hand
 )
 
 // styles bundles the reusable Lip Gloss styles. Built once and carried on the
@@ -36,6 +37,7 @@ type styles struct {
 	help      lipgloss.Style
 	hint      lipgloss.Style
 	errText   lipgloss.Style
+	unmerge   lipgloss.Style
 }
 
 func newStyles() styles {
@@ -60,5 +62,6 @@ func newStyles() styles {
 		help:      lipgloss.NewStyle().Foreground(colFaint),
 		hint:      lipgloss.NewStyle().Foreground(colFaint).Italic(true),
 		errText:   lipgloss.NewStyle().Foreground(colErr),
+		unmerge:   lipgloss.NewStyle().Foreground(colUnmerge).Bold(true),
 	}
 }

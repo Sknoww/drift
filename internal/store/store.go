@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // Target is one long-lived main branch that feature branches aim at.
@@ -224,6 +226,26 @@ func (c Config) validate() error {
 		seen[t.Key] = true
 	}
 	return nil
+}
+
+// MatchesUnmergeable reports whether a repo-relative path (git's own
+// forward-slash form) matches any configured unmergeable glob. This is the
+// config half of the hybrid detection rule (CONTEXT.md §Unmergeable); what
+// `git check-attr merge` reports is the additive other half, resolved in the
+// caller. `**` spans path segments, so `workflows/**/*.uwe` covers the file at
+// any depth under the directory.
+//
+// A malformed glob is skipped, never fatal: one bad pattern in config must not
+// blind detection to every other class.
+func (c Config) MatchesUnmergeable(path string) bool {
+	for _, u := range c.Unmergeable {
+		for _, g := range u.Globs {
+			if ok, err := doublestar.Match(g, path); err == nil && ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Target returns the target with the given key.

@@ -157,6 +157,77 @@ func (r *Repo) Fetch(ctx context.Context) error {
 	return err
 }
 
+// ChangedFiles lists the repo-relative paths that differ between base and tip
+// using the three-dot form `git diff --name-only base...tip`, i.e. what tip
+// changed since the two diverged (their merge base). Feeding it (branch,
+// targetRef) yields what the target moved; (targetRef, branch) yields what the
+// branch changed. Both halves feed area 5's collision set and, later, area 7's
+// pre-merge check. Paths are git's own forward-slash form, ready for glob
+// matching regardless of OS.
+func (r *Repo) ChangedFiles(ctx context.Context, base, tip string) ([]string, error) {
+	out, err := r.run(ctx, "diff", "--name-only", base+"..."+tip)
+	if err != nil {
+		return nil, err
+	}
+	return lines(out), nil
+}
+
+// WorkingTreeModified lists tracked paths that differ from HEAD — staged or
+// not. It is the working-tree half of "local edits" for the checked-out branch:
+// a `git stash` (no -u) captures exactly these, so they are the uncommitted
+// changes that can turn into a conflict when the shelve sequence pops them back
+// over a freshly merged target. Untracked files are excluded deliberately —
+// plain stash leaves them in place, so they ride the merge through untouched.
+func (r *Repo) WorkingTreeModified(ctx context.Context) ([]string, error) {
+	out, err := r.run(ctx, "diff", "--name-only", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return lines(out), nil
+}
+
+// FileDiff returns the plain-text diff of one path between base and tip, in the
+// same three-dot sense as ChangedFiles: `git diff base...tip -- path`. Fed
+// (branch, targetRef, path) it is exactly the incoming upstream change the user
+// must reconcile by hand — the diff the area-5 panel shows in place of hunting
+// for it in a web UI. The pathspec is passed after `--` so a path that looks
+// like a flag is never misread.
+func (r *Repo) FileDiff(ctx context.Context, base, tip, path string) (string, error) {
+	return r.run(ctx, "diff", base+"..."+tip, "--", path)
+}
+
+// CheckAttrMerge reports which of the given paths Git is told never to merge —
+// the `-merge` attribute, which `git check-attr` renders as merge "unset". This
+// is the .gitattributes half of the hybrid unmergeable rule (CONTEXT.md); the
+// config globs are the additive other half, resolved separately. NUL-delimited
+// output (-z) is parsed so a path containing a colon or space is never
+// mis-split. An empty path list is a no-op — check-attr with no paths would
+// otherwise block reading its stdin.
+func (r *Repo) CheckAttrMerge(ctx context.Context, paths []string) (map[string]bool, error) {
+	unmergeable := make(map[string]bool)
+	if len(paths) == 0 {
+		return unmergeable, nil
+	}
+	args := append([]string{"check-attr", "-z", "merge", "--"}, paths...)
+	out, err := r.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	// -z output is a flat stream of NUL-terminated fields, three per record:
+	// <path> NUL <attribute> NUL <value> NUL. A trailing empty field follows the
+	// final NUL, so drop it before grouping into triples.
+	fields := strings.Split(out, "\x00")
+	if n := len(fields); n > 0 && fields[n-1] == "" {
+		fields = fields[:n-1]
+	}
+	for i := 0; i+2 < len(fields); i += 3 {
+		if fields[i+2] == "unset" {
+			unmergeable[fields[i]] = true
+		}
+	}
+	return unmergeable, nil
+}
+
 // GitDir reports the absolute path of the repository's git directory. Asking
 // git rather than joining <root>/.git is what makes this correct in a linked
 // worktree or a submodule, where .git is a file pointing elsewhere.

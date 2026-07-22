@@ -20,7 +20,9 @@ the home row. "Looks like raw text output" is a bug.
   highlighted band. Pinned on the first build (ANSI-256, in `internal/ui/styles.go`,
   a considered-not-sacred starting point): `warning 214` (behind), `neutral 245`
   (ahead / in-sync), `dirty dot 220`, `checked-out marker 39`, `title 39`,
-  `border/faint 240`, `selected band bg 236`, `error 203`.
+  `border/faint 240`, `selected band bg 236`, `error 203`, `unmergeable 170` (a
+  branch with a collision that must be reconciled by hand — a distinct alarm from
+  `behind`, since it means "moved *and* unmergeable", not just "moved").
 - **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
   title (`drift`) sits on its own line above the panel, with the checked-out branch or
   a refresh spinner to its right. The panel spans the **full terminal width** (computed
@@ -62,10 +64,20 @@ unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dash
   unambiguous when keys are terse. Number keys stay as an accelerator for the first 9
   (see §3) — the picker is the mechanism, numbers are the shortcut. Because targets are
   unbounded, the overlay scrolls and never assumes its list fits.
-- **Diff panel** (area 5) — the incoming diff for an unmergeable file, styled,
-  read-only. This panel is the replacement for opening the web UI to hunt for changes;
-  it earns real polish. **Plain text for every unmergeable format, always** —
-  format-specific rendering is a different product and explicitly out of scope.
+- **Diff panel** (area 5) ✅ — the incoming diff for an unmergeable file, read-only,
+  the replacement for opening the web UI to hunt for changes. Scoped to **one branch**
+  (`screenDiff`): its colliding files are stepped through with `tab`/`shift+tab`, each
+  file's `git diff B...T -- <path>` scrolls in a viewport (`bubbles/viewport`), and a
+  header names `file X/N` and the `branch → target` being reconciled. Per-branch, not
+  per-ticket, because MVP2 and MVP3 can hold different versions of the same file.
+  **Plain text for every unmergeable format, always** — format-specific rendering is a
+  different product and explicitly out of scope. On the dashboard, a collision shows as
+  a trailing `⚠ N unmergeable` marker (`unmerge` color) on the branch row.
+- **Branch row selection** ✅ — the dashboard cursor moves over a **flat list of
+  visible rows** (ticket headlines plus each expanded ticket's branch rows), so a
+  branch is selectable in its own right — the prerequisite for a per-branch diff (and
+  for area 7's per-branch shelve). Non-selectable lines (the "no branches" hint, the
+  delete prompt) are drawn but never landed on.
 
 ## 3. Motion & interaction 📝
 
@@ -78,8 +90,8 @@ Dashboard:
 
 | Key | Action |
 |---|---|
-| `j` / `k` / arrows | Move |
-| `enter` / `space` | Expand / collapse ticket |
+| `j` / `k` / arrows | Move (over ticket **and** branch rows) |
+| `enter` / `space` | On a ticket: expand / collapse · on a branch: open its unmergeable diff |
 | `a` | Add ticket |
 | `d` | Delete selected ticket |
 | `r` | Refresh statuses |
@@ -103,6 +115,19 @@ Target picker overlay: `j` / `k` move, `enter` selects, `esc` cancels — delibe
 the same shape as the dashboard, so the overlay needs no learning. Targets past the
 9th are reachable only through the picker, which is exactly why it's the mechanism and
 the number keys are only a shortcut.
+
+Diff panel (area 5):
+
+| Key | Action |
+|---|---|
+| `tab` / `shift+tab` | Next / previous colliding file |
+| `j` / `k` / arrows / pgup / pgdn | Scroll the diff |
+| `esc` | Back to the dashboard |
+| `q` / `ctrl+c` | Quit |
+
+Only file-stepping and back-out are named actions here; scrolling is left unbound so
+it falls through to the viewport's own keys — the panel needs no bespoke scroll
+bindings, and a rebind can still name the two actions it does define.
 
 Git work runs as async `Cmd`s, so every one of these stays responsive — the UI must
 never freeze on a fetch. States ✅ (built with the dashboard): a **loading** spinner

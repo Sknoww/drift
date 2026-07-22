@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"drift/internal/git"
@@ -28,7 +29,41 @@ const (
 	screenAddID                // add flow: ticket ID entry
 	screenPairing              // add flow: candidate checklist (+ picker overlay)
 	screenConfirmDelete        // y/n confirm before dropping a ticket
+	screenDiff                 // area 5: the unmergeable diff panel for one branch
 )
+
+// rowRef names one selectable row on the dashboard. The cursor addresses a flat
+// list of these — ticket headlines plus, under an expanded ticket, its branch
+// rows — so a branch can be selected in its own right (area 5's diff is
+// per-branch: MVP2 and MVP3 can hold different versions of the same file, so a
+// ticket-scoped diff would conflate them). A ticket row carries branch == -1.
+type rowRef struct {
+	ticket int // index into store.Tickets
+	branch int // index into that ticket's Branches, or -1 for the ticket headline
+}
+
+func (r rowRef) isBranch() bool { return r.branch >= 0 }
+
+// diffState is the live area-5 diff panel: one branch's unmergeable collisions
+// and the file currently shown. Diffs load lazily — the sweep records only the
+// colliding paths, and each file's text is fetched on demand and cached here, so
+// a branch with many collisions costs nothing until its diff is opened.
+type diffState struct {
+	ticketID  string
+	branch    string
+	targetKey string
+	targetRef string               // origin/<target>, the tip the diff is taken against
+	files     []string             // colliding unmergeable paths, in detection order
+	cursor    int                  // index into files: the file on screen
+	cache     map[string]diffEntry // path -> loaded diff, absent while still loading
+	vp        viewport.Model       // scrolls a diff taller or wider than the panel
+}
+
+// diffEntry is one file's fetched diff, or the error fetching it.
+type diffEntry struct {
+	content string
+	err     error
+}
 
 // Model is the whole dashboard state. The status map is keyed by
 // statusKey(ticketID, branch) and recomputed by the refresh/fetch Cmds; the
@@ -43,12 +78,13 @@ type Model struct {
 
 	screen screen
 
-	cursor   int             // index into cfg-ordered tickets; the selected ticket
+	cursor   int             // index into visibleRows(); the selected ticket or branch
 	expanded map[string]bool // ticket ID -> whether its branches are shown
 
 	input         textinput.Model // ticket ID entry, live only on screenAddID
 	add           addFlow         // pairing state, live only on screenPairing
 	pendingDelete string          // ticket ID awaiting delete confirmation
+	diff          diffState       // unmergeable diff panel, live only on screenDiff
 
 	status  map[string]branchStatus
 	current string // checked-out branch, "" when detached
@@ -112,4 +148,55 @@ func (m Model) Init() tea.Cmd {
 		m.spin.Tick,
 		loadStatusCmd(context.Background(), m.repo, m.cfg, m.store.Tickets, m.sweepID),
 	)
+}
+
+// visibleRows is the flat list the cursor moves over, in render order: every
+// ticket headline, and the branch rows of each expanded ticket right beneath it.
+// Non-selectable lines (the "no branches" hint, the delete prompt) are drawn but
+// never listed here, so the cursor can never land on them.
+func (m Model) visibleRows() []rowRef {
+	var rows []rowRef
+	for ti, t := range m.store.Tickets {
+		rows = append(rows, rowRef{ticket: ti, branch: -1})
+		if m.expanded[t.ID] {
+			for bi := range t.Branches {
+				rows = append(rows, rowRef{ticket: ti, branch: bi})
+			}
+		}
+	}
+	return rows
+}
+
+// selectedRow is the row the cursor points at. Reports false when there is
+// nothing to select (no tickets, or a cursor left stale by a collapse).
+func (m Model) selectedRow() (rowRef, bool) {
+	rows := m.visibleRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return rowRef{}, false
+	}
+	return rows[m.cursor], true
+}
+
+// ticketRowIndex is the visible-row index of a ticket's headline, used to move
+// the cursor to a specific ticket (e.g. the one just added) without assuming its
+// position — branch rows shift every ticket after an expanded one.
+func (m Model) ticketRowIndex(ti int) int {
+	for i, r := range m.visibleRows() {
+		if r.ticket == ti && !r.isBranch() {
+			return i
+		}
+	}
+	return 0
+}
+
+// clampCursor keeps the cursor inside the visible-row list after the list
+// shrinks — collapsing a ticket removes its branch rows from under it.
+func (m Model) clampCursor() Model {
+	if n := len(m.visibleRows()); m.cursor >= n {
+		m.cursor = n - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	return m
 }

@@ -236,8 +236,10 @@ func (m Model) savePairing() (tea.Model, tea.Cmd) {
 
 	ticket := store.Ticket{ID: m.add.id, Branches: branches}
 	m.store.Tickets = append(m.store.Tickets, ticket)
-	m.cursor = len(m.store.Tickets) - 1
 	m.expanded[ticket.ID] = len(branches) > 0
+	// Select the new ticket's headline row. With branch rows now interleaved, its
+	// index is no longer len(Tickets)-1, so resolve it through the visible list.
+	m.cursor = m.ticketRowIndex(len(m.store.Tickets) - 1)
 
 	m.screen = screenDashboard
 	m.add = addFlow{}
@@ -300,9 +302,7 @@ func (m Model) doDelete() (tea.Model, tea.Cmd) {
 
 	m.store.Tickets = append(m.store.Tickets[:idx], m.store.Tickets[idx+1:]...)
 	delete(m.expanded, id)
-	if m.cursor >= len(m.store.Tickets) && m.cursor > 0 {
-		m.cursor--
-	}
+	m = m.clampCursor() // the ticket's rows are gone; keep the cursor in range
 	m.notice = "deleted " + id
 	return m, saveStateCmd(m.repo, m.store)
 }

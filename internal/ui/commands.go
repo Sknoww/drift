@@ -14,6 +14,13 @@ type branchStatus struct {
 	ahead, behind int
 	known         bool  // false when the branch's target key is absent from config
 	err           error // AheadBehind failed (e.g. the branch no longer exists locally)
+
+	// unmergeable is the repo-relative paths that changed on both this branch and
+	// its target since they diverged AND that Git must never merge (area 5). Empty
+	// unless the target moved past the merge base (behind>0), since only then is
+	// there an incoming change to collide with. In target-changed order, so the
+	// diff panel lists them deterministically.
+	unmergeable []string
 }
 
 // statusMsg carries a completed status sweep back into Update. One sweep
@@ -48,6 +55,27 @@ func loadCandidatesCmd(repo *git.Repo, id string) tea.Cmd {
 	return func() tea.Msg {
 		got, err := repo.CandidateBranches(context.Background(), id)
 		return candidatesMsg{id: id, branches: got, err: err}
+	}
+}
+
+// diffMsg carries one loaded file diff back into Update. branch and targetRef
+// identify the diff session it belongs to, so a diff that lands after the user
+// backed out of the panel (or switched branches) is discarded rather than shown
+// against the wrong branch.
+type diffMsg struct {
+	branch    string
+	targetRef string
+	path      string
+	content   string
+	err       error
+}
+
+// loadDiffCmd fetches one unmergeable file's incoming upstream diff off the UI
+// thread: `git diff branch...targetRef -- path`, the exact change to reconcile.
+func loadDiffCmd(repo *git.Repo, branch, targetRef, path string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := repo.FileDiff(context.Background(), branch, targetRef, path)
+		return diffMsg{branch: branch, targetRef: targetRef, path: path, content: out, err: err}
 	}
 }
 
@@ -111,6 +139,17 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 	}
 	msg.dirty = dirty
 
+	// Working-tree edits count as local edits (per the area-5 decision), but only
+	// the checked-out branch can have any — skip-worktree aside, one worktree has
+	// one index. Fetch the set once and union it in for that branch alone. A
+	// failure here just drops the working-tree half; committed edits still count.
+	var workTree map[string]bool
+	if current != "" {
+		if mod, wErr := repo.WorkingTreeModified(ctx); wErr == nil {
+			workTree = toSet(mod)
+		}
+	}
+
 	msg.byKey = make(map[string]branchStatus)
 	for _, t := range tickets {
 		for _, b := range t.Branches {
@@ -125,8 +164,74 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 				msg.byKey[key] = branchStatus{known: true, err: err}
 				continue
 			}
-			msg.byKey[key] = branchStatus{ahead: ab.Ahead, behind: ab.Behind, known: true}
+			st := branchStatus{ahead: ab.Ahead, behind: ab.Behind, known: true}
+			// The target only has an incoming change to collide with when it moved
+			// past the merge base — so gate detection on behind>0 and reuse the
+			// count we already have. A detection error degrades the marker only,
+			// never the ahead/behind row: the numbers stay useful on their own.
+			if ab.Behind > 0 {
+				var wt map[string]bool
+				if b.Branch == current {
+					wt = workTree
+				}
+				st.unmergeable, _ = detectUnmergeable(ctx, repo, cfg, b.Branch, target.Ref, wt)
+			}
+			msg.byKey[key] = st
 		}
 	}
 	return msg
+}
+
+// detectUnmergeable resolves one branch's unmergeable collisions against its
+// target: the paths changed on both sides since they diverged that Git must
+// never merge. The branch side is its committed changes unioned with workTree
+// (the working-tree edits, passed only for the checked-out branch). The
+// unmergeable filter is the hybrid rule — `git check-attr merge` (the
+// .gitattributes declaration) unioned with the config globs (CONTEXT.md).
+func detectUnmergeable(ctx context.Context, repo *git.Repo, cfg store.Config, branch, targetRef string, workTree map[string]bool) ([]string, error) {
+	targetChanged, err := repo.ChangedFiles(ctx, branch, targetRef)
+	if err != nil {
+		return nil, err
+	}
+	if len(targetChanged) == 0 {
+		return nil, nil
+	}
+	branchChanged, err := repo.ChangedFiles(ctx, targetRef, branch)
+	if err != nil {
+		return nil, err
+	}
+	branchSide := toSet(branchChanged)
+	for p := range workTree {
+		branchSide[p] = true
+	}
+
+	var collision []string // target-changed order, so the panel list is stable
+	for _, p := range targetChanged {
+		if branchSide[p] {
+			collision = append(collision, p)
+		}
+	}
+	if len(collision) == 0 {
+		return nil, nil
+	}
+
+	attr, err := repo.CheckAttrMerge(ctx, collision)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, p := range collision {
+		if attr[p] || cfg.MatchesUnmergeable(p) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func toSet(items []string) map[string]bool {
+	set := make(map[string]bool, len(items))
+	for _, s := range items {
+		set[s] = true
+	}
+	return set
 }

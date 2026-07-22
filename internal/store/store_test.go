@@ -556,3 +556,37 @@ func TestResolvePropagatesGitError(t *testing.T) {
 		t.Error("SaveState() outside a repo = nil error, want an error")
 	}
 }
+
+func TestMatchesUnmergeable(t *testing.T) {
+	cfg := Config{Unmergeable: []Unmergeable{
+		{Name: "workflows", Globs: []string{"workflows/**/*.uwe"}},
+		{Name: "unity", Globs: []string{"**/*.unity", "**/*.prefab"}},
+		{Name: "broken", Globs: []string{"["}}, // malformed — must not blind the rest
+	}}
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"workflows/onboarding/flow.uwe", true},  // ** spans directories
+		{"workflows/flow.uwe", true},             // ** matches zero directories too
+		{"workflows/onboarding/flow.txt", false}, // wrong extension
+		{"src/workflows/x.uwe", false},           // anchored at the front — not just anywhere
+		{"Assets/Scenes/Main.unity", true},       // leading ** matches at any depth
+		{"prefabs/Enemy.prefab", true},           //
+		{"src/main.go", false},                   // ordinary file — mergeable
+	}
+	for _, tt := range tests {
+		if got := cfg.MatchesUnmergeable(tt.path); got != tt.want {
+			t.Errorf("MatchesUnmergeable(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestMatchesUnmergeableEmptyConfig(t *testing.T) {
+	// No configured classes: the config half contributes nothing, and git
+	// check-attr (resolved elsewhere) is left to carry detection on its own.
+	if (Config{}).MatchesUnmergeable("workflows/flow.uwe") {
+		t.Error("MatchesUnmergeable() on empty config = true, want false")
+	}
+}

@@ -633,3 +633,234 @@ func writeCommit(t *testing.T, dir, name, content string) {
 	rungit(t, dir, "add", name)
 	rungit(t, dir, "commit", "--quiet", "-m", "add "+name)
 }
+
+// --- area 5: unmergeable detection + diff panel ---------------------------
+
+func TestSweepDetectsUnmergeableCollision(t *testing.T) {
+	dir := newTestRepo(t)
+	// Seed the files and the declaration, then branch so both sides carry them.
+	writeCommit(t, dir, ".gitattributes", "*.uwe -merge\n")
+	writeCommit(t, dir, "flow.uwe", "v0")
+	writeCommit(t, dir, "code.go", "package a\n")
+	writeCommit(t, dir, "gone.uwe", "v0")
+	rungit(t, dir, "branch", "feature")
+	rungit(t, dir, "branch", "insync") // never diverges: behind 0, so never scanned
+
+	// feature changes an unmergeable file and a mergeable one.
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	writeCommit(t, dir, "flow.uwe", "v-feature")
+	writeCommit(t, dir, "code.go", "package a // feature\n")
+
+	// main moves under it: same two files, plus one only it touched.
+	rungit(t, dir, "checkout", "--quiet", "main")
+	writeCommit(t, dir, "flow.uwe", "v-main")
+	writeCommit(t, dir, "code.go", "package a // main\n")
+	writeCommit(t, dir, "gone.uwe", "v-main")
+
+	repo := git.New(dir)
+	cfg := store.Config{Targets: []store.Target{{Key: "main", Ref: "main"}}}
+	tickets := []store.Ticket{{ID: "T", Branches: []store.TicketBranch{
+		{Branch: "feature", TargetKey: "main"},
+		{Branch: "insync", TargetKey: "main"},
+	}}}
+
+	msg := sweep(context.Background(), repo, cfg, tickets, false)
+	if msg.err != nil {
+		t.Fatalf("sweep: %v", msg.err)
+	}
+
+	feat := msg.byKey[statusKey("T", "feature")]
+	// Only flow.uwe survives: code.go collides but is mergeable; gone.uwe is
+	// unmergeable but only the target changed it, so it is not a collision.
+	if got := strings.Join(feat.unmergeable, ","); got != "flow.uwe" {
+		t.Errorf("feature unmergeable = %q, want %q", got, "flow.uwe")
+	}
+
+	// The in-sync branch never moved behind the target, so detection is skipped
+	// entirely — no collision, and no wasted diff work.
+	if in := msg.byKey[statusKey("T", "insync")]; len(in.unmergeable) != 0 {
+		t.Errorf("in-sync branch flagged unmergeable: %v", in.unmergeable)
+	}
+}
+
+func TestDetectUnmergeableCountsWorkingTreeEdits(t *testing.T) {
+	dir := newTestRepo(t)
+	writeCommit(t, dir, ".gitattributes", "*.uwe -merge\n")
+	writeCommit(t, dir, "flow.uwe", "v0")
+	rungit(t, dir, "branch", "feature")
+
+	// The target moves the unmergeable file; the branch itself has NO committed
+	// change to it.
+	rungit(t, dir, "checkout", "--quiet", "main")
+	writeCommit(t, dir, "flow.uwe", "v-main")
+
+	// The branch's only edit is uncommitted, in the working tree.
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "flow.uwe"), []byte("v-wip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := git.New(dir)
+	cfg := store.Config{}
+	ctx := context.Background()
+
+	// Committed-only: nothing collides, so nothing is flagged.
+	if got, err := detectUnmergeable(ctx, repo, cfg, "feature", "main", nil); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 0 {
+		t.Errorf("committed-only detection = %v, want empty", got)
+	}
+
+	// With the working-tree edit unioned in, the collision appears — the decision
+	// that uncommitted local edits count.
+	wt, err := repo.WorkingTreeModified(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := detectUnmergeable(ctx, repo, cfg, "feature", "main", toSet(wt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "flow.uwe" {
+		t.Errorf("working-tree detection = %v, want [flow.uwe]", got)
+	}
+}
+
+func TestDetectUnmergeableConfigGlob(t *testing.T) {
+	// No .gitattributes at all — the config-glob half of the hybrid rule must
+	// carry detection on its own.
+	dir := newTestRepo(t)
+	writeCommit(t, dir, "flow.uwe", "v0")
+	rungit(t, dir, "branch", "feature")
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	writeCommit(t, dir, "flow.uwe", "v-feature")
+	rungit(t, dir, "checkout", "--quiet", "main")
+	writeCommit(t, dir, "flow.uwe", "v-main")
+
+	cfg := store.Config{Unmergeable: []store.Unmergeable{{Name: "wf", Globs: []string{"*.uwe"}}}}
+	got, err := detectUnmergeable(context.Background(), git.New(dir), cfg, "feature", "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "flow.uwe" {
+		t.Errorf("config-glob detection = %v, want [flow.uwe]", got)
+	}
+}
+
+// branchDiffModel returns a dashboard with ABC-1 expanded, the cursor on its
+// first branch, and that branch carrying `files` as unmergeable collisions.
+func branchDiffModel(files ...string) Model {
+	m := newModel()
+	m.expanded["ABC-1"] = true
+	m.cursor = 1 // ABC-1 headline is row 0; its first branch is row 1
+	m.status[statusKey("ABC-1", "abc-1-perf")] = branchStatus{known: true, behind: 2, unmergeable: files}
+	return m
+}
+
+func TestBranchRowIsSelectable(t *testing.T) {
+	m := branchDiffModel()
+	row, ok := m.selectedRow()
+	if !ok || !row.isBranch() {
+		t.Fatalf("cursor on an expanded ticket's first branch: row=%+v ok=%v", row, ok)
+	}
+	if br := m.store.Tickets[row.ticket].Branches[row.branch].Branch; br != "abc-1-perf" {
+		t.Errorf("selected branch = %q, want abc-1-perf", br)
+	}
+}
+
+func TestEnterOnBranchOpensDiff(t *testing.T) {
+	m := branchDiffModel("flow.uwe", "scene.unity")
+	next, cmd := m.dispatch(ActionToggleExpand)
+	mm := next.(Model)
+	if mm.screen != screenDiff {
+		t.Fatalf("screen = %v, want screenDiff", mm.screen)
+	}
+	if strings.Join(mm.diff.files, ",") != "flow.uwe,scene.unity" {
+		t.Errorf("diff.files = %v", mm.diff.files)
+	}
+	if mm.diff.branch != "abc-1-perf" || mm.diff.targetKey != "r2perf" {
+		t.Errorf("diff session = %q -> %q, want abc-1-perf -> r2perf", mm.diff.branch, mm.diff.targetKey)
+	}
+	if cmd == nil {
+		t.Error("opening a diff should fetch the first file")
+	}
+}
+
+func TestEnterOnBranchWithNoCollisionStaysHome(t *testing.T) {
+	m := branchDiffModel() // no unmergeable files
+	next, _ := m.dispatch(ActionToggleExpand)
+	mm := next.(Model)
+	if mm.screen != screenDashboard {
+		t.Errorf("screen = %v, want to stay on the dashboard", mm.screen)
+	}
+	if !strings.Contains(mm.notice, "no unmergeable") {
+		t.Errorf("notice = %q, want it to explain there is nothing to reconcile", mm.notice)
+	}
+}
+
+func TestApplyDiffPopulatesAndDiscardsStale(t *testing.T) {
+	m := branchDiffModel("flow.uwe")
+	next, _ := m.dispatch(ActionToggleExpand)
+	m = next.(Model)
+
+	// A diff for the wrong branch is discarded, never painted into the panel.
+	m = m.applyDiff(diffMsg{branch: "other", targetRef: m.diff.targetRef, path: "flow.uwe", content: "STALE"})
+	if _, cached := m.diff.cache["flow.uwe"]; cached {
+		t.Error("a diff from another branch was cached")
+	}
+
+	// The matching diff lands and is cached.
+	m = m.applyDiff(diffMsg{branch: "abc-1-perf", targetRef: m.diff.targetRef, path: "flow.uwe", content: "@@ real diff @@"})
+	if entry, ok := m.diff.cache["flow.uwe"]; !ok || entry.content != "@@ real diff @@" {
+		t.Errorf("matching diff not cached: %+v", m.diff.cache)
+	}
+	if !strings.Contains(m.diff.vp.View(), "real diff") {
+		t.Errorf("viewport did not show the loaded diff:\n%s", m.diff.vp.View())
+	}
+}
+
+func TestDiffFileCyclingClamps(t *testing.T) {
+	m := branchDiffModel("a.uwe", "b.uwe")
+	next, _ := m.dispatch(ActionToggleExpand)
+	m = next.(Model)
+
+	// prev at the first file is a no-op.
+	back, _ := m.dispatchDiff(ActionPrevFile)
+	if back.(Model).diff.cursor != 0 {
+		t.Errorf("prev at first file moved: cursor = %d", back.(Model).diff.cursor)
+	}
+	// next advances, then clamps at the last file.
+	fwd, _ := m.dispatchDiff(ActionNextFile)
+	m = fwd.(Model)
+	if m.diff.cursor != 1 {
+		t.Fatalf("next: cursor = %d, want 1", m.diff.cursor)
+	}
+	end, _ := m.dispatchDiff(ActionNextFile)
+	if end.(Model).diff.cursor != 1 {
+		t.Errorf("next past last file moved: cursor = %d, want 1", end.(Model).diff.cursor)
+	}
+}
+
+func TestDiffEscReturnsHome(t *testing.T) {
+	m := branchDiffModel("flow.uwe")
+	next, _ := m.dispatch(ActionToggleExpand)
+	m = next.(Model)
+
+	home, _ := m.dispatchDiff(ActionCancel)
+	mm := home.(Model)
+	if mm.screen != screenDashboard {
+		t.Errorf("esc from diff: screen = %v, want dashboard", mm.screen)
+	}
+	if len(mm.diff.files) != 0 {
+		t.Errorf("esc from diff left session state behind: %+v", mm.diff)
+	}
+}
+
+func TestBranchRowShowsUnmergeableMarker(t *testing.T) {
+	m := branchDiffModel("flow.uwe", "scene.unity")
+	m.width = 120
+	out := m.dashboardView()
+	if !strings.Contains(out, "2 unmergeable") {
+		t.Errorf("dashboard did not flag the unmergeable branch:\n%s", out)
+	}
+}

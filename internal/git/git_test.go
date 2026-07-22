@@ -296,6 +296,132 @@ func TestRemoteBranchesNoRemote(t *testing.T) {
 	}
 }
 
+func TestChangedFiles(t *testing.T) {
+	dir := newRepo(t)
+	r := New(dir)
+	ctx := context.Background()
+
+	// Diverge: the branch and main each touch their own file plus a shared one.
+	git(t, dir, "checkout", "--quiet", "-b", "feature")
+	commit(t, dir, "only-branch.txt", "b")
+	commit(t, dir, "shared.txt", "branch version")
+	git(t, dir, "checkout", "--quiet", "main")
+	commit(t, dir, "only-main.txt", "m")
+	commit(t, dir, "shared.txt", "main version")
+
+	// Three-dot base...tip is what tip changed since the merge base, so the
+	// direction of the pair decides whose changes you get.
+	targetChanged, err := r.ChangedFiles(ctx, "feature", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(targetChanged, ","), "only-main.txt,shared.txt"; got != want {
+		t.Errorf("ChangedFiles(feature, main) = %q, want %q", got, want)
+	}
+
+	branchChanged, err := r.ChangedFiles(ctx, "main", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(branchChanged, ","), "only-branch.txt,shared.txt"; got != want {
+		t.Errorf("ChangedFiles(main, feature) = %q, want %q", got, want)
+	}
+}
+
+func TestFileDiff(t *testing.T) {
+	dir := newRepo(t)
+	r := New(dir)
+	ctx := context.Background()
+
+	git(t, dir, "checkout", "--quiet", "-b", "feature")
+	git(t, dir, "checkout", "--quiet", "main")
+	commit(t, dir, "shared.txt", "line one\nline two changed on main\n")
+	commit(t, dir, "noise.txt", "unrelated")
+
+	diff, err := r.FileDiff(ctx, "feature", "main", "shared.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The diff is the incoming upstream change for exactly that path — the text
+	// the panel shows in place of hunting for it.
+	if !strings.Contains(diff, "line two changed on main") {
+		t.Errorf("FileDiff() = %q, want it to contain the upstream change", diff)
+	}
+	if strings.Contains(diff, "noise.txt") {
+		t.Errorf("FileDiff() leaked another path's change:\n%s", diff)
+	}
+}
+
+func TestWorkingTreeModified(t *testing.T) {
+	dir := newRepo(t)
+	r := New(dir)
+	ctx := context.Background()
+	commit(t, dir, "tracked.txt", "original")
+
+	if got, err := r.WorkingTreeModified(ctx); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 0 {
+		t.Errorf("WorkingTreeModified() on a clean tree = %v, want empty", got)
+	}
+
+	// An unstaged edit and a staged edit both count — a plain stash captures both.
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, dir, "staged.txt", "seed")
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "staged.txt")
+	// An untracked file must NOT count: plain stash leaves it in place, so it
+	// rides the shelve sequence through untouched.
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("wip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.WorkingTreeModified(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "staged.txt,tracked.txt"; strings.Join(got, ",") != want {
+		t.Errorf("WorkingTreeModified() = %v, want %q (untracked excluded)", got, want)
+	}
+}
+
+func TestCheckAttrMerge(t *testing.T) {
+	dir := newRepo(t)
+	r := New(dir)
+	ctx := context.Background()
+
+	// The standard declaration: -merge (not the binary macro, which would also
+	// kill -diff and so the panel).
+	if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.uwe -merge\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.CheckAttrMerge(ctx, []string{"workflows/a.uwe", "src/main.go", "b.uwe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["workflows/a.uwe"] || !got["b.uwe"] {
+		t.Errorf("CheckAttrMerge() = %v, want the .uwe paths flagged unmergeable", got)
+	}
+	if got["src/main.go"] {
+		t.Errorf("CheckAttrMerge() flagged a mergeable path: %v", got)
+	}
+}
+
+func TestCheckAttrMergeNoPaths(t *testing.T) {
+	// No paths is a no-op, not a call that blocks reading check-attr's stdin.
+	got, err := New(newRepo(t)).CheckAttrMerge(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("CheckAttrMerge(nil) = %v, want empty", got)
+	}
+}
+
 func TestGitDir(t *testing.T) {
 	dir := newRepo(t)
 

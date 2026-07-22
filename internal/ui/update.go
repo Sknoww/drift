@@ -16,6 +16,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.screen == screenDiff {
+			m.diff.vp.Width = diffViewportWidth(m.styles, m.width)
+			m.diff.vp.Height = diffViewportHeight(m.height)
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -31,6 +35,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case candidatesMsg:
 		return m.applyCandidates(msg), nil
+
+	case diffMsg:
+		return m.applyDiff(msg), nil
 
 	case saveStateMsg:
 		if msg.err != nil {
@@ -60,6 +67,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+	// On the diff panel, a bound key steps between files or backs out; every
+	// other key falls through to the viewport so its own j/k/arrows/pgup/pgdn
+	// scroll the diff — the reason DefaultDiffKeys binds so few keys.
+	if m.screen == screenDiff {
+		if action, ok := m.keys.diff.action(msg.String()); ok {
+			return m.dispatch(action)
+		}
+		var cmd tea.Cmd
+		m.diff.vp, cmd = m.diff.vp.Update(msg)
 		return m, cmd
 	}
 	if action, ok := m.activeKeys().action(msg.String()); ok {
@@ -129,6 +147,8 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 		return m.dispatchPairing(action)
 	case screenConfirmDelete:
 		return m.dispatchConfirmDelete(action)
+	case screenDiff:
+		return m.dispatchDiff(action)
 	default:
 		return m.dispatchDashboard(action)
 	}
@@ -146,16 +166,25 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ActionMoveDown:
-		if m.cursor < len(m.store.Tickets)-1 {
+		if m.cursor < len(m.visibleRows())-1 {
 			m.cursor++
 		}
 		return m, nil
 
 	case ActionToggleExpand:
-		if t, ok := m.selectedTicket(); ok {
-			m.expanded[t.ID] = !m.expanded[t.ID]
+		// enter opens whatever is selected: a ticket toggles its branches, a
+		// branch opens its unmergeable diff. Collapsing shortens the visible list,
+		// so re-clamp the cursor afterward.
+		row, ok := m.selectedRow()
+		if !ok {
+			return m, nil
 		}
-		return m, nil
+		if row.isBranch() {
+			return m.openDiff(row)
+		}
+		t := m.store.Tickets[row.ticket]
+		m.expanded[t.ID] = !m.expanded[t.ID]
+		return m.clampCursor(), nil
 
 	case ActionRefresh:
 		return m.startSweep(false)
@@ -220,10 +249,14 @@ func (m Model) cancelFetch() Model {
 	return m
 }
 
-// selectedTicket returns the ticket the cursor points at.
+// selectedTicket returns the ticket the cursor points at — the ticket itself
+// when a ticket row is selected, or the parent ticket when a branch row is. So
+// delete, from a branch row, drops the branch's ticket; the confirmation names
+// exactly what goes, so nothing is a surprise.
 func (m Model) selectedTicket() (store.Ticket, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.store.Tickets) {
+	row, ok := m.selectedRow()
+	if !ok {
 		return store.Ticket{}, false
 	}
-	return m.store.Tickets[m.cursor], true
+	return m.store.Tickets[row.ticket], true
 }

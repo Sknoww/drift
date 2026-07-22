@@ -75,13 +75,23 @@ is; link its spec/ADR once one exists.
    - The area 2 placeholder path stays as the fallback — wizard declined (`esc`),
      non-interactive run (stdin/stdout not a TTY), no remote refs to offer, or a config
      that exists but is broken. The wizard is the front door, not the only one
-5. ⏳ **Unmergeable detection + diff panel** — resolve the unmergeable set via the
+5. 🛠️ **Unmergeable detection + diff panel** — resolve the unmergeable set via the
    hybrid rule in `CONTEXT.md` (`git check-attr merge` first, config globs additive).
-   After a fetch, flag each unmergeable file that changed upstream on its target *and*
-   has local edits, and show that exact diff, plain text. Replaces the "open the web UI
-   and hunt for what changed" step. Mergeable changes merge normally and are never
-   surfaced. Includes writing the `-merge` attribute on request, to either
-   `.gitattributes` or `$GIT_DIR/info/attributes` at the user's choice.
+   Split into detection+diff (shipped) and attribute-writing (next). Spec:
+   `docs/specs/unmergeable-detection.md`.
+   - ✅ **Detection + diff panel** — per branch, gated on `behind>0`, intersect what the
+     target changed with what the branch changed (committed **+** working-tree for the
+     checked-out branch), keep only the unmergeable ones (`check-attr -merge` ∪ config
+     globs via `doublestar`), and show each file's incoming `git diff B...T -- <path>`
+     plain-text in a scrollable panel. Branch rows are individually selectable now
+     (flat visible-row cursor); `enter` on a branch opens its diff, because MVP2 and
+     MVP3 can hold different versions of the same file — a ticket-scoped diff would
+     conflate them. Mergeable changes are never surfaced. New area-1 calls:
+     `ChangedFiles`, `FileDiff`, `WorkingTreeModified`, `CheckAttrMerge`
+   - ⏳ **Write the `-merge` attribute on request** — to either `.gitattributes`
+     (committed, team-wide) or `$GIT_DIR/info/attributes` (local, highest precedence)
+     at the user's choice. Detection only *reads* the attribute today; this teaches Git
+     the constraint so it behaves correctly even when Drift isn't running
 6. ⏳ **Local-only changes** — a first-class, *visible* manager for changes you keep on
    this machine but never commit: logging tweaks, local config, scratch files. A mix of
    tracked and untracked paths under one list. Spec: `docs/specs/local-only-changes.md`.
