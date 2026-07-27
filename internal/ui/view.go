@@ -22,6 +22,8 @@ func (m Model) View() string {
 		return m.pairingView()
 	case screenDiff:
 		return m.diffView()
+	case screenLocalOnly:
+		return m.localOnlyView()
 	default: // dashboard, and the delete confirmation drawn over it
 		return m.dashboardView()
 	}

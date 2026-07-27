@@ -689,3 +689,90 @@ func TestSaveConfigOmitsAnUnsetDeclareBlock(t *testing.T) {
 		t.Errorf("round trip invented a constraint: %v", back.DeclareDestinations())
 	}
 }
+
+// --- local-only annotations (area 6) ---------------------------------------
+
+// The store persists notes and nothing else, so it can never claim a hold git
+// does not have. A path git stops reporting as held loses its note on the next
+// load rather than lingering as a stale claim.
+func TestPruneLocalOnlyDropsOrphanedNotes(t *testing.T) {
+	s := Store{LocalOnly: []LocalOnly{
+		{Path: "app.yml", Note: "debug log level"},
+		{Path: "gone.yml", Note: "released outside drift"},
+	}}
+
+	pruned, changed := s.PruneLocalOnly([]string{"app.yml"})
+	if !changed {
+		t.Fatal("PruneLocalOnly reported no change")
+	}
+	if len(pruned.LocalOnly) != 1 || pruned.LocalOnly[0].Path != "app.yml" {
+		t.Errorf("LocalOnly = %+v, want only the still-held path", pruned.LocalOnly)
+	}
+	// The original is untouched: Store is passed by value all over the UI, so an
+	// in-place edit would reach every copy of it.
+	if len(s.LocalOnly) != 2 {
+		t.Errorf("the receiver was mutated: %+v", s.LocalOnly)
+	}
+
+	if _, changed := pruned.PruneLocalOnly([]string{"app.yml"}); changed {
+		t.Error("a prune with nothing to drop reported a change, forcing a needless write")
+	}
+}
+
+// A path held but never annotated is not an entry — the note is the only thing
+// worth storing, so an empty one leaves nothing behind.
+func TestSetLocalOnlyNote(t *testing.T) {
+	s := Store{}.SetLocalOnlyNote("app.yml", "  debug log level  ")
+	if got := s.LocalOnlyNote("app.yml"); got != "debug log level" {
+		t.Errorf("LocalOnlyNote() = %q, want the trimmed note", got)
+	}
+
+	s = s.SetLocalOnlyNote("app.yml", "still debugging")
+	if len(s.LocalOnly) != 1 || s.LocalOnlyNote("app.yml") != "still debugging" {
+		t.Errorf("LocalOnly = %+v, want the note replaced, not duplicated", s.LocalOnly)
+	}
+
+	s = s.SetLocalOnlyNote("app.yml", "")
+	if len(s.LocalOnly) != 0 {
+		t.Errorf("LocalOnly = %+v, want a cleared note to drop the entry", s.LocalOnly)
+	}
+	if got := s.LocalOnlyNote("nothing.yml"); got != "" {
+		t.Errorf("LocalOnlyNote() for an unknown path = %q, want empty", got)
+	}
+}
+
+// Notes survive a round trip, and a store with none does not grow the key.
+func TestLocalOnlyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	r := fakeRepo{dir: dir}
+
+	s := Store{
+		Tickets:   []Ticket{{ID: "ABC-1"}},
+		LocalOnly: []LocalOnly{{Path: "app.yml", Note: "debug log level"}},
+	}
+	if err := SaveState(context.Background(), r, s); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := LoadState(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LocalOnlyNote("app.yml") != "debug log level" {
+		t.Errorf("LocalOnly = %+v, want the note back", got.LocalOnly)
+	}
+
+	if err := SaveState(context.Background(), r, Store{}); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := Resolve(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(paths.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "localOnly") {
+		t.Errorf("state.json = %s, want no localOnly key when nothing is annotated", data)
+	}
+}

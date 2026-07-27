@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -136,6 +137,98 @@ func recheckDeclaredCmd(repo *git.Repo, branch, targetRef string, files []string
 	return func() tea.Msg {
 		got, err := repo.CheckAttrMerge(context.Background(), files)
 		return declaredMsg{branch: branch, targetRef: targetRef, byPath: got, err: err}
+	}
+}
+
+// localOnlyMsg carries Git's answer to "what is held back from commits"
+// (area 6). It is the whole held set every time, not a delta: Git's flags are
+// the source of truth, so the list is rebuilt rather than patched.
+type localOnlyMsg struct {
+	held []heldPath
+	err  error
+}
+
+// loadLocalOnlyCmd reads the held set off the UI thread, from both primitives:
+// the skip-worktree bit for tracked paths and Drift's fenced block in
+// info/exclude for untracked ones. The two are merged into one path-sorted list,
+// because the user marked *changes* — the mechanism is a detail of each row, not
+// a reason to split the screen in two.
+func loadLocalOnlyCmd(repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		skipped, err := repo.SkipWorktreeFiles(ctx)
+		if err != nil {
+			return localOnlyMsg{err: err}
+		}
+		excluded, err := repo.ExcludedPaths(ctx)
+		if err != nil {
+			return localOnlyMsg{err: err}
+		}
+
+		held := make([]heldPath, 0, len(skipped)+len(excluded))
+		for _, p := range skipped {
+			held = append(held, heldPath{path: p, tracked: true})
+		}
+		for _, p := range excluded {
+			held = append(held, heldPath{path: p})
+		}
+		sort.Slice(held, func(i, j int) bool { return held[i].path < held[j].path })
+		return localOnlyMsg{held: held}
+	}
+}
+
+// localCandidatesMsg carries the working-tree scan that backs the add flow.
+type localCandidatesMsg struct {
+	changes []git.WorkingChange
+	err     error
+}
+
+// loadLocalCandidatesCmd lists what Git currently sees changed, so the add flow
+// offers real changes to hold rather than a path typed from memory.
+func loadLocalCandidatesCmd(repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		got, err := repo.WorkingChanges(context.Background())
+		return localCandidatesMsg{changes: got, err: err}
+	}
+}
+
+// localHoldMsg reports a completed hold or release. hold distinguishes the two
+// so the notice can say which happened without the caller tracking it.
+type localHoldMsg struct {
+	path string
+	hold bool
+	err  error
+}
+
+// holdLocalCmd holds a path, routed by whether Git tracks it — the user marked
+// a change, and this is where the mechanism is chosen for them.
+func holdLocalCmd(repo *git.Repo, path string, tracked bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		var err error
+		if tracked {
+			err = repo.SetSkipWorktree(ctx, path)
+		} else {
+			err = repo.AddExclude(ctx, path)
+		}
+		return localHoldMsg{path: path, hold: true, err: err}
+	}
+}
+
+// releaseLocalCmd undoes a hold through whichever primitive holds it. A tracked
+// path's edits reappear as ordinary working-tree changes — they were never
+// lost, only hidden.
+func releaseLocalCmd(repo *git.Repo, path string, tracked bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		var err error
+		if tracked {
+			err = repo.ClearSkipWorktree(ctx, path)
+		} else {
+			err = repo.RemoveExclude(ctx, path)
+		}
+		return localHoldMsg{path: path, err: err}
 	}
 }
 

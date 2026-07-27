@@ -50,8 +50,16 @@ nothing that could contradict Git. Consequences:
 - Git behaves correctly when drift isn't running — the whole point of teaching Git the
   constraint instead of routing around it.
 - drift only ever edits **its own** fenced region of `info/exclude` (delimited by
-  `# >>> drift local-only` / `# <<< drift local-only`), so hand-written exclude entries
-  are never clobbered.
+  `# drift:begin` / `# drift:end`, the same fence the attributes file already uses —
+  one Drift block shape wherever a user meets it), so hand-written exclude entries are
+  never clobbered. Releasing the last held path removes the now-empty block outright,
+  so the file goes back to exactly how the user had it.
+- Each entry is written **anchored and escaped**: `/docker-compose.override.yml`, not
+  the bare name. This is not cosmetic — a gitignore pattern containing no slash matches
+  a *basename at any depth*, so an unanchored entry would quietly hold back every
+  `config.yml` in the tree instead of the one the user picked. Glob metacharacters in a
+  name are backslash-escaped for the same reason, and the encoding is reversed on read
+  so the exclude file remains the single source of truth.
 
 ## It is repo/worktree-global, not per-branch
 
@@ -125,10 +133,17 @@ its keymap contract:
 - **Add** a currently-modified-but-not-yet-held change to the set (pick from working-tree
   changes; drift routes to the right primitive). Never auto-suggested — the user always
   chooses, per the project's "never guess" rule.
+- **A staged change is refused, not held.** `skip-worktree` hides the *working tree* from
+  Git; the index is what a commit writes. Holding a staged change would therefore look
+  like protection and give none — the exact failure this feature exists to prevent. The
+  candidate is listed, flagged, and blocked, with the fix named (`git restore --staged`).
 - **Release** a held path: `--no-skip-worktree` (tracked) or remove the fenced exclude
   line (untracked). Releasing a tracked hold makes the local edits reappear as ordinary
   working-tree changes — they were never lost — leaving the user to commit or discard.
-  Drift may offer "release and discard" (`checkout -- <path>`) but never does it silently.
+  Because it destroys nothing, release is one keystroke with no confirmation, unlike
+  deleting a ticket. **"Release and discard" (`checkout -- <path>`) is deliberately not
+  built:** it would be the only irreversible action in the feature, and `git` is one
+  command away for anyone who wants it.
 - **Edit note** on an entry.
 - Held tracked files must be visually unmistakable *because* Git hides them; the view is
   the antidote to "I forgot that file was skipped."
@@ -142,8 +157,18 @@ Dashboard key `l` opens the manager — ratified in DESIGN's keymap contract.
 - `SkipWorktreeFiles(ctx)` — `git ls-files -v`, keep lines tagged `S`, strip the tag.
 - `ChangedFiles(ctx, branch, targetRef)` — `git diff --name-only <branch>...<targetRef>`
   for the collision check (likely shared with areas 5/7).
-- A richer working-tree read than `IsDirty` (parse `git status --porcelain`) to offer
-  candidates in the Add flow.
+- A richer working-tree read than `IsDirty` (parse `git status --porcelain -z
+  --untracked-files=all`) to offer candidates in the Add flow, tagging each with
+  tracked/untracked (the routing) and staged (the refusal above). `--untracked-files=all`
+  is load-bearing: Git's default collapses a wholly-untracked directory into one
+  `service/` entry, and a hold is on a *file* — offering the directory would hold every
+  path beneath it, including ones the user never saw.
+- `SetSkipWorktree` / `SkipWorktreeFiles` must run **from the working-tree root**
+  (`git -C <toplevel> …`): `update-index` resolves its filenames against the *current*
+  directory, and `ls-files` reports only the directory it runs in — so a Drift invoked
+  from a subdirectory would otherwise fail to hold a repo-relative path and would report
+  only part of the held set. (`status --porcelain` needs no such help; its paths are
+  root-relative by definition.)
 - Exclude I/O is plain file read/append/rewrite on `$GIT_DIR/info/exclude`, off
   `gitDir()` — not a shell-out.
 

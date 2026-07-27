@@ -48,6 +48,15 @@ const (
 	// two-step overlay over the diff panel, which then reuses the shared
 	// move/confirm/cancel verbs like every other picker.
 	ActionDeclare Action = "declare" // w: declare this file's pattern -merge
+
+	// Local-only manager actions (area 6). Refresh and the shared
+	// move/confirm/cancel verbs carry over from the dashboard; these three are
+	// the screen's own. Holding is deliberately *not* ActionAdd reused: the help
+	// table is generated per action, so one action reused across two screens
+	// would have to describe itself as both "add a ticket" and "hold a change".
+	ActionHoldLocal Action = "hold_local" // a: hold a working-tree change locally
+	ActionRelease   Action = "release"    // d: stop holding the selected path
+	ActionEditNote  Action = "edit_note"  // n: annotate why a path is held
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -92,6 +101,9 @@ type keymaps struct {
 	wizard        Keymap
 	diff          Keymap
 	declare       Keymap
+	localOnly     Keymap
+	localAdd      Keymap
+	localNote     Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -104,6 +116,9 @@ func defaultKeymaps() keymaps {
 		wizard:        DefaultWizardKeys(),
 		diff:          DefaultDiffKeys(),
 		declare:       DefaultDeclareKeys(),
+		localOnly:     DefaultLocalOnlyKeys(),
+		localAdd:      DefaultLocalAddKeys(),
+		localNote:     DefaultLocalNoteKeys(),
 	}
 }
 
@@ -233,6 +248,57 @@ func DefaultDeclareKeys() Keymap {
 		"down":   ActionMoveDown,
 		"k":      ActionMoveUp,
 		"up":     ActionMoveUp,
+		"enter":  ActionConfirm,
+		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultLocalOnlyKeys binds the local-only manager (area 6). `a` holds a
+// change and `r` refreshes, both carrying their dashboard meaning across; `d`
+// releases, taking the dashboard's "remove the selected thing" key rather than
+// the more mnemonic `r`, which would mean a reflexive refresh could silently
+// release a hold instead.
+//
+// Release needs no y/n confirm — unlike deleting a ticket it destroys nothing,
+// since a released file's edits reappear as ordinary working-tree changes.
+func DefaultLocalOnlyKeys() Keymap {
+	return Keymap{
+		"j":      ActionMoveDown,
+		"down":   ActionMoveDown,
+		"k":      ActionMoveUp,
+		"up":     ActionMoveUp,
+		"a":      ActionHoldLocal,
+		"d":      ActionRelease,
+		"n":      ActionEditNote,
+		"r":      ActionRefresh,
+		"esc":    ActionCancel,
+		"?":      ActionHelp,
+		"q":      ActionQuit,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultLocalAddKeys binds the candidate picker — the same move/enter/esc
+// shape as the target picker and the declare overlay, so an overlay is an
+// overlay wherever the user meets one.
+func DefaultLocalAddKeys() Keymap {
+	return Keymap{
+		"j":      ActionMoveDown,
+		"down":   ActionMoveDown,
+		"k":      ActionMoveUp,
+		"up":     ActionMoveUp,
+		"enter":  ActionConfirm,
+		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultLocalNoteKeys binds only the control keys of the note editor; every
+// other key is left to the text input so typing lands in the field, the same
+// split the ID-entry screen uses.
+func DefaultLocalNoteKeys() Keymap {
+	return Keymap{
 		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
 		"ctrl+c": ActionQuit,

@@ -130,22 +130,38 @@ is; link its spec/ADR once one exists.
      config rather than a keypress on purpose: a guard against an unwanted commit is
      worth more when it cannot be toggled off by a stray keystroke. An unknown name, a
      duplicate, or an empty list is a validation error, never something skipped over
-6. ⏳ **Local-only changes** — a first-class, *visible* manager for changes you keep on
-   this machine but never commit: logging tweaks, local config, scratch files. A mix of
+6. ✅ **Local-only changes** — a first-class, *visible* manager (`l`) for changes you keep
+   on this machine but never commit: logging tweaks, local config, scratch files. A mix of
    tracked and untracked paths under one list. Spec: `docs/specs/local-only-changes.md`.
    - **Tracked** paths → `git update-index --skip-worktree`; **untracked** paths → a
      drift-fenced block in `$GIT_DIR/info/exclude`. Drift routes each path by whether Git
-     tracks it — the user marks a change, never a mechanism
-   - **Git's own flags are the source of truth**, exactly as with unmergeables: list via
-     `git ls-files -v` (the `S` tag) plus the fenced exclude block; the store holds only
-     a per-path note. Drift can never fall out of sync, and Git stays correct when drift
-     isn't running
+     tracks it — the user marks a change, never a mechanism. The block reuses area 5's
+     `# drift:begin`/`# drift:end` fence, so one Drift block shape appears wherever a user
+     meets one, and an empty block is removed rather than left as markers around nothing
+   - **Git's own flags are the source of truth**, exactly as with unmergeables: the list is
+     `git ls-files -v` (the `S` tag) plus the fenced exclude block, re-read after every
+     write rather than assumed; the store holds only a per-path note, and an annotation
+     Git no longer backs is pruned on load. Drift can never fall out of sync, and Git
+     stays correct when drift isn't running
    - The whole win over raw `skip-worktree` is **visibility** — the flag hides a file from
      `git status`, so people forget it exists. Drift surfaces the held set so it's never lost
    - Repo/worktree-global by nature: `skip-worktree` is an index flag, not per-branch —
-     exactly right for "keep my log tweak on every branch I check out"
-   - New area-1 calls: set/clear skip-worktree, list `ls-files -v`, a name-only
-     changed-files diff for area 7's collision check. Exclude I/O is file-level, off `gitDir()`
+     exactly right for "keep my log tweak on every branch I check out", and the screen says
+     so in its header rather than leaving the scope to be inferred
+   - **A staged change is refused, not held** — `skip-worktree` hides the working tree, not
+     the index, so holding one would look like protection and give none. Listed, flagged,
+     blocked, with the fix named. "Release and discard" is deliberately not built: it would
+     be the only irreversible action here, and git is one command away
+   - **Two mechanics that are correctness, not polish**: exclude entries are written
+     anchored (`/path`) and glob-escaped, since an unanchored gitignore pattern matches a
+     *basename at any depth* and would hold back every `config.yml` in the tree; and
+     `update-index`/`ls-files` run from the working-tree root, since one resolves paths
+     against the current directory and the other reports only the directory it runs in
+   - New area-1 calls: `SetSkipWorktree`, `ClearSkipWorktree`, `SkipWorktreeFiles`,
+     `WorkingChanges`, `ExcludePath`, `ExcludedPaths`, `AddExclude`, `RemoveExclude`.
+     `ChangedFiles` (area 5) already covers area 7's collision check. Exclude I/O is
+     file-level, off `gitDir()`; the fence and the atomic write are now shared in
+     `fence.go`, extracted on its second consumer
 7. ⏳ **One-key shelve sequence** — stash → merge target main → pop, as one keypress
    per branch. Stops and hands back the moment an unmergeable conflict appears; the
    reconciliation itself stays manual, always.

@@ -93,9 +93,90 @@ type Ticket struct {
 	Branches []TicketBranch `json:"branches"`
 }
 
-// Store is the tool-written half: every tracked ticket.
+// LocalOnly annotates a path held back from commits (roadmap area 6). Git's own
+// flags decide *whether* a path is held — the skip-worktree bit for a tracked
+// file, $GIT_DIR/info/exclude for an untracked one — and this records only the
+// human context, so it can never contradict reality. Its kind (tracked vs.
+// untracked) is derived from Git at read time, never stored, so a file that
+// crosses that line cannot leave a stale label behind.
+type LocalOnly struct {
+	Path string `json:"path"`           // repo-relative
+	Note string `json:"note,omitempty"` // why it's held, e.g. "debug log level"
+}
+
+// Store is the tool-written half: every tracked ticket, and the notes on
+// whatever is held locally.
 type Store struct {
 	Tickets []Ticket `json:"tickets"`
+
+	// Flat and repo-global, with no ticket association — matching the global
+	// nature of the hold, which is an index/ignore flag and so applies to every
+	// branch the user checks out.
+	LocalOnly []LocalOnly `json:"localOnly,omitempty"`
+}
+
+// LocalOnlyNote is the note recorded for a held path, or "" when there is none.
+func (s Store) LocalOnlyNote(path string) string {
+	for _, l := range s.LocalOnly {
+		if l.Path == path {
+			return l.Note
+		}
+	}
+	return ""
+}
+
+// SetLocalOnlyNote records the note for a path and returns the updated store. An
+// empty note drops the annotation outright rather than persisting a blank one:
+// with the note the only thing stored, a pathless-purpose entry is just noise.
+//
+// The slice is copied before it is changed, never written through — Store is
+// passed by value all over the UI, and an in-place edit would reach every copy.
+func (s Store) SetLocalOnlyNote(path, note string) Store {
+	note = strings.TrimSpace(note)
+
+	out := make([]LocalOnly, 0, len(s.LocalOnly)+1)
+	found := false
+	for _, l := range s.LocalOnly {
+		if l.Path != path {
+			out = append(out, l)
+			continue
+		}
+		found = true
+		if note != "" {
+			l.Note = note
+			out = append(out, l)
+		}
+	}
+	if !found && note != "" {
+		out = append(out, LocalOnly{Path: path, Note: note})
+	}
+
+	s.LocalOnly = out
+	return s
+}
+
+// PruneLocalOnly drops annotations for paths Git no longer reports as held, and
+// says whether it dropped any. It is what keeps the store from contradicting
+// Git: a path released outside Drift simply stops appearing, and its orphaned
+// note goes with it on the next load rather than lingering as a claim about a
+// hold that no longer exists.
+func (s Store) PruneLocalOnly(held []string) (Store, bool) {
+	isHeld := make(map[string]bool, len(held))
+	for _, p := range held {
+		isHeld[p] = true
+	}
+
+	kept := make([]LocalOnly, 0, len(s.LocalOnly))
+	for _, l := range s.LocalOnly {
+		if isHeld[l.Path] {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) == len(s.LocalOnly) {
+		return s, false
+	}
+	s.LocalOnly = kept
+	return s, true
 }
 
 // placeholderMark tags every value in a freshly written config.json. It is how

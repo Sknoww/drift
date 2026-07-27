@@ -45,6 +45,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case declaredMsg:
 		return m.applyDeclared(msg), nil
 
+	case localOnlyMsg:
+		return m.applyLocalOnly(msg)
+
+	case localCandidatesMsg:
+		return m.applyLocalCandidates(msg), nil
+
+	case localHoldMsg:
+		return m.applyLocalHold(msg)
+
 	case saveStateMsg:
 		if msg.err != nil {
 			m.notice = "save failed: " + msg.err.Error()
@@ -55,13 +64,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
-	// On the ID-entry screen, everything else (cursor blink) drives the input.
-	if m.screen == screenAddID {
+	// Wherever a text field is live, everything else (cursor blink) drives it.
+	if m.typing() {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 	}
 	return m, nil
+}
+
+// typing reports whether a text field is live, so an unbound key is a keystroke
+// rather than a no-op. Two screens qualify: ID entry, where the whole screen is
+// the field, and the local-only note editor open over its list.
+func (m Model) typing() bool {
+	return m.screen == screenAddID || (m.screen == screenLocalOnly && m.local.note.open)
 }
 
 // handleKey resolves a key through the active screen's keymap. On the ID-entry
@@ -77,8 +93,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		return m, nil
 	}
-	if m.screen == screenAddID {
-		if action, ok := m.keys.addID.action(msg.String()); ok {
+	if m.typing() {
+		if action, ok := m.activeKeys().action(msg.String()); ok {
 			return m.dispatch(action)
 		}
 		var cmd tea.Cmd
@@ -128,6 +144,14 @@ func (m Model) activeKeys() Keymap {
 			return m.keys.declare
 		}
 		return m.keys.diff
+	case screenLocalOnly:
+		switch {
+		case m.local.note.open:
+			return m.keys.localNote
+		case m.local.add.open:
+			return m.keys.localAdd
+		}
+		return m.keys.localOnly
 	default:
 		return m.keys.dashboard
 	}
@@ -184,6 +208,8 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 		return m.dispatchConfirmDelete(action)
 	case screenDiff:
 		return m.dispatchDiff(action)
+	case screenLocalOnly:
+		return m.dispatchLocalOnly(action)
 	default:
 		return m.dispatchDashboard(action)
 	}
@@ -237,8 +263,7 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 		return m.cancelFetch(), nil
 
 	case ActionLocalOnly:
-		m.notice = "local-only changes arrive in area 6"
-		return m, nil
+		return m.openLocalOnly()
 	}
 	return m, nil
 }

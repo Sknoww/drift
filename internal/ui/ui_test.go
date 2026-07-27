@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,15 +114,19 @@ func TestDispatchQuit(t *testing.T) {
 	}
 }
 
-func TestDispatchLocalOnlyAnnounces(t *testing.T) {
-	// local-only is still ahead (area 6); it must say where it's headed rather
-	// than do nothing.
+func TestDispatchLocalOnlyOpensTheManager(t *testing.T) {
 	next, cmd := newModel().dispatch(ActionLocalOnly)
-	if cmd != nil {
-		t.Error("local-only: expected no command")
+	m := next.(Model)
+	if m.screen != screenLocalOnly {
+		t.Errorf("screen = %v, want the local-only manager", m.screen)
 	}
-	if next.(Model).notice == "" {
-		t.Error("local-only: expected a notice explaining where it's headed")
+	// Nothing is cached between visits: the held set is asked of git every time,
+	// since the flags can change outside Drift.
+	if cmd == nil {
+		t.Error("local-only: expected a command loading the held set")
+	}
+	if m.local.loaded {
+		t.Error("local-only: opened already-loaded, so a stale set could be shown")
 	}
 }
 
@@ -1334,7 +1339,7 @@ func TestHelpEntriesComeFromTheKeymap(t *testing.T) {
 	for _, e := range got {
 		byWhat[e.what] = e.keys
 	}
-	if keys := byWhat["refresh status"]; keys != "x" {
+	if keys := byWhat["refresh from git"]; keys != "x" {
 		t.Errorf("refresh keys = %q, want the rebound x", keys)
 	}
 	if keys := byWhat["move down"]; keys != "j / ↓" {
@@ -1487,5 +1492,391 @@ func TestHelpColumnsAlignAcrossGlyphsAndKeys(t *testing.T) {
 			t.Errorf("description columns misaligned: %v", starts)
 			break
 		}
+	}
+}
+
+// --- local-only changes (area 6) -------------------------------------------
+
+// errBoom stands in for any failing git call.
+var errBoom = errors.New("boom")
+
+// localModel is the manager with a held set already landed, so the interaction
+// tests never shell out.
+func localModel(entries ...heldPath) Model {
+	m := newModel()
+	m.screen = screenLocalOnly
+	m.local = localOnlyState{entries: entries, loaded: true}
+	return m
+}
+
+func sampleHeld() []heldPath {
+	return []heldPath{
+		{path: "app.yml", tracked: true, note: "debug log level"},
+		{path: "docker-compose.override.yml"},
+	}
+}
+
+func TestDefaultLocalOnlyKeysCoverTable(t *testing.T) {
+	k := DefaultLocalOnlyKeys()
+	want := map[string]Action{
+		"j": ActionMoveDown, "k": ActionMoveUp,
+		"a": ActionHoldLocal, "d": ActionRelease, "n": ActionEditNote,
+		"r": ActionRefresh, "esc": ActionCancel, "?": ActionHelp,
+		"q": ActionQuit, "ctrl+c": ActionQuit,
+	}
+	for key, action := range want {
+		if got := k[key]; got != action {
+			t.Errorf("key %q = %q, want %q", key, got, action)
+		}
+	}
+	// r must not release: a reflexive refresh from the dashboard would otherwise
+	// silently drop a hold.
+	if k["r"] == ActionRelease {
+		t.Error("r is bound to release, where the rest of Drift means refresh")
+	}
+}
+
+// Holding is its own action, not ActionAdd reused: the help table is generated
+// per action, so a reused one would have to describe itself as both "add a
+// ticket" and "hold a change".
+func TestHoldIsItsOwnAction(t *testing.T) {
+	if actionText[ActionHoldLocal] == actionText[ActionAdd] {
+		t.Error("holding and adding a ticket share their help wording")
+	}
+	entries := helpEntries(DefaultLocalOnlyKeys())
+	for _, e := range entries {
+		if e.what == actionText[ActionAdd] {
+			t.Errorf("the local-only help offers %q, which belongs to the dashboard", e.what)
+		}
+	}
+}
+
+// The manager's own screen: its keys and its glyphs, not the dashboard's.
+func TestHelpOnTheManagerIsItsOwn(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	m.showHelp = true
+	view := m.View()
+
+	if !strings.Contains(view, "local-only changes") {
+		t.Error("the help does not name the screen it is for")
+	}
+	if !strings.Contains(view, "skip-worktree") {
+		t.Error("the glyph legend does not explain the tracked hold")
+	}
+	if strings.Contains(view, "unmergeable") {
+		t.Error("the dashboard's glyph legend leaked onto the manager's help")
+	}
+}
+
+func TestReleaseRoutesByPrimitive(t *testing.T) {
+	m := localModel(sampleHeld()...)
+
+	// The tracked entry first.
+	next, cmd := m.dispatch(ActionRelease)
+	if cmd == nil {
+		t.Fatal("release issued no command")
+	}
+	msg := cmd().(localHoldMsg)
+	if msg.path != "app.yml" || msg.hold {
+		t.Errorf("release msg = %+v, want a release of app.yml", msg)
+	}
+	if next.(Model).notice == "" {
+		t.Error("release said nothing about what it was doing")
+	}
+
+	// Releasing needs no confirmation — nothing is destroyed, so the model must
+	// not divert to a confirm screen.
+	if s := next.(Model).screen; s != screenLocalOnly {
+		t.Errorf("screen = %v, want to stay on the manager", s)
+	}
+}
+
+// A hold or release re-reads the held set from git rather than assuming what
+// Drift's own write achieved — the same rule the declare flow follows.
+func TestHoldRereadsFromGit(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	next, cmd := m.applyLocalHold(localHoldMsg{path: "scratch.md", hold: true})
+	if cmd == nil {
+		t.Fatal("a completed hold did not re-read the held set")
+	}
+	if next.notice == "" {
+		t.Error("a completed hold reported nothing")
+	}
+}
+
+func TestApplyLocalHoldSurfacesAFailure(t *testing.T) {
+	m := localModel()
+	next, cmd := m.applyLocalHold(localHoldMsg{path: "app.yml", hold: true, err: errBoom})
+	if cmd != nil {
+		t.Error("a failed hold still re-read the held set")
+	}
+	if !strings.Contains(next.notice, "app.yml") {
+		t.Errorf("notice = %q, want it to name the path that failed", next.notice)
+	}
+}
+
+// The held set comes from git; the store contributes only the notes, and loses
+// the ones git no longer backs.
+func TestApplyLocalOnlyJoinsNotesAndPrunesOrphans(t *testing.T) {
+	m := localModel()
+	m.store.LocalOnly = []store.LocalOnly{
+		{Path: "app.yml", Note: "debug log level"},
+		{Path: "released-elsewhere.yml", Note: "stale"},
+	}
+
+	next, cmd := m.applyLocalOnly(localOnlyMsg{held: []heldPath{{path: "app.yml", tracked: true}}})
+	if len(next.local.entries) != 1 || next.local.entries[0].note != "debug log level" {
+		t.Errorf("entries = %+v, want the stored note joined on", next.local.entries)
+	}
+	if len(next.store.LocalOnly) != 1 {
+		t.Errorf("store = %+v, want the orphaned note dropped", next.store.LocalOnly)
+	}
+	if cmd == nil {
+		t.Error("the prune was not persisted")
+	}
+}
+
+// A load that lands after the user left the manager must not repaint it.
+func TestApplyLocalOnlyIgnoresAStaleLoad(t *testing.T) {
+	m := newModel() // on the dashboard
+	next, _ := m.applyLocalOnly(localOnlyMsg{held: []heldPath{{path: "app.yml"}}})
+	if len(next.local.entries) != 0 {
+		t.Error("a load landed on a screen the user had already left")
+	}
+}
+
+// Offering "hold this" for something already held would be a lie.
+func TestCandidatesExcludeWhatIsAlreadyHeld(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	m.local.add = addLocalState{open: true}
+
+	next := m.applyLocalCandidates(localCandidatesMsg{changes: []git.WorkingChange{
+		{Path: "app.yml", Tracked: true, Staged: true},
+		{Path: "scratch.md"},
+	}})
+	if len(next.local.add.candidates) != 1 || next.local.add.candidates[0].path != "scratch.md" {
+		t.Errorf("candidates = %+v, want the already-held path filtered out", next.local.add.candidates)
+	}
+}
+
+// skip-worktree hides the working tree, not the index — so holding a staged
+// change would look like protection and give none. It is refused, with the fix.
+func TestStagedCandidateIsRefused(t *testing.T) {
+	m := localModel()
+	m.local.add = addLocalState{
+		open:       true,
+		loaded:     true,
+		candidates: []localCandidate{{path: "app.yml", tracked: true, staged: true}},
+	}
+
+	next, cmd := m.dispatch(ActionConfirm)
+	if cmd != nil {
+		t.Error("a staged change was held anyway")
+	}
+	nm := next.(Model)
+	if !nm.local.add.open {
+		t.Error("the picker closed on a refused hold, hiding the reason")
+	}
+	if !strings.Contains(nm.notice, "unstage") {
+		t.Errorf("notice = %q, want it to say how to fix this", nm.notice)
+	}
+}
+
+func TestHoldRoutesUntrackedToExclude(t *testing.T) {
+	m := localModel()
+	m.local.add = addLocalState{
+		open:       true,
+		loaded:     true,
+		candidates: []localCandidate{{path: "scratch.md"}},
+	}
+
+	next, cmd := m.dispatch(ActionConfirm)
+	if cmd == nil {
+		t.Fatal("confirm issued no command")
+	}
+	if msg := cmd().(localHoldMsg); msg.path != "scratch.md" || !msg.hold {
+		t.Errorf("hold msg = %+v, want a hold of scratch.md", msg)
+	}
+	if next.(Model).local.add.open {
+		t.Error("the picker stayed open after a hold")
+	}
+}
+
+// The note editor is a text field: unbound keys type into it rather than
+// reaching the list underneath.
+func TestNoteEditorTakesKeystrokes(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	next, _ := m.dispatch(ActionEditNote)
+	nm := next.(Model)
+	if !nm.local.note.open || nm.local.note.path != "app.yml" {
+		t.Fatalf("note editor = %+v, want it open on the selected path", nm.local.note)
+	}
+	if nm.input.Value() != "debug log level" {
+		t.Errorf("input = %q, want it seeded with the existing note", nm.input.Value())
+	}
+
+	// "d" would release on the list; here it must be a keystroke.
+	typed, _ := nm.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	tm := typed.(Model)
+	if !tm.local.note.open {
+		t.Error("typing in the note editor triggered a list action")
+	}
+	if !strings.HasSuffix(tm.input.Value(), "d") {
+		t.Errorf("input = %q, want the keystroke to have landed in the field", tm.input.Value())
+	}
+}
+
+func TestNoteEditorSavesAndClears(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	next, _ := m.dispatch(ActionEditNote)
+	nm := next.(Model)
+	nm.input.SetValue("  why it's here  ")
+
+	saved, cmd := nm.dispatch(ActionConfirm)
+	sm := saved.(Model)
+	if cmd == nil {
+		t.Error("the note was not persisted")
+	}
+	if sm.local.note.open {
+		t.Error("the editor stayed open after saving")
+	}
+	if sm.store.LocalOnlyNote("app.yml") != "why it's here" {
+		t.Errorf("stored note = %q, want it trimmed and saved", sm.store.LocalOnlyNote("app.yml"))
+	}
+	// The row updates in place, so the list reflects the edit without a reload.
+	if sm.local.entries[0].note != "why it's here" {
+		t.Errorf("row note = %q, want the list updated too", sm.local.entries[0].note)
+	}
+
+	// esc keeps the previous note.
+	reopened, _ := sm.dispatch(ActionEditNote)
+	cancelled, _ := reopened.(Model).dispatch(ActionCancel)
+	if cancelled.(Model).store.LocalOnlyNote("app.yml") != "why it's here" {
+		t.Error("cancelling the editor changed the stored note")
+	}
+}
+
+// The scope is a property of the primitives, not a limitation — and the UI must
+// not imply a hold is per-branch (CONTEXT.md).
+func TestManagerStatesItsScope(t *testing.T) {
+	view := localModel(sampleHeld()...).View()
+	if !strings.Contains(view, "every branch") {
+		t.Error("the manager does not say a hold applies to every branch")
+	}
+	for _, want := range []string{"app.yml", "skip-worktree", "debug log level", "info/exclude"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the list is missing %q", want)
+		}
+	}
+}
+
+func TestManagerEmptyStateTeaches(t *testing.T) {
+	view := localModel().View()
+	if !strings.Contains(view, "Nothing held yet") {
+		t.Error("the empty manager does not say so")
+	}
+	if !strings.Contains(view, "a to hold") {
+		t.Error("the empty manager does not teach how to seed it")
+	}
+}
+
+func TestManagerCancelReturnsHome(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	next, _ := m.dispatch(ActionCancel)
+	nm := next.(Model)
+	if nm.screen != screenDashboard {
+		t.Errorf("screen = %v, want the dashboard", nm.screen)
+	}
+	if len(nm.local.entries) != 0 {
+		t.Error("the manager kept its state, so a stale set could be shown on the next visit")
+	}
+}
+
+// The cursor must survive a reload that shortens the list.
+func TestManagerCursorSurvivesAShorterList(t *testing.T) {
+	m := localModel(sampleHeld()...)
+	m.local.cursor = 1
+	next, _ := m.applyLocalOnly(localOnlyMsg{held: []heldPath{{path: "app.yml", tracked: true}}})
+	if next.local.cursor != 0 {
+		t.Errorf("cursor = %d, want it clamped into the shorter list", next.local.cursor)
+	}
+}
+
+// The whole loop against a real repo: open the manager, hold one change of each
+// kind, and confirm git itself stops reporting them — which is the promise, and
+// the only thing worth asserting end to end.
+func TestLocalOnlyLoopAgainstARealRepo(t *testing.T) {
+	dir := newTestRepo(t)
+	writeCommit(t, dir, "app.yml", "level: info\n")
+	if err := os.WriteFile(filepath.Join(dir, "app.yml"), []byte("level: debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scratch.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := git.New(dir)
+	m := New(repo, sampleConfig(), store.Store{})
+	m.loading = false
+
+	next, cmd := m.dispatch(ActionLocalOnly)
+	m = next.(Model)
+	m, _ = m.applyLocalOnly(cmd().(localOnlyMsg))
+	if len(m.local.entries) != 0 {
+		t.Fatalf("a fresh repo reported %+v held", m.local.entries)
+	}
+
+	// Hold both candidates, one of each kind, through the real commands.
+	next, cmd = m.dispatch(ActionHoldLocal)
+	m = next.(Model).applyLocalCandidates(cmd().(localCandidatesMsg))
+	if len(m.local.add.candidates) != 2 {
+		t.Fatalf("candidates = %+v, want the tracked edit and the untracked file", m.local.add.candidates)
+	}
+	for _, c := range m.local.add.candidates {
+		if msg := holdLocalCmd(repo, c.path, c.tracked)().(localHoldMsg); msg.err != nil {
+			t.Fatalf("hold %s: %v", c.path, msg.err)
+		}
+	}
+
+	// Git's own answer is the one that counts.
+	dirty, err := repo.IsDirty(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Error("git still reports the working tree dirty — the holds did not take")
+	}
+
+	m.local.add = addLocalState{}
+	m, _ = m.applyLocalOnly(loadLocalOnlyCmd(repo)().(localOnlyMsg))
+	if len(m.local.entries) != 2 {
+		t.Fatalf("entries = %+v, want both holds listed", m.local.entries)
+	}
+	byPath := map[string]heldPath{}
+	for _, h := range m.local.entries {
+		byPath[h.path] = h
+	}
+	if !byPath["app.yml"].tracked {
+		t.Error("app.yml is listed as untracked, so release would use the wrong primitive")
+	}
+	if byPath["scratch.md"].tracked {
+		t.Error("scratch.md is listed as tracked")
+	}
+
+	// Releasing hands both changes back, unharmed.
+	for _, h := range m.local.entries {
+		if msg := releaseLocalCmd(repo, h.path, h.tracked)().(localHoldMsg); msg.err != nil {
+			t.Fatalf("release %s: %v", h.path, msg.err)
+		}
+	}
+	if dirty, _ = repo.IsDirty(context.Background()); !dirty {
+		t.Error("the released edits did not come back")
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "app.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "level: debug\n" {
+		t.Errorf("app.yml = %q, want the local edit intact throughout", body)
 	}
 }

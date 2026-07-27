@@ -24,6 +24,11 @@ import (
 	"strings"
 )
 
+// fenceHeader opens the Drift block in an attributes file. The fence itself and
+// the file mechanics around it live in fence.go, shared with the info/exclude
+// block area 6 maintains.
+var fenceHeader = fenceHeaderFor("unmergeable declarations")
+
 // AttrDest is one destination for a written attribute. Both are first-class:
 // the choice is the user's, never Drift's.
 type AttrDest int
@@ -53,16 +58,6 @@ func (d AttrDest) Detail() string {
 	}
 	return "committed and shared with the team"
 }
-
-// The Drift-managed block. Drift's own lines are fenced so they are identifiable
-// and removable, and so a repeat declaration lands beside its siblings instead of
-// scattered down a file the user also hand-maintains. Matching is on the bare
-// prefix, so an edited comment tail never orphans the block.
-const (
-	fenceBegin  = "# drift:begin"
-	fenceEnd    = "# drift:end"
-	fenceHeader = fenceBegin + " — unmergeable declarations managed by drift"
-)
 
 // AttrDeclaration reports what a declaration did.
 type AttrDeclaration struct {
@@ -165,26 +160,6 @@ func insertDeclaration(content, pattern string) (string, bool) {
 	return joinLines(lines), false
 }
 
-// fenceInsertPoint is the line index a new declaration goes at — the closing
-// fence of the Drift block, so the line lands as the block's last rule. It
-// reports ok only for a complete block (a begin with a matching end after it),
-// so a stray marker never turns into an insertion point in the middle of someone
-// else's rules.
-func fenceInsertPoint(lines []string) (int, bool) {
-	begin := -1
-	for i, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		if begin < 0 && strings.HasPrefix(trimmed, fenceBegin) {
-			begin = i
-			continue
-		}
-		if begin >= 0 && strings.HasPrefix(trimmed, fenceEnd) {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
 // attrLine formats one declaration. A pattern containing whitespace is quoted,
 // which is how git's own attributes syntax carries one.
 func attrLine(pattern string) string {
@@ -220,59 +195,4 @@ func splitAttrLine(line string) (pattern, attrs string) {
 	}
 	pattern, attrs, _ = strings.Cut(line, " ")
 	return strings.TrimSpace(pattern), strings.TrimSpace(attrs)
-}
-
-// splitLines splits file content into lines, dropping the trailing newline so a
-// rejoin does not grow a blank line on every write.
-func splitLines(content string) []string {
-	if content == "" {
-		return nil
-	}
-	return strings.Split(strings.TrimSuffix(content, "\n"), "\n")
-}
-
-// joinLines rebuilds file content, always newline-terminated — an attributes
-// file is line-based, and a missing final newline would fuse the next append
-// onto the last rule.
-func joinLines(lines []string) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.Join(lines, "\n") + "\n"
-}
-
-// writeFileAtomic writes data via temp-file + rename, the same guarantee the
-// store gives its JSON: a crash or a full disk can never truncate an existing
-// attributes file into a half-written one. An existing file keeps its mode.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
-	if err != nil {
-		return fmt.Errorf("create temp file for %s: %w", path, err)
-	}
-	defer os.Remove(tmp.Name()) // no-op once the rename below succeeds
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := os.Chmod(tmp.Name(), mode); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }

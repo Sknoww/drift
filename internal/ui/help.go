@@ -43,9 +43,12 @@ var actionText = map[Action]string{
 	ActionDeclare:         "declare this file unmergeable to git",
 	ActionAdd:             "add a ticket",
 	ActionDelete:          "delete the selected ticket",
-	ActionRefresh:         "refresh status",
+	ActionRefresh:         "refresh from git",
 	ActionFetch:           "fetch, then refresh",
-	ActionLocalOnly:       "local-only changes (area 6)",
+	ActionLocalOnly:       "manage local-only changes",
+	ActionHoldLocal:       "hold a working-tree change on this machine",
+	ActionRelease:         "stop holding the selected path",
+	ActionEditNote:        "note why it's held",
 	ActionHelp:            "this help",
 	ActionQuit:            "quit",
 }
@@ -58,6 +61,7 @@ var actionOrder = []Action{
 	ActionMoveUp, ActionMoveDown,
 	ActionToggleExpand, ActionToggleCandidate, ActionOpenPicker, ActionEditKey,
 	ActionNextFile, ActionPrevFile, ActionDeclare,
+	ActionHoldLocal, ActionRelease, ActionEditNote,
 	ActionConfirm, ActionCancel,
 	ActionAdd, ActionDelete, ActionRefresh, ActionFetch, ActionLocalOnly,
 	ActionHelp, ActionQuit,
@@ -155,6 +159,15 @@ func joinKeys(keys []string) string {
 // the row it explains — with the reasoning behind each signal left to DESIGN.md.
 func (m Model) glyphLegend() []helpEntry {
 	s := m.styles
+	if m.screen == screenLocalOnly {
+		// The local-only list has a legend of its own: its two glyphs say which
+		// primitive holds a path, and the tracked one matters most precisely
+		// because git hides it everywhere else.
+		return []helpEntry{
+			{s.dirty.Render("◆"), "tracked — held with skip-worktree, so git status won't show it"},
+			{s.help.Render("◇"), "untracked — held with info/exclude, so it's ignored locally"},
+		}
+	}
 	return []helpEntry{
 		{s.ticket.Render("▸ / ▾"), "ticket collapsed / expanded"},
 		{s.behind.Render("↓N"), "commits the target has that you don't — it moved"},
@@ -183,6 +196,11 @@ func (m Model) screenName() string {
 			return "declare"
 		}
 		return "diff panel"
+	case screenLocalOnly:
+		// The candidate picker and the note editor bind no help key, the same as
+		// the target picker and the declare overlay: a momentary choice step
+		// carries its own one-line help (DESIGN.md §2).
+		return "local-only changes"
 	default:
 		return "dashboard"
 	}

@@ -55,7 +55,8 @@ ticket is expanded; a computed status map keyed by `ticketID + branch`; a
 
 **Screens:** Dashboard (tickets, selected one expanded to its branches) · Add ticket
 (ID entry) · Add ticket (pairing checklist, with the target picker as an overlay on
-top of it) · First-run wizard (a checklist of the repo's remote refs, each an editable
+top of it) · Unmergeable diff panel (with the declare overlay on top) · Local-only
+changes (with the hold picker and the note editor as overlays) · First-run wizard (a checklist of the repo's remote refs, each an editable
 `Key`←`Ref` row; own Bubble Tea program, runs before the dashboard when the repo is
 unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dashboard Model).
 
@@ -130,6 +131,29 @@ unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dash
     the target moved.
   - Not offered on the ID-entry screen (every key there is text) or inside the target
     picker / declare overlays (momentary choice steps with their own one-line help).
+- **Local-only list** (area 6) ✅ — a first-class screen (`l`), not a footnote, because
+  **visibility is the whole feature**: raw `skip-worktree` already holds a tracked file
+  back from every commit, and then hides it from `git status` so thoroughly that people
+  forget it exists. One row per held path: a kind glyph, the path, the **primitive**
+  holding it (`skip-worktree` / `info/exclude`), and the note. The mechanism is shown
+  per row for the same reason the declared badge is on the diff panel — it is the honest
+  answer to "what did Drift actually do, and what undoes it outside Drift". Two header
+  lines state the scope outright (*held on every branch you check out*), because a hold
+  is an index/ignore flag and the UI must never imply per-branch scope (CONTEXT.md).
+  Glyphs: `◆` tracked in the **dirty** style, `◇` untracked in faint. The dirty color is
+  reused deliberately — a held tracked file *is* uncommitted work Git is hiding, which
+  is what that dot has always meant — and the filled/colored one is the tracked case
+  precisely because it is the one Git makes invisible everywhere else. No new alarm
+  color: `behind` stays the only thing on screen shouting.
+  - **Hold picker** ✅ — `a` opens the working-tree changes as a checklist-shaped
+    overlay, each row naming what holding it would do (`tracked → skip-worktree`,
+    `untracked → info/exclude`), so the routing is visible rather than magic. A
+    **staged** change is listed but refused, in `error` style with the fix named: the
+    hold covers the working tree, not the index, so holding it would look like
+    protection and give none.
+  - **Note editor** ✅ — `n` opens an inline field over the list, the same shape as the
+    wizard's key rename. The note is the only thing Drift persists about a hold, and it
+    answers the question the list exists to answer three weeks later: why is this here?
 - **Branch row selection** ✅ — the dashboard cursor moves over a **flat list of
   visible rows** (ticket headlines plus each expanded ticket's branch rows), so a
   branch is selectable in its own right — the prerequisite for a per-branch diff (and
@@ -191,6 +215,32 @@ scroll bindings, and a rebind can still name the actions it does define.
 Declare overlay: `j` / `k` move, `enter` chooses, `esc` steps back — and unlike the
 panel underneath, **every** key is bound while it is open, so `j`/`k` can never leak
 through and scroll the diff behind the choice.
+
+Local-only changes (area 6):
+
+| Key | Action |
+|---|---|
+| `j` / `k` / arrows | Move |
+| `a` | Hold a working-tree change on this machine |
+| `d` | Release the selected hold |
+| `n` | Note why it's held |
+| `r` | Re-read the held set from git |
+| `esc` | Back to the dashboard |
+| `?` | Keys and glyphs for this screen |
+| `q` / `ctrl+c` | Quit |
+
+`a` and `r` carry their dashboard meaning across. `d` takes the dashboard's "remove the
+selected thing" key rather than the more mnemonic `r` — bound the other way, a reflexive
+refresh would silently drop a hold. Release needs **no** `y/n` confirm, unlike deleting
+a ticket: it destroys nothing, since a released file's edits reappear at once as
+ordinary working-tree changes.
+
+Holding is its own named action (`hold_local`), *not* `add` reused. The `?` table is
+generated per action, so one action serving two screens would have to describe itself as
+both "add a ticket" and "hold a change" — the named-action contract only holds if a name
+means one thing. Hold picker: `j` / `k` move, `enter` holds, `esc` backs out — the same
+overlay shape as everywhere else. Note editor: `enter` saves, `esc` cancels, every other
+key types, the same split as the ID-entry screen.
 
 Git work runs as async `Cmd`s, so every one of these stays responsive — the UI must
 never freeze on a fetch. States ✅ (built with the dashboard): a **loading** spinner

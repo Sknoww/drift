@@ -30,6 +30,7 @@ const (
 	screenPairing              // add flow: candidate checklist (+ picker overlay)
 	screenConfirmDelete        // y/n confirm before dropping a ticket
 	screenDiff                 // area 5: the unmergeable diff panel for one branch
+	screenLocalOnly            // area 6: the manager for changes held on this machine
 )
 
 // rowRef names one selectable row on the dashboard. The cursor addresses a flat
@@ -122,6 +123,7 @@ type Model struct {
 	add           addFlow         // pairing state, live only on screenPairing
 	pendingDelete string          // ticket ID awaiting delete confirmation
 	diff          diffState       // unmergeable diff panel, live only on screenDiff
+	local         localOnlyState  // local-only manager, live only on screenLocalOnly
 
 	status  map[string]branchStatus
 	current string // checked-out branch, "" when detached
