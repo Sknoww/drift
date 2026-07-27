@@ -237,11 +237,7 @@ func (m wizardModel) View() string {
 	b.WriteString(m.styles.title.Render("drift") + "  " + m.styles.help.Render("first-run setup"))
 	b.WriteString("\n")
 
-	panelStyle := m.styles.panel
-	if cw := contentWidth(m.styles, m.width); cw > 0 {
-		panelStyle = panelStyle.Width(cw)
-	}
-	b.WriteString(panelStyle.Render(m.body()))
+	b.WriteString(panelStyle(m.styles, m.width).Render(m.body()))
 	b.WriteString("\n")
 
 	if m.notice != "" {

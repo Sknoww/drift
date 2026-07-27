@@ -31,13 +31,52 @@ type Unmergeable struct {
 	Globs []string `json:"globs"` // path patterns, e.g. "workflows/**/*.uwe"
 }
 
-// Config is the hand-edited half: target mains and unmergeable file classes.
+// Destination names for Declare.Destinations — the two attributes files Drift
+// can write a `-merge` declaration into (CONTEXT.md §Unmergeable).
+const (
+	DestShared = "shared" // .gitattributes at the repo root — committed, team-wide
+	DestLocal  = "local"  // $GIT_DIR/info/attributes — local, unversioned
+)
+
+// Declare constrains where the declare flow may write a `-merge` attribute.
+//
+// Omit the whole key and both destinations are offered. A team that does not
+// keep a committed .gitattributes lists only "local", and the shared
+// destination stops being offered at all — so it can never be picked by
+// accident, and Drift can never dirty a file the team does not use.
+//
+// It lives in config.json, hand-edited, rather than behind a keypress: a guard
+// against an unwanted commit is worth more when it cannot be toggled off by a
+// stray keystroke.
+type Declare struct {
+	// Destinations allow-lists destination names, in the order they are offered
+	// — so this also reorders the picker, not just filters it.
+	Destinations []string `json:"destinations"`
+}
+
+// Config is the hand-edited half: target mains, unmergeable file classes, and
+// where declarations may be written.
 //
 // The number of targets is per-repo and unbounded. Nothing here or downstream
 // may assume a count.
 type Config struct {
 	Targets     []Target      `json:"targets"`
 	Unmergeable []Unmergeable `json:"unmergeable"`
+
+	// A pointer so an absent key stays absent from a config Drift writes: the
+	// first-run wizard must not seed an opinion the user never expressed.
+	Declare *Declare `json:"declare,omitempty"`
+}
+
+// DeclareDestinations is the allow-listed destination names, or nil when the
+// config does not constrain them — nil means "offer everything", which is not
+// the same as an empty list (rejected by validate as almost certainly a
+// mistake, since it would leave nowhere to write).
+func (c Config) DeclareDestinations() []string {
+	if c.Declare == nil {
+		return nil
+	}
+	return c.Declare.Destinations
 }
 
 // TicketBranch pairs one local branch with the target it aims at. The pairing
@@ -225,27 +264,70 @@ func (c Config) validate() error {
 		}
 		seen[t.Key] = true
 	}
+	return c.validateDeclare()
+}
+
+// validateDeclare rejects a declare block that would quietly do the opposite of
+// what it says. A typo'd destination name must never be skipped over: silently
+// ignoring it would leave the shared .gitattributes on offer for someone who
+// wrote the key precisely to get rid of it.
+func (c Config) validateDeclare() error {
+	if c.Declare == nil {
+		return nil
+	}
+	if len(c.Declare.Destinations) == 0 {
+		return fmt.Errorf("declare.destinations is empty — remove the %q key to offer both", "declare")
+	}
+	seen := make(map[string]bool, len(c.Declare.Destinations))
+	for _, name := range c.Declare.Destinations {
+		if name != DestShared && name != DestLocal {
+			return fmt.Errorf("unknown declare destination %q (want %q or %q)", name, DestShared, DestLocal)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate declare destination %q", name)
+		}
+		seen[name] = true
+	}
 	return nil
 }
 
-// MatchesUnmergeable reports whether a repo-relative path (git's own
-// forward-slash form) matches any configured unmergeable glob. This is the
-// config half of the hybrid detection rule (CONTEXT.md §Unmergeable); what
-// `git check-attr merge` reports is the additive other half, resolved in the
-// caller. `**` spans path segments, so `workflows/**/*.uwe` covers the file at
-// any depth under the directory.
+// UnmergeableMatch is one configured glob that matched a path, tagged with the
+// class it belongs to. The class name is what makes a match explainable in the
+// UI: "workflows/**/*.uwe (workflows)" says why the file was flagged.
+type UnmergeableMatch struct {
+	Name string // the Unmergeable class the glob belongs to
+	Glob string // the pattern that matched
+}
+
+// UnmergeableMatches returns every configured glob matching a repo-relative
+// path (git's own forward-slash form), in config order. This is the config half
+// of the hybrid detection rule (CONTEXT.md §Unmergeable); what `git check-attr
+// merge` reports is the additive other half, resolved in the caller. `**` spans
+// path segments, so `workflows/**/*.uwe` covers the file at any depth under the
+// directory.
+//
+// The matches are also what the declare flow offers as writable patterns
+// (area 5 part 2): promoting a config glob to a `-merge` attribute declares the
+// whole class at once, where the file's own path declares just the one file.
 //
 // A malformed glob is skipped, never fatal: one bad pattern in config must not
 // blind detection to every other class.
-func (c Config) MatchesUnmergeable(path string) bool {
+func (c Config) UnmergeableMatches(path string) []UnmergeableMatch {
+	var got []UnmergeableMatch
 	for _, u := range c.Unmergeable {
 		for _, g := range u.Globs {
 			if ok, err := doublestar.Match(g, path); err == nil && ok {
-				return true
+				got = append(got, UnmergeableMatch{Name: u.Name, Glob: g})
 			}
 		}
 	}
-	return false
+	return got
+}
+
+// MatchesUnmergeable reports whether any configured glob matches the path — the
+// predicate half of UnmergeableMatches, which is what detection needs.
+func (c Config) MatchesUnmergeable(path string) bool {
+	return len(c.UnmergeableMatches(path)) > 0
 }
 
 // Target returns the target with the given key.

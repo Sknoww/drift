@@ -55,6 +55,23 @@ is; link its spec/ADR once one exists.
      process, discards the stale sweep via a monotonic sweep id); a plain refresh is
      local and stays non-cancellable. Panels now span the full terminal width and the
      selection band fills the panel instead of hugging its text
+   - ✅ **Two band traps, found by dogfooding** — the full-width band was right in
+     intent and wrong twice over in practice, and **neither is visible to a test**
+     (a test's color profile has no color, so nothing wraps and nothing resets).
+     Both are written up in `DESIGN.md` §1/§3 and asserted structurally:
+     (a) Lip Gloss counts a style's padding inside `Width()` but not its border, so a
+     panel set to `contentWidth` had a text area two cells narrower than the rows built
+     to fill it — every selected row wrapped, dropping its tail onto the next line;
+     (b) each styled cell in a row closes with a *full* SGR reset, which switched the
+     band's background off partway along the line, so the highlight covered the branch
+     name, skipped the middle, and reappeared in the trailing pad
+   - ✅ **`?` help overlay** — keys and glyphs for the screen you are on, drawn in the
+     panel's place; any key closes it and is consumed. The key table is **generated from
+     the live keymap**, so it is a view of the bindings actually in force rather than a
+     hand-maintained list that drifts. Keys deliberately left unbound so they reach a
+     component (the diff viewport's scrolling) are added as static rows. The glyph
+     legend draws each signal in its own role's style — color *is* the signal, so a
+     glyph explained in the wrong color explains the wrong glyph
 4. ✅ **First-run setup wizard** — on first run in an unconfigured repo, pick the target
    mains from the repo's own refs and write `config.json`, instead of handing the user
    a JSON file to edit. Runs as its own Bubble Tea program (`internal/ui/wizard.go`)
@@ -75,23 +92,44 @@ is; link its spec/ADR once one exists.
    - The area 2 placeholder path stays as the fallback — wizard declined (`esc`),
      non-interactive run (stdin/stdout not a TTY), no remote refs to offer, or a config
      that exists but is broken. The wizard is the front door, not the only one
-5. 🛠️ **Unmergeable detection + diff panel** — resolve the unmergeable set via the
+5. ✅ **Unmergeable detection + diff panel** — resolve the unmergeable set via the
    hybrid rule in `CONTEXT.md` (`git check-attr merge` first, config globs additive).
-   Split into detection+diff (shipped) and attribute-writing (next). Spec:
+   Built in two parts: detection+diff, then attribute-writing. Spec:
    `docs/specs/unmergeable-detection.md`.
    - ✅ **Detection + diff panel** — per branch, gated on `behind>0`, intersect what the
      target changed with what the branch changed (committed **+** working-tree for the
      checked-out branch), keep only the unmergeable ones (`check-attr -merge` ∪ config
      globs via `doublestar`), and show each file's incoming `git diff B...T -- <path>`
-     plain-text in a scrollable panel. Branch rows are individually selectable now
-     (flat visible-row cursor); `enter` on a branch opens its diff, because MVP2 and
-     MVP3 can hold different versions of the same file — a ticket-scoped diff would
-     conflate them. Mergeable changes are never surfaced. New area-1 calls:
+     in a scrollable panel — plain text for every format, but colored by line role
+     (`+`/`-`/hunk/meta), since telling an added line from a removed one is what reading
+     a diff *is*; `tab`/`shift+tab` cycle the files, wrapping at both ends. Branch rows
+     are individually selectable (flat visible-row cursor); `enter` on a branch opens
+     its diff, because MVP2 and MVP3 can hold different versions of the same file — a
+     ticket-scoped diff would conflate them. Mergeable changes are never surfaced. New area-1 calls:
      `ChangedFiles`, `FileDiff`, `WorkingTreeModified`, `CheckAttrMerge`
-   - ⏳ **Write the `-merge` attribute on request** — to either `.gitattributes`
-     (committed, team-wide) or `$GIT_DIR/info/attributes` (local, highest precedence)
-     at the user's choice. Detection only *reads* the attribute today; this teaches Git
-     the constraint so it behaves correctly even when Drift isn't running
+   - ✅ **Write the `-merge` attribute on request** — `w` on the diff panel opens a
+     two-step overlay: **what** to declare (a matched config glob, which covers the
+     whole class, or the file's own path) and **where** it goes (`.gitattributes`,
+     committed and team-wide; or `$GIT_DIR/info/attributes`, local and highest
+     precedence). Both steps are the user's choice, never a default — the same rule as
+     pairing. Detection only *read* the attribute; this teaches Git the constraint so
+     it behaves correctly even when Drift isn't running. Lines land in a Drift-fenced
+     block, a pattern already declared anywhere in the file is a reported no-op, and
+     the write is atomic. New in area 1: `TopLevel`, `AttrPath`, `DeclareUnmergeable` —
+     the one place the git layer writes a file rather than shelling out, since an
+     attributes file has no plumbing to write it (its *location* is still asked of git)
+   - ✅ **Making the write visible** — declaring a file the panel already flags changes
+     nothing on screen unless the panel says *which half* of the hybrid rule flagged it.
+     Each collision now carries whether Git itself knows, and the panel badges the file
+     (`✓ declared to git` / `not declared to git — w declares it`). After a write Drift
+     **re-reads `check-attr`** rather than assuming what its own write achieved, so a
+     glob covering several listed files flips all of them and the badge can never lie
+   - ✅ **Destination allowlist** — `"declare": {"destinations": ["local"]}` in
+     `config.json` filters *and* orders the picker, so a team that keeps no committed
+     `.gitattributes` never sees it offered and cannot dirty it by accident. Hand-edited
+     config rather than a keypress on purpose: a guard against an unwanted commit is
+     worth more when it cannot be toggled off by a stray keystroke. An unknown name, a
+     duplicate, or an empty list is a validation error, never something skipped over
 6. ⏳ **Local-only changes** — a first-class, *visible* manager for changes you keep on
    this machine but never commit: logging tweaks, local config, scratch files. A mix of
    tracked and untracked paths under one list. Spec: `docs/specs/local-only-changes.md`.
@@ -144,5 +182,27 @@ is; link its spec/ADR once one exists.
       customization a pure override layer instead of a retrofit — see `DESIGN.md` §3
     - Conflicts (two actions bound to one key) are surfaced, never silently shadowed —
       the same "never guess" rule as pairing
+    - **The `?` overlay already rides the keymap** (area 3): its key table is generated
+      from whatever bindings are live, so a rebind documents itself with no code change
     - Drift's first config outside `<.git>/drift/`; keymaps are per-user, so a per-repo
       home would be the wrong scope
+13. ⏸️ **Side-by-side diff** — deferred. A second rendering of the area-5 diff, as a
+    **toggle** on the panel (never a mode, and never a replacement — the unified view
+    stays the default). Deferred on three counts, all worth re-testing before building:
+    - **Width is the binding constraint.** At 100 columns the panel's text area is 94,
+      so two panes plus a gutter is ~45 each — and the formats this exists for (Unity
+      YAML, `.pbxproj`, XML-ish `.uwe`) are deeply indented with long lines. It would
+      wrap or truncate exactly the content it's meant to clarify, so it must be
+      width-gated: below roughly 120 columns, fall back to unified rather than render
+      something unreadable
+    - **The diff is for orientation, not resolution.** Drift never edits an unmergeable
+      file — that's permanent — so the panel answers "what moved upstream, so I know
+      what to redo in the external tool", and the unified form is the compact answer.
+      Side-by-side earns its keep when reconciling *in place*, the one thing Drift will
+      never do
+    - **Area 11 is the better lever** on the same problem: one keypress that shows the
+      diff *and* launches the tool beats a second rendering of the same information
+    - **Decide which comparison when it's on the table:** side-by-side of the *diff*
+      (what changed) or of the *versions* (your file left, the target's right). Those
+      are different tools, and the second may be the more useful one for hand
+      reconciliation. Not a detail to settle in advance

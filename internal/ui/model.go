@@ -53,10 +53,47 @@ type diffState struct {
 	branch    string
 	targetKey string
 	targetRef string               // origin/<target>, the tip the diff is taken against
-	files     []string             // colliding unmergeable paths, in detection order
+	files     []collision          // colliding unmergeable paths, in detection order
 	cursor    int                  // index into files: the file on screen
 	cache     map[string]diffEntry // path -> loaded diff, absent while still loading
 	vp        viewport.Model       // scrolls a diff taller or wider than the panel
+
+	declare declareState // the declare overlay, open over the panel
+}
+
+// declareState is the open "declare unmergeable" overlay (area 5, part 2): the
+// two choices between pressing w and Drift writing a `-merge` line. It is an
+// overlay on the diff panel, exactly as the target picker is one on the pairing
+// checklist — the file it is about is the one already on screen.
+//
+// Both steps are choices, never defaults: which pattern to declare (a config
+// glob covers the whole class, the path covers this file alone) and where it is
+// written (committed and team-wide, or local and highest-precedence). Drift
+// shows real options and the user picks, the same rule as pairing.
+type declareState struct {
+	open     bool
+	step     declareStep
+	path     string           // the file the declaration is about
+	patterns []declarePattern // offered patterns: matched config globs, then the path
+	dests    []git.AttrDest   // destinations this repo allows, in config order
+	pattern  string           // the pattern chosen at stepPattern
+	cursor   int              // index into the current step's list
+}
+
+// declareStep is which of the overlay's two questions is on screen.
+type declareStep int
+
+const (
+	stepPattern declareStep = iota // what to declare
+	stepDest                       // where to write it
+)
+
+// declarePattern is one writable pattern offered for a file, with the reason it
+// is on the list. A config glob declares its whole class at once; the file's own
+// path declares just that file.
+type declarePattern struct {
+	pattern string
+	why     string // "config: workflows", "this file only"
 }
 
 // diffEntry is one file's fetched diff, or the error fetching it.
@@ -102,6 +139,8 @@ type Model struct {
 	fetchCancel context.CancelFunc
 
 	width, height int
+
+	showHelp bool // the ? overlay is open over whatever screen asked for it
 
 	notice string // transient one-line hint or error under the panel
 	err    error  // last status-sweep error, shown until the next good sweep

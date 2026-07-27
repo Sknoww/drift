@@ -583,10 +583,109 @@ func TestMatchesUnmergeable(t *testing.T) {
 	}
 }
 
+// The declare flow (area 5, part 2) writes a matched glob as a `-merge`
+// attribute, so it needs the matches themselves — with the class name that
+// explains why the file was flagged — not just the yes/no.
+func TestUnmergeableMatchesNamesEveryMatchingGlob(t *testing.T) {
+	cfg := Config{Unmergeable: []Unmergeable{
+		{Name: "workflows", Globs: []string{"workflows/**/*.uwe", "**/*.uwe"}},
+		{Name: "unity", Globs: []string{"**/*.unity"}},
+		{Name: "broken", Globs: []string{"["}},
+	}}
+
+	got := cfg.UnmergeableMatches("workflows/onboarding/flow.uwe")
+	if len(got) != 2 {
+		t.Fatalf("UnmergeableMatches() = %+v, want both workflows globs", got)
+	}
+	if got[0].Glob != "workflows/**/*.uwe" || got[1].Glob != "**/*.uwe" {
+		t.Errorf("matches out of config order: %+v", got)
+	}
+	if got[0].Name != "workflows" {
+		t.Errorf("match name = %q, want the class it came from", got[0].Name)
+	}
+	if m := cfg.UnmergeableMatches("src/main.go"); m != nil {
+		t.Errorf("UnmergeableMatches() on a mergeable file = %+v, want none", m)
+	}
+}
+
 func TestMatchesUnmergeableEmptyConfig(t *testing.T) {
 	// No configured classes: the config half contributes nothing, and git
 	// check-attr (resolved elsewhere) is left to carry detection on its own.
 	if (Config{}).MatchesUnmergeable("workflows/flow.uwe") {
 		t.Error("MatchesUnmergeable() on empty config = true, want false")
+	}
+}
+
+// --- declare destinations ---------------------------------------------------
+
+func TestDeclareDestinationsDefaultToUnconstrained(t *testing.T) {
+	// No declare key: nil, which means "offer everything" — not an empty list.
+	if got := (Config{}).DeclareDestinations(); got != nil {
+		t.Errorf("DeclareDestinations() on a config without the key = %v, want nil", got)
+	}
+	got := Config{Declare: &Declare{Destinations: []string{DestLocal}}}.DeclareDestinations()
+	if len(got) != 1 || got[0] != DestLocal {
+		t.Errorf("DeclareDestinations() = %v, want [local]", got)
+	}
+}
+
+// A typo must never be skipped over: silently ignoring an unknown name would
+// leave the shared .gitattributes on offer for someone who wrote the key
+// precisely to be rid of it.
+func TestValidateRejectsABadDeclareBlock(t *testing.T) {
+	targets := []Target{{Key: "main", Ref: "origin/main"}}
+	tests := []struct {
+		name  string
+		block *Declare
+		want  string
+	}{
+		{"unknown name", &Declare{Destinations: []string{"locl"}}, "unknown declare destination"},
+		{"empty list", &Declare{Destinations: []string{}}, "empty"},
+		{"duplicate", &Declare{Destinations: []string{DestLocal, DestLocal}}, "duplicate"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Config{Targets: targets, Declare: tt.block}.validate()
+			if err == nil {
+				t.Fatalf("validate() = nil, want an error mentioning %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validate() = %v, want it to mention %q", err, tt.want)
+			}
+		})
+	}
+
+	for _, ok := range [][]string{{DestLocal}, {DestShared}, {DestLocal, DestShared}} {
+		if err := (Config{Targets: targets, Declare: &Declare{Destinations: ok}}).validate(); err != nil {
+			t.Errorf("validate() rejected a valid block %v: %v", ok, err)
+		}
+	}
+}
+
+// The wizard writes a config from the targets the user picked. It must not seed
+// an opinion about declare destinations that the user never expressed — an
+// absent key means "both", and that has to survive a round trip.
+func TestSaveConfigOmitsAnUnsetDeclareBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	cfg := Config{Targets: []Target{{Key: "main", Ref: "origin/main"}}}
+	if err := writeJSON(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "declare") {
+		t.Errorf("a config with no declare block wrote one:\n%s", data)
+	}
+
+	var back Config
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.DeclareDestinations() != nil {
+		t.Errorf("round trip invented a constraint: %v", back.DeclareDestinations())
 	}
 }

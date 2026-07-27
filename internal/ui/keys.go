@@ -24,6 +24,7 @@ const (
 	ActionRefresh      Action = "refresh"
 	ActionFetch        Action = "fetch"
 	ActionLocalOnly    Action = "local_only"
+	ActionHelp         Action = "help" // ?: the keys-and-glyphs overlay
 	ActionQuit         Action = "quit"
 
 	// Add-flow actions.
@@ -42,6 +43,11 @@ const (
 	// colliding files, and Cancel backs out to the dashboard.
 	ActionNextFile Action = "next_file" // tab: next colliding file
 	ActionPrevFile Action = "prev_file" // shift+tab: previous colliding file
+
+	// Declaring the file unmergeable to git itself (area 5, part 2): w opens the
+	// two-step overlay over the diff panel, which then reuses the shared
+	// move/confirm/cancel verbs like every other picker.
+	ActionDeclare Action = "declare" // w: declare this file's pattern -merge
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -85,6 +91,7 @@ type keymaps struct {
 	confirmDelete Keymap
 	wizard        Keymap
 	diff          Keymap
+	declare       Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -96,6 +103,7 @@ func defaultKeymaps() keymaps {
 		confirmDelete: DefaultConfirmDeleteKeys(),
 		wizard:        DefaultWizardKeys(),
 		diff:          DefaultDiffKeys(),
+		declare:       DefaultDeclareKeys(),
 	}
 }
 
@@ -116,6 +124,7 @@ func DefaultDashboardKeys() Keymap {
 		"f":      ActionFetch,
 		"esc":    ActionCancel, // aborts an in-flight fetch; a no-op otherwise
 		"l":      ActionLocalOnly,
+		"?":      ActionHelp,
 		"q":      ActionQuit,
 		"ctrl+c": ActionQuit,
 	}
@@ -143,6 +152,7 @@ func DefaultPairingKeys() Keymap {
 		"t":      ActionOpenPicker,
 		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
+		"?":      ActionHelp,
 		"ctrl+c": ActionQuit,
 	}
 	for n := 1; n <= 9; n++ {
@@ -173,6 +183,7 @@ func DefaultConfirmDeleteKeys() Keymap {
 		"enter":  ActionConfirm,
 		"n":      ActionCancel,
 		"esc":    ActionCancel,
+		"?":      ActionHelp,
 		"ctrl+c": ActionQuit,
 	}
 }
@@ -203,9 +214,28 @@ func DefaultDiffKeys() Keymap {
 	return Keymap{
 		"tab":       ActionNextFile,
 		"shift+tab": ActionPrevFile,
+		"w":         ActionDeclare,
+		"?":         ActionHelp,
 		"esc":       ActionCancel,
 		"q":         ActionQuit,
 		"ctrl+c":    ActionQuit,
+	}
+}
+
+// DefaultDeclareKeys binds the declare overlay — pick a pattern, then pick where
+// it is written. Deliberately the same move/enter/esc shape as the target picker
+// overlay it sits beside, so an overlay is an overlay wherever the user meets
+// one. Every key is bound here: unlike the panel underneath, nothing falls
+// through to the viewport while a choice is open.
+func DefaultDeclareKeys() Keymap {
+	return Keymap{
+		"j":      ActionMoveDown,
+		"down":   ActionMoveDown,
+		"k":      ActionMoveUp,
+		"up":     ActionMoveUp,
+		"enter":  ActionConfirm,
+		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
 	}
 }
 

@@ -12,6 +12,9 @@ import (
 // View renders the current screen. It reads only model state — every git signal
 // was computed by a Cmd and folded in by Update, so drawing never blocks.
 func (m Model) View() string {
+	if m.showHelp {
+		return m.helpView()
+	}
 	switch m.screen {
 	case screenAddID:
 		return m.addIDView()
@@ -32,11 +35,7 @@ func (m Model) screenView(panel, help string) string {
 	var b strings.Builder
 	b.WriteString(m.header())
 	b.WriteString("\n")
-	panelStyle := m.styles.panel
-	if cw := contentWidth(m.styles, m.width); cw > 0 {
-		panelStyle = panelStyle.Width(cw)
-	}
-	b.WriteString(panelStyle.Render(panel))
+	b.WriteString(panelStyle(m.styles, m.width).Render(panel))
 	b.WriteString("\n")
 	if line := m.statusLine(); line != "" {
 		b.WriteString(line)
@@ -110,6 +109,24 @@ func (m Model) body() string {
 	return strings.Join(selectBand(m.styles, m.width, rows, selected), "\n")
 }
 
+// panelStyle is the bordered panel sized to span the terminal.
+//
+// Lip Gloss counts a style's own horizontal padding inside Width() but not its
+// border, so the panel must be set to contentWidth *plus* its padding. Setting
+// it to contentWidth alone leaves a text area two cells narrower than the rows
+// built to fill it, and every full-width row — the selection band above all —
+// wraps by exactly that padding, dropping its tail onto the next line.
+//
+// A free function on (styles, width) so the dashboard, the diff panel, and the
+// first-run wizard share one implementation of the full-width frame.
+func panelStyle(s styles, width int) lipgloss.Style {
+	cw := contentWidth(s, width)
+	if cw <= 0 {
+		return s.panel // size still unknown: fall back to natural content sizing
+	}
+	return s.panel.Width(cw + s.panel.GetHorizontalPadding())
+}
+
 // contentWidth is the panel's inner content width: the terminal width less the
 // app padding and the panel's border+padding. It is the span a full-width panel
 // and its selection band fill. Returns 0 before the first WindowSizeMsg (size
@@ -150,9 +167,46 @@ func selectBand(s styles, width int, rows []string, selected int) []string {
 	}
 	out := make([]string, len(rows))
 	copy(out, rows)
-	out[selected] = s.ticketSel.Width(w).Render(rows[selected])
+	out[selected] = s.ticketSel.Width(w).Render(reopenBand(s, rows[selected]))
 	return out
 }
+
+// reopenBand re-opens the band's own escape sequence after every reset inside a
+// row.
+//
+// A row is assembled from independently styled cells — branch name, target,
+// ↓behind ↑ahead, the dirty dot, the unmergeable marker — and each of those ends
+// with a *full* SGR reset, which switches the band's background back off partway
+// along the line. Wrapping such a row in a background style therefore paints
+// only as far as the first inner reset, plus the trailing pad the outer style
+// adds itself: a highlight that covers the branch name, skips the middle of the
+// row, and reappears at the right-hand edge.
+//
+// The sequence is discovered by rendering a sentinel through the band style
+// rather than hardcoded, so it follows whatever color profile the terminal
+// actually got. On a profile with no color it comes back empty and this is a
+// no-op — which is also why a test can't see the bug this fixes.
+func reopenBand(s styles, row string) string {
+	const sentinel = "\x00"
+	open, _, found := strings.Cut(s.ticketSel.Render(sentinel), sentinel)
+	if !found {
+		return row
+	}
+	return reopenAfterResets(row, open)
+}
+
+// reopenAfterResets re-arms open after every reset in row. Split out from
+// reopenBand so it is testable: a test's color profile makes the band's own
+// sequence empty, and this half can still be driven with a real one.
+func reopenAfterResets(row, open string) string {
+	if open == "" {
+		return row // no color on this terminal: nothing to re-arm
+	}
+	return strings.ReplaceAll(row, ansiReset, ansiReset+open)
+}
+
+// ansiReset is the sequence Lip Gloss closes every styled span with.
+const ansiReset = "\x1b[0m"
 
 func (m Model) emptyState() string {
 	lines := []string{
@@ -268,7 +322,7 @@ func (m Model) help() string {
 		return m.styles.help.Render("y confirm · n cancel")
 	}
 	return m.styles.help.Render(
-		"j/k move · enter expand/diff · r refresh · f fetch · a add · d delete · l local · q quit",
+		"j/k move · enter expand/diff · r refresh · f fetch · a add · d delete · l local · ? help · q quit",
 	)
 }
 

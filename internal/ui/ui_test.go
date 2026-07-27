@@ -672,8 +672,13 @@ func TestSweepDetectsUnmergeableCollision(t *testing.T) {
 	feat := msg.byKey[statusKey("T", "feature")]
 	// Only flow.uwe survives: code.go collides but is mergeable; gone.uwe is
 	// unmergeable but only the target changed it, so it is not a collision.
-	if got := strings.Join(feat.unmergeable, ","); got != "flow.uwe" {
+	if got := strings.Join(paths(feat.unmergeable), ","); got != "flow.uwe" {
 		t.Errorf("feature unmergeable = %q, want %q", got, "flow.uwe")
+	}
+	// It is flagged by git's own attribute, not only by a config glob — the state
+	// the declare flow exists to bring about, and what the panel badges per file.
+	if !feat.unmergeable[0].declared {
+		t.Error("flow.uwe is -merge in .gitattributes but was not recorded as declared to git")
 	}
 
 	// The in-sync branch never moved behind the target, so detection is skipped
@@ -721,7 +726,7 @@ func TestDetectUnmergeableCountsWorkingTreeEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != "flow.uwe" {
+	if strings.Join(paths(got), ",") != "flow.uwe" {
 		t.Errorf("working-tree detection = %v, want [flow.uwe]", got)
 	}
 }
@@ -742,8 +747,13 @@ func TestDetectUnmergeableConfigGlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != "flow.uwe" {
+	if strings.Join(paths(got), ",") != "flow.uwe" {
 		t.Errorf("config-glob detection = %v, want [flow.uwe]", got)
+	}
+	// Only Drift knows: git has no .gitattributes here, so the panel must show it
+	// as undeclared and `w` must have something real to do.
+	if got[0].declared {
+		t.Error("a config-glob match was reported as declared to git")
 	}
 }
 
@@ -753,7 +763,11 @@ func branchDiffModel(files ...string) Model {
 	m := newModel()
 	m.expanded["ABC-1"] = true
 	m.cursor = 1 // ABC-1 headline is row 0; its first branch is row 1
-	m.status[statusKey("ABC-1", "abc-1-perf")] = branchStatus{known: true, behind: 2, unmergeable: files}
+	cs := make([]collision, len(files))
+	for i, f := range files {
+		cs[i] = collision{path: f} // undeclared: only Drift's config globs know
+	}
+	m.status[statusKey("ABC-1", "abc-1-perf")] = branchStatus{known: true, behind: 2, unmergeable: cs}
 	return m
 }
 
@@ -775,7 +789,7 @@ func TestEnterOnBranchOpensDiff(t *testing.T) {
 	if mm.screen != screenDiff {
 		t.Fatalf("screen = %v, want screenDiff", mm.screen)
 	}
-	if strings.Join(mm.diff.files, ",") != "flow.uwe,scene.unity" {
+	if strings.Join(paths(mm.diff.files), ",") != "flow.uwe,scene.unity" {
 		t.Errorf("diff.files = %v", mm.diff.files)
 	}
 	if mm.diff.branch != "abc-1-perf" || mm.diff.targetKey != "r2perf" {
@@ -819,25 +833,43 @@ func TestApplyDiffPopulatesAndDiscardsStale(t *testing.T) {
 	}
 }
 
-func TestDiffFileCyclingClamps(t *testing.T) {
-	m := branchDiffModel("a.uwe", "b.uwe")
+// Reconciling a branch's collisions is a round trip, so the file list wraps in
+// both directions rather than dead-ending at either end.
+func TestDiffFileCyclingWraps(t *testing.T) {
+	m := branchDiffModel("a.uwe", "b.uwe", "c.uwe")
 	next, _ := m.dispatch(ActionToggleExpand)
 	m = next.(Model)
 
-	// prev at the first file is a no-op.
+	// shift+tab at the first file wraps to the last.
 	back, _ := m.dispatchDiff(ActionPrevFile)
-	if back.(Model).diff.cursor != 0 {
-		t.Errorf("prev at first file moved: cursor = %d", back.(Model).diff.cursor)
+	if got := back.(Model).diff.cursor; got != 2 {
+		t.Errorf("prev at the first file: cursor = %d, want the last (2)", got)
 	}
-	// next advances, then clamps at the last file.
-	fwd, _ := m.dispatchDiff(ActionNextFile)
-	m = fwd.(Model)
-	if m.diff.cursor != 1 {
-		t.Fatalf("next: cursor = %d, want 1", m.diff.cursor)
+
+	// tab walks forward and comes back around to the first.
+	for want := 1; want <= 2; want++ {
+		fwd, _ := m.dispatchDiff(ActionNextFile)
+		m = fwd.(Model)
+		if m.diff.cursor != want {
+			t.Fatalf("next: cursor = %d, want %d", m.diff.cursor, want)
+		}
 	}
-	end, _ := m.dispatchDiff(ActionNextFile)
-	if end.(Model).diff.cursor != 1 {
-		t.Errorf("next past last file moved: cursor = %d, want 1", end.(Model).diff.cursor)
+	wrapped, _ := m.dispatchDiff(ActionNextFile)
+	if got := wrapped.(Model).diff.cursor; got != 0 {
+		t.Errorf("next past the last file: cursor = %d, want to wrap to 0", got)
+	}
+}
+
+func TestDiffFileCyclingWithOneFile(t *testing.T) {
+	m := branchDiffModel("only.uwe")
+	next, _ := m.dispatch(ActionToggleExpand)
+	m = next.(Model)
+
+	for _, action := range []Action{ActionNextFile, ActionPrevFile} {
+		got, _ := m.dispatchDiff(action)
+		if c := got.(Model).diff.cursor; c != 0 {
+			t.Errorf("%s with a single file: cursor = %d, want 0", action, c)
+		}
 	}
 }
 
@@ -862,5 +894,598 @@ func TestBranchRowShowsUnmergeableMarker(t *testing.T) {
 	out := m.dashboardView()
 	if !strings.Contains(out, "2 unmergeable") {
 		t.Errorf("dashboard did not flag the unmergeable branch:\n%s", out)
+	}
+}
+
+// --- declaring a file unmergeable (area 5, part 2) --------------------------
+
+// declareModel opens the diff panel on a file, ready for w. The config carries
+// one unmergeable class so the pattern step has both kinds of choice to offer.
+func declareModel(t *testing.T) Model {
+	t.Helper()
+	m := branchDiffModel("workflows/onboarding/flow.uwe")
+	m.cfg.Unmergeable = []store.Unmergeable{
+		{Name: "workflows", Globs: []string{"workflows/**/*.uwe"}},
+	}
+	next, _ := m.dispatch(ActionToggleExpand)
+	return next.(Model)
+}
+
+func TestDeclareOffersClassGlobAndTheFileItself(t *testing.T) {
+	m := declareModel(t)
+
+	next, _ := m.dispatchDiff(ActionDeclare)
+	m = next.(Model)
+	if !m.diff.declare.open || m.diff.declare.step != stepPattern {
+		t.Fatalf("w did not open the pattern step: %+v", m.diff.declare)
+	}
+
+	got := m.diff.declare.patterns
+	if len(got) != 2 {
+		t.Fatalf("patterns = %+v, want the config glob and the file's own path", got)
+	}
+	if got[0].pattern != "workflows/**/*.uwe" || !strings.Contains(got[0].why, "workflows") {
+		t.Errorf("first choice = %+v, want the matched class glob", got[0])
+	}
+	if got[1].pattern != "workflows/onboarding/flow.uwe" {
+		t.Errorf("second choice = %+v, want the file itself", got[1])
+	}
+}
+
+// A file flagged only by check-attr matches no config glob, so the path is the
+// one thing left to offer — never an empty list.
+func TestDeclareAlwaysOffersThePath(t *testing.T) {
+	m := branchDiffModel("scene.unity")
+	next, _ := m.dispatch(ActionToggleExpand)
+	m = next.(Model)
+
+	next, _ = m.dispatchDiff(ActionDeclare)
+	got := next.(Model).diff.declare.patterns
+	if len(got) != 1 || got[0].pattern != "scene.unity" {
+		t.Errorf("patterns = %+v, want just the file's own path", got)
+	}
+}
+
+func TestDeclareStepsPatternThenDestinationThenWrites(t *testing.T) {
+	m := declareModel(t)
+	next, _ := m.dispatchDiff(ActionDeclare)
+	m = next.(Model)
+
+	// Choosing the second pattern (the file itself) moves to the destination step.
+	next, _ = m.dispatchDeclare(ActionMoveDown)
+	next, _ = next.(Model).dispatchDeclare(ActionConfirm)
+	m = next.(Model)
+	if m.diff.declare.step != stepDest {
+		t.Fatalf("step = %v, want the destination question", m.diff.declare.step)
+	}
+	if m.diff.declare.pattern != "workflows/onboarding/flow.uwe" {
+		t.Errorf("chosen pattern = %q", m.diff.declare.pattern)
+	}
+	if m.diff.declare.cursor != 0 {
+		t.Errorf("destination cursor = %d, want a fresh list", m.diff.declare.cursor)
+	}
+
+	// Confirming a destination closes the overlay and hands off the write.
+	next, cmd := m.dispatchDeclare(ActionConfirm)
+	m = next.(Model)
+	if m.diff.declare.open {
+		t.Error("the overlay stayed open after the write was dispatched")
+	}
+	if cmd == nil {
+		t.Fatal("confirming a destination should write")
+	}
+	if m.screen != screenDiff {
+		t.Errorf("screen = %v, want to stay on the diff panel", m.screen)
+	}
+}
+
+func TestDeclareEscUnwindsOneStepAtATime(t *testing.T) {
+	m := declareModel(t)
+	next, _ := m.dispatchDiff(ActionDeclare)
+	next, _ = next.(Model).dispatchDeclare(ActionMoveDown)
+	next, _ = next.(Model).dispatchDeclare(ActionConfirm) // now on the destination step
+
+	// First esc: back to the pattern list, on the choice just made.
+	next, _ = next.(Model).dispatchDeclare(ActionCancel)
+	m = next.(Model)
+	if m.diff.declare.step != stepPattern {
+		t.Fatalf("esc from the destination step: step = %v, want the pattern list", m.diff.declare.step)
+	}
+	if m.diff.declare.cursor != 1 {
+		t.Errorf("cursor = %d, want to land back on the chosen pattern", m.diff.declare.cursor)
+	}
+
+	// Second esc: the overlay closes and the diff is still there underneath.
+	next, _ = m.dispatchDeclare(ActionCancel)
+	m = next.(Model)
+	if m.diff.declare.open {
+		t.Error("second esc did not close the overlay")
+	}
+	if m.screen != screenDiff || len(m.diff.files) == 0 {
+		t.Errorf("closing the overlay disturbed the diff panel: screen=%v files=%v", m.screen, m.diff.files)
+	}
+}
+
+// While a choice is open, j/k must move the cursor — not scroll the diff
+// underneath, which is what an unbound key does on the panel itself.
+func TestDeclareOverlaySwallowsScrollKeys(t *testing.T) {
+	m := declareModel(t)
+	next, _ := m.dispatchDiff(ActionDeclare)
+	m = next.(Model)
+
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = next.(Model)
+	if m.diff.declare.cursor != 1 {
+		t.Errorf("j in the overlay: cursor = %d, want 1", m.diff.declare.cursor)
+	}
+	// An unbound key does nothing at all rather than reaching the viewport.
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if next.(Model).diff.declare.cursor != 1 {
+		t.Error("an unbound key disturbed the overlay")
+	}
+}
+
+func TestApplyDeclareReportsWhatHappened(t *testing.T) {
+	m := declareModel(t)
+
+	// A fresh write names the destination it landed in.
+	written, _ := m.applyDeclare(declareMsg{
+		dest: git.AttrLocal,
+		decl: git.AttrDeclaration{Path: "/repo/.git/info/attributes", Pattern: "*.uwe"},
+	})
+	if !strings.Contains(written.notice, "*.uwe -merge") || !strings.Contains(written.notice, "info/attributes") {
+		t.Errorf("notice = %q, want the pattern and where it landed", written.notice)
+	}
+
+	// Already declared is a success — git knowing is the whole point.
+	already, _ := m.applyDeclare(declareMsg{
+		dest: git.AttrRepo,
+		decl: git.AttrDeclaration{Path: "/repo/.gitattributes", Pattern: "*.uwe", Already: true},
+	})
+	if !strings.Contains(already.notice, "already") {
+		t.Errorf("notice = %q, want it to say the rule was already there", already.notice)
+	}
+
+	failed, _ := m.applyDeclare(declareMsg{dest: git.AttrRepo, err: os.ErrPermission})
+	if !strings.Contains(failed.notice, "declare failed") {
+		t.Errorf("notice = %q, want the failure surfaced", failed.notice)
+	}
+}
+
+// A committed .gitattributes is a working-tree change, so the dirty dot is stale
+// the moment it is written; a local write touches nothing git tracks. Both
+// return a command either way — every successful declare re-reads git's answer
+// for the panel — so the sweep is identified by the state startSweep leaves.
+func TestApplyDeclareResweepsOnlyAfterASharedWrite(t *testing.T) {
+	m := declareModel(t)
+
+	shared, cmd := m.applyDeclare(declareMsg{
+		dest: git.AttrRepo,
+		decl: git.AttrDeclaration{Path: "/repo/.gitattributes", Pattern: "*.uwe"},
+	})
+	if !shared.loading || shared.sweepID == m.sweepID {
+		t.Error("a shared write should re-sweep so the dirty dot is current")
+	}
+	if cmd == nil {
+		t.Error("expected the sweep and the attribute re-read")
+	}
+	if !strings.Contains(shared.notice, "declared") {
+		t.Errorf("notice = %q — the sweep must not clear the result", shared.notice)
+	}
+
+	local, cmd := m.applyDeclare(declareMsg{
+		dest: git.AttrLocal,
+		decl: git.AttrDeclaration{Path: "/repo/.git/info/attributes", Pattern: "*.uwe"},
+	})
+	if local.loading || local.sweepID != m.sweepID {
+		t.Error("a local write changes nothing git tracks; no sweep needed")
+	}
+	if cmd == nil {
+		t.Error("a local write should still re-read git's answer for the panel")
+	}
+}
+
+// The badge is the visible half of declaring: it comes from git's own re-read,
+// so a glob covering several of the listed files flips all of them at once.
+func TestApplyDeclaredFlipsTheBadgeFromGitsAnswer(t *testing.T) {
+	m := declareModel(t)
+	if m.diff.files[0].declared {
+		t.Fatal("fixture should start undeclared")
+	}
+
+	got := m.applyDeclared(declaredMsg{
+		branch:    m.diff.branch,
+		targetRef: m.diff.targetRef,
+		byPath:    map[string]bool{m.diff.files[0].path: true},
+	})
+	if !got.diff.files[0].declared {
+		t.Error("git reported the file declared; the badge did not flip")
+	}
+
+	// A reply for a branch the user has since left is discarded.
+	stale := m.applyDeclared(declaredMsg{branch: "other", targetRef: m.diff.targetRef,
+		byPath: map[string]bool{m.diff.files[0].path: true}})
+	if stale.diff.files[0].declared {
+		t.Error("a re-read from another branch was applied to this panel")
+	}
+
+	// So is a failed one — better to keep showing the last known truth.
+	failed := m.applyDeclared(declaredMsg{branch: m.diff.branch, targetRef: m.diff.targetRef,
+		byPath: map[string]bool{m.diff.files[0].path: true}, err: os.ErrPermission})
+	if failed.diff.files[0].declared {
+		t.Error("a failed re-read was applied")
+	}
+}
+
+func TestDiffPanelBadgesWhetherGitKnows(t *testing.T) {
+	m := declareModel(t)
+	m.width = 120
+
+	out := m.diffView()
+	if !strings.Contains(out, "not declared to git") {
+		t.Errorf("panel did not say git is unaware of this file:\n%s", out)
+	}
+
+	m.diff.files[0].declared = true
+	if out := m.diffView(); !strings.Contains(out, "declared to git") ||
+		strings.Contains(out, "not declared to git") {
+		t.Errorf("panel did not flip to the declared badge:\n%s", out)
+	}
+}
+
+// The whole point of the config allowlist: a team without a committed
+// .gitattributes must never see it offered, so it cannot be picked by accident.
+func TestDeclareDestinationsHonorTheConfigAllowlist(t *testing.T) {
+	both := declareDests(store.Config{})
+	if len(both) != 2 {
+		t.Errorf("unconstrained config offered %d destinations, want both", len(both))
+	}
+
+	localOnly := declareDests(store.Config{Declare: &store.Declare{
+		Destinations: []string{store.DestLocal},
+	}})
+	if len(localOnly) != 1 || localOnly[0] != git.AttrLocal {
+		t.Fatalf("allowlist ignored: %v", localOnly)
+	}
+
+	// And it reorders, not just filters.
+	reordered := declareDests(store.Config{Declare: &store.Declare{
+		Destinations: []string{store.DestLocal, store.DestShared},
+	}})
+	if len(reordered) != 2 || reordered[0] != git.AttrLocal {
+		t.Errorf("config order not honored: %v", reordered)
+	}
+}
+
+func TestDeclareOverlayShowsOnlyAllowedDestinations(t *testing.T) {
+	m := declareModel(t)
+	m.width = 120
+	m.cfg.Declare = &store.Declare{Destinations: []string{store.DestLocal}}
+
+	next, _ := m.dispatchDiff(ActionDeclare)
+	next, _ = next.(Model).dispatchDeclare(ActionConfirm) // past the pattern step
+	m = next.(Model)
+
+	out := m.diffView()
+	if strings.Contains(out, ".gitattributes") {
+		t.Errorf("a destination excluded by config was still offered:\n%s", out)
+	}
+	if !strings.Contains(out, "info/attributes") {
+		t.Errorf("the allowed destination is missing:\n%s", out)
+	}
+
+	// And the excluded one cannot be reached by moving the cursor.
+	moved, _ := m.dispatchDeclare(ActionMoveDown)
+	if c := moved.(Model).diff.declare.cursor; c != 0 {
+		t.Errorf("cursor moved to %d with a single destination", c)
+	}
+}
+
+func TestDeclareViewShowsBothQuestions(t *testing.T) {
+	m := declareModel(t)
+	m.width = 120
+	next, _ := m.dispatchDiff(ActionDeclare)
+	m = next.(Model)
+
+	out := m.diffView()
+	if !strings.Contains(out, "workflows/**/*.uwe") || !strings.Contains(out, "this file only") {
+		t.Errorf("pattern step did not show both choices with their reason:\n%s", out)
+	}
+
+	next, _ = m.dispatchDeclare(ActionConfirm)
+	out = next.(Model).diffView()
+	if !strings.Contains(out, ".gitattributes") || !strings.Contains(out, "info/attributes") {
+		t.Errorf("destination step did not offer both destinations:\n%s", out)
+	}
+	if !strings.Contains(out, "committed") || !strings.Contains(out, "local only") {
+		t.Errorf("destination step did not name each consequence:\n%s", out)
+	}
+}
+
+// --- panel geometry ---------------------------------------------------------
+
+// The bug this pins: lipgloss counts a style's horizontal padding inside
+// Width() but not its border, so a panel set to contentWidth has a text area
+// two cells narrower than the rows built to fill it — and every selected row
+// wrapped, dropping its tail (the "⚠ N unmergeable" marker, most visibly) onto
+// the next line. It hid in tests because the ASCII color profile lets lipgloss
+// trim the band's trailing spaces; asserting on the geometry catches it whatever
+// the profile.
+func TestPanelTextAreaMatchesTheBandWidth(t *testing.T) {
+	s := newStyles()
+	for _, width := range []int{40, 80, 100, 137, 200} {
+		panel := panelStyle(s, width)
+		textArea := panel.GetWidth() - panel.GetHorizontalPadding()
+
+		if cw := contentWidth(s, width); textArea != cw {
+			t.Errorf("width %d: panel text area = %d, contentWidth = %d — rows built to fill it will wrap",
+				width, textArea, cw)
+		}
+
+		// And the panel still spans the terminal: no dead columns on the right.
+		total := panel.GetWidth() + panel.GetHorizontalBorderSize() + s.app.GetHorizontalFrameSize()
+		if total != width {
+			t.Errorf("width %d: panel spans %d columns, want the full width", width, total)
+		}
+	}
+}
+
+func TestSelectedRowFitsThePanelWithoutWrapping(t *testing.T) {
+	const width = 100
+	s := newStyles()
+	rows := selectBand(s, width, []string{"a branch row", "another"}, 0)
+
+	panel := panelStyle(s, width)
+	textArea := panel.GetWidth() - panel.GetHorizontalPadding()
+	if got := lipgloss.Width(rows[0]); got != textArea {
+		t.Errorf("selection band = %d wide, panel text area = %d — a band wider than the panel wraps", got, textArea)
+	}
+}
+
+func TestPanelFallsBackBeforeTheFirstWindowSize(t *testing.T) {
+	s := newStyles()
+	if w := panelStyle(s, 0).GetWidth(); w != 0 {
+		t.Errorf("unknown terminal size: panel width = %d, want natural content sizing", w)
+	}
+}
+
+// --- diff coloring ----------------------------------------------------------
+
+func TestDiffLineRoles(t *testing.T) {
+	tests := []struct {
+		line string
+		want diffRole
+	}{
+		{"+++ b/workflows/flow.uwe", diffMeta}, // header, not an added line
+		{"--- a/workflows/flow.uwe", diffMeta}, // header, not a removed line
+		{"@@ -1,4 +1,5 @@", diffHunk},
+		{`+  <step id="3"/>`, diffAdded},
+		{`-  <step id="2"/>`, diffRemoved},
+		{`   <step id="1"/>`, diffContext},
+		{"diff --git a/x b/x", diffMeta},
+		{"index 1a2b3c4..5d6e7f8 100644", diffMeta},
+		{`\ No newline at end of file`, diffMeta},
+		{"", diffContext},
+	}
+	for _, tt := range tests {
+		if got := diffLineRole(tt.line); got != tt.want {
+			t.Errorf("diffLineRole(%q) = %v, want %v", tt.line, got, tt.want)
+		}
+	}
+}
+
+func TestColorizeDiffKeepsEveryLine(t *testing.T) {
+	raw := "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-old\n+new\n context\n"
+	got := colorizeDiff(newStyles(), raw)
+	if lines := strings.Split(got, "\n"); len(lines) != 6 {
+		t.Errorf("colorizeDiff() produced %d lines, want 6:\n%q", len(lines), got)
+	}
+	for _, want := range []string{"-old", "+new", " context", "@@ -1,2 +1,2 @@"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("colorizeDiff() dropped or altered %q:\n%q", want, got)
+		}
+	}
+}
+
+// A row is built from independently styled cells, and each one closes with a
+// full SGR reset — which switches the band's background off partway along the
+// line. Without re-arming it, the highlight covers the branch name, skips the
+// middle of the row, and reappears only in the trailing pad. The band's own
+// sequence is empty under a test's color profile, so this drives the pure half
+// with a real one.
+func TestReopenAfterResetsKeepsTheBandUnbroken(t *testing.T) {
+	const open = "\x1b[1;48;5;236m"
+	row := "\x1b[38;5;245mabc-1-perf" + ansiReset + "   \x1b[38;5;170m⚠ 2 unmergeable" + ansiReset
+
+	got := reopenAfterResets(row, open)
+	if n := strings.Count(got, ansiReset+open); n != 2 {
+		t.Errorf("re-armed the band %d times, want once per reset (2):\n%q", n, got)
+	}
+	// Every gap between styled cells is now inside the band.
+	if !strings.Contains(got, ansiReset+open+"   \x1b[38;5;170m") {
+		t.Errorf("the gap before the unmergeable marker is still outside the band:\n%q", got)
+	}
+	if lipgloss.Width(got) != lipgloss.Width(row) {
+		t.Errorf("re-arming changed the row's width: %d -> %d", lipgloss.Width(row), lipgloss.Width(got))
+	}
+}
+
+func TestReopenAfterResetsIsANoOpWithoutColor(t *testing.T) {
+	row := "plain row" + ansiReset
+	if got := reopenAfterResets(row, ""); got != row {
+		t.Errorf("no color profile: row was rewritten to %q", got)
+	}
+}
+
+// --- the ? help overlay -----------------------------------------------------
+
+// The key table is generated from the live keymap, so it can never drift from
+// what the keys actually do — including after an area-12 rebind.
+func TestHelpEntriesComeFromTheKeymap(t *testing.T) {
+	got := helpEntries(Keymap{
+		"x":     ActionRefresh, // rebound away from the default r
+		"j":     ActionMoveDown,
+		"down":  ActionMoveDown,
+		"@":     ActionHelp,
+		"ctrl+": ActionQuit,
+	})
+
+	byWhat := make(map[string]string, len(got))
+	for _, e := range got {
+		byWhat[e.what] = e.keys
+	}
+	if keys := byWhat["refresh status"]; keys != "x" {
+		t.Errorf("refresh keys = %q, want the rebound x", keys)
+	}
+	if keys := byWhat["move down"]; keys != "j / ↓" {
+		t.Errorf("move down keys = %q, want both, arrow labelled", keys)
+	}
+	// An action the map does not bind must not appear at all.
+	if _, ok := byWhat["fetch, then refresh"]; ok {
+		t.Error("an unbound action was listed")
+	}
+}
+
+// The nine accelerators are one idea, not nine rows.
+func TestHelpCollapsesThePickTargetFamily(t *testing.T) {
+	got := helpEntries(DefaultPairingKeys())
+
+	var picks int
+	for _, e := range got {
+		if strings.Contains(e.what, "Nth configured target") {
+			picks++
+			if e.keys != "1–9" {
+				t.Errorf("accelerator keys = %q, want the range 1–9", e.keys)
+			}
+		}
+	}
+	if picks != 1 {
+		t.Errorf("pick-target rows = %d, want exactly 1", picks)
+	}
+}
+
+// An action with no wording yet must be visible, not a blank row.
+func TestHelpFallsBackToTheActionName(t *testing.T) {
+	got := helpEntries(Keymap{"z": Action("not_written_yet")})
+	if len(got) != 1 || got[0].what != "not_written_yet" {
+		t.Errorf("unworded action rendered as %+v", got)
+	}
+}
+
+func TestHelpOpensAndAnyKeyCloses(t *testing.T) {
+	m := newModel()
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = next.(Model)
+	if !m.showHelp {
+		t.Fatal("? did not open the help")
+	}
+	if !strings.Contains(m.View(), "Glyphs") {
+		t.Errorf("help view is missing the glyph legend:\n%s", m.View())
+	}
+
+	// The key that closes it must not also act on the screen underneath.
+	before := m.cursor
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = next.(Model)
+	if m.showHelp {
+		t.Error("a key press did not close the help")
+	}
+	if m.cursor != before {
+		t.Errorf("the closing key also moved the cursor: %d -> %d", before, m.cursor)
+	}
+}
+
+func TestHelpQuitsOnCtrlC(t *testing.T) {
+	m := newModel()
+	m.showHelp = true
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c in the help returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("ctrl+c in the help did not quit")
+	}
+}
+
+// The help describes where you are, not a catalogue of everything Drift does.
+func TestHelpReflectsTheScreenItWasOpenedFrom(t *testing.T) {
+	m := branchDiffModel("flow.uwe")
+	next, _ := m.dispatch(ActionToggleExpand)
+	next, _ = next.(Model).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = next.(Model)
+	m.width = 110
+
+	out := m.View()
+	if !strings.Contains(out, "Keys — diff panel") {
+		t.Errorf("help did not name the diff panel:\n%s", out)
+	}
+	if !strings.Contains(out, "declare this file unmergeable") {
+		t.Errorf("help omitted the diff panel's own action:\n%s", out)
+	}
+	// Scrolling is deliberately unbound so it reaches the viewport; the help has
+	// to say so anyway, or it would claim the panel cannot scroll.
+	if !strings.Contains(out, "scroll the diff") {
+		t.Errorf("help omitted scrolling:\n%s", out)
+	}
+	if strings.Contains(out, "add a ticket") {
+		t.Errorf("help listed a dashboard-only action:\n%s", out)
+	}
+}
+
+// The legend has to teach the real thing: color *is* the signal in the status
+// cluster (DESIGN.md §1), so a glyph explained in the wrong color explains the
+// wrong glyph. A test's profile has no color, so this pins the wiring — that
+// each glyph is rendered through its own role's style and not re-wrapped in one
+// flat color by the view — rather than the pixels.
+func TestGlyphLegendUsesEachSignalsRealStyle(t *testing.T) {
+	m := newModel()
+	s := m.styles
+	want := []string{
+		s.ticket.Render("▸ / ▾"),
+		s.behind.Render("↓N"),
+		s.ahead.Render("↑N"),
+		s.dirty.Render("●"),
+		s.marker.Render("▸"),
+		s.unmerge.Render("⚠ N unmergeable"),
+	}
+
+	got := m.glyphLegend()
+	if len(got) != len(want) {
+		t.Fatalf("legend has %d rows, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].keys != w {
+			t.Errorf("legend row %d = %q, want it rendered in its own role's style (%q)", i, got[i].keys, w)
+		}
+		if got[i].what == "" {
+			t.Errorf("legend row %d has no explanation", i)
+		}
+	}
+}
+
+// The glyph column holds multi-byte runes and arrives pre-styled, so the column
+// has to be measured by display width, not byte length — otherwise every
+// description in the legend starts at a different column.
+func TestHelpColumnsAlignAcrossGlyphsAndKeys(t *testing.T) {
+	m := newModel()
+	m.width = 110
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+
+	var starts []int
+	for _, line := range strings.Split(next.(Model).View(), "\n") {
+		for _, what := range []string{"move up", "ticket collapsed", "uncommitted changes", "the branch you have"} {
+			if idx := strings.Index(line, what); idx >= 0 {
+				starts = append(starts, lipgloss.Width(line[:idx]))
+			}
+		}
+	}
+	if len(starts) < 4 {
+		t.Fatalf("expected to find 4 description rows, found %d", len(starts))
+	}
+	for _, at := range starts[1:] {
+		if at != starts[0] {
+			t.Errorf("description columns misaligned: %v", starts)
+			break
+		}
 	}
 }

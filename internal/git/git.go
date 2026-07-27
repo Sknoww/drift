@@ -1,6 +1,12 @@
-// Package git is a thin wrapper over the git binary. Every call shells out and
-// parses machine-readable output; nothing here checks anything out or mutates
-// the working tree.
+// Package git is a thin wrapper over the git binary. Every call here shells out
+// and parses machine-readable output; nothing checks anything out, and nothing
+// touches the files a branch is made of.
+//
+// The one deliberate exception is attributes.go, which writes a `-merge`
+// declaration into an attributes file (roadmap area 5). That is Drift teaching
+// git a constraint, not Drift editing the user's work, and git offers no
+// plumbing to write it — but the file's location is still asked of git, never
+// assembled by hand.
 package git
 
 import (

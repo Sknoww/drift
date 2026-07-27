@@ -17,6 +17,13 @@ var (
 	colSelBG   = lipgloss.Color("236") // selected row band
 	colErr     = lipgloss.Color("203") // error text
 	colUnmerge = lipgloss.Color("170") // unmergeable collision — reconcile by hand
+
+	// Diff panel. Muted rather than saturated: a whole screen of incoming change
+	// is the normal case here, so the +/- pair must read as structure, not as
+	// alarm — behind>0 is still the only thing on screen shouting.
+	colDiffAdd  = lipgloss.Color("71")  // added line
+	colDiffDel  = lipgloss.Color("167") // removed line
+	colDiffHunk = lipgloss.Color("109") // @@ hunk header — where you are in the file
 )
 
 // styles bundles the reusable Lip Gloss styles. Built once and carried on the
@@ -38,6 +45,10 @@ type styles struct {
 	hint      lipgloss.Style
 	errText   lipgloss.Style
 	unmerge   lipgloss.Style
+	diffAdd   lipgloss.Style
+	diffDel   lipgloss.Style
+	diffHunk  lipgloss.Style
+	diffMeta  lipgloss.Style
 }
 
 func newStyles() styles {
@@ -63,5 +74,9 @@ func newStyles() styles {
 		hint:      lipgloss.NewStyle().Foreground(colFaint).Italic(true),
 		errText:   lipgloss.NewStyle().Foreground(colErr),
 		unmerge:   lipgloss.NewStyle().Foreground(colUnmerge).Bold(true),
+		diffAdd:   lipgloss.NewStyle().Foreground(colDiffAdd),
+		diffDel:   lipgloss.NewStyle().Foreground(colDiffDel),
+		diffHunk:  lipgloss.NewStyle().Foreground(colDiffHunk).Bold(true),
+		diffMeta:  lipgloss.NewStyle().Foreground(colFaint),
 	}
 }

@@ -39,6 +39,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case diffMsg:
 		return m.applyDiff(msg), nil
 
+	case declareMsg:
+		return m.applyDeclare(msg)
+
+	case declaredMsg:
+		return m.applyDeclared(msg), nil
+
 	case saveStateMsg:
 		if msg.err != nil {
 			m.notice = "save failed: " + msg.err.Error()
@@ -61,6 +67,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleKey resolves a key through the active screen's keymap. On the ID-entry
 // screen a key that binds to no action is a keystroke for the text input.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The help overlay is a read-only interruption: any key dismisses it and is
+	// consumed, so a key pressed to close it never also acts on the screen
+	// underneath. ctrl+c still quits, since it always does.
+	if m.showHelp {
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.showHelp = false
+		return m, nil
+	}
 	if m.screen == screenAddID {
 		if action, ok := m.keys.addID.action(msg.String()); ok {
 			return m.dispatch(action)
@@ -71,9 +87,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// On the diff panel, a bound key steps between files or backs out; every
 	// other key falls through to the viewport so its own j/k/arrows/pgup/pgdn
-	// scroll the diff — the reason DefaultDiffKeys binds so few keys.
+	// scroll the diff — the reason DefaultDiffKeys binds so few keys. The declare
+	// overlay shadows that: while a choice is open j/k must move the cursor, so
+	// nothing falls through to the viewport underneath.
 	if m.screen == screenDiff {
-		if action, ok := m.keys.diff.action(msg.String()); ok {
+		if m.diff.declare.open {
+			if action, ok := m.activeKeys().action(msg.String()); ok {
+				return m.dispatch(action)
+			}
+			return m, nil
+		}
+		if action, ok := m.activeKeys().action(msg.String()); ok {
 			return m.dispatch(action)
 		}
 		var cmd tea.Cmd
@@ -99,6 +123,11 @@ func (m Model) activeKeys() Keymap {
 		return m.keys.pairing
 	case screenConfirmDelete:
 		return m.keys.confirmDelete
+	case screenDiff:
+		if m.diff.declare.open {
+			return m.keys.declare
+		}
+		return m.keys.diff
 	default:
 		return m.keys.dashboard
 	}
@@ -139,6 +168,12 @@ func (m Model) applyStatus(msg statusMsg) Model {
 func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 	if action == ActionQuit {
 		return m, tea.Quit
+	}
+	// Help is global for the same reason quit is: it means one thing everywhere,
+	// and it reads the screen it was opened from rather than replacing it.
+	if action == ActionHelp {
+		m.showHelp = true
+		return m, nil
 	}
 	switch m.screen {
 	case screenAddID:

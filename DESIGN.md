@@ -23,12 +23,22 @@ the home row. "Looks like raw text output" is a bug.
   `border/faint 240`, `selected band bg 236`, `error 203`, `unmergeable 170` (a
   branch with a collision that must be reconciled by hand — a distinct alarm from
   `behind`, since it means "moved *and* unmergeable", not just "moved").
+  **Diff panel** ✅: `add 71`, `remove 167`, `hunk header 109`, git's bookkeeping
+  lines faint `240`, context left unstyled. Muted rather than saturated — a whole
+  screen of incoming change is the normal case there, so `+`/`-` must read as
+  structure, not as alarm; `behind` stays the only thing on screen shouting.
 - **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
   title (`drift`) sits on its own line above the panel, with the checked-out branch or
   a refresh spinner to its right. The panel spans the **full terminal width** (computed
-  in `screenView` from the window size less the app/panel frame), so every screen —
-  and the area-5 diff panel to come — shares one full-width layout rather than a snug
-  content-sized box. Before the first `WindowSizeMsg` it falls back to content sizing.
+  in `panelStyle` from the window size less the app/panel frame), so every screen — the
+  dashboard, the diff panel, the wizard — shares one full-width layout rather than a
+  snug content-sized box. Before the first `WindowSizeMsg` it falls back to content
+  sizing. **The one trap:** Lip Gloss counts a style's horizontal padding inside
+  `Width()` but *not* its border, so the panel is set to `contentWidth + padding`.
+  Setting it to `contentWidth` alone leaves a text area two cells narrower than the
+  rows built to fill it, and every selected row wraps — dropping its tail onto the next
+  line. Tests can't see it (the ASCII color profile lets trailing band spaces be
+  trimmed), so the geometry is asserted directly instead.
 - **Density** — a ticket is one row; expanding it lists its branches one per row
   beneath, one per target it aims at. Seeing a ticket's whole fan-out without
   scrolling is the point — but the target count is config-driven and unbounded, so
@@ -66,13 +76,60 @@ unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dash
   unbounded, the overlay scrolls and never assumes its list fits.
 - **Diff panel** (area 5) ✅ — the incoming diff for an unmergeable file, read-only,
   the replacement for opening the web UI to hunt for changes. Scoped to **one branch**
-  (`screenDiff`): its colliding files are stepped through with `tab`/`shift+tab`, each
-  file's `git diff B...T -- <path>` scrolls in a viewport (`bubbles/viewport`), and a
-  header names `file X/N` and the `branch → target` being reconciled. Per-branch, not
-  per-ticket, because MVP2 and MVP3 can hold different versions of the same file.
-  **Plain text for every unmergeable format, always** — format-specific rendering is a
-  different product and explicitly out of scope. On the dashboard, a collision shows as
+  (`screenDiff`): its colliding files are cycled through with `tab`/`shift+tab`
+  (**wrapping at both ends** — reconciling a branch is a round trip, not a walk to a
+  dead end), each file's `git diff B...T -- <path>` scrolls in a viewport
+  (`bubbles/viewport`), and a header names `file X/N` and the `branch → target` being
+  reconciled. Per-branch, not per-ticket, because MVP2 and MVP3 can hold different
+  versions of the same file. **Plain text for every unmergeable format, always** —
+  format-specific rendering is a different product and explicitly out of scope.
+  *Plain text is not uncolored:* the diff is colored by line role (`+`/`-`/hunk/meta —
+  §1) like any diff reader, because telling an added line from a removed one is what
+  reading a diff **is**. What stays out of scope is understanding the *format* — no
+  Unity scene tree, no workflow graph. On the dashboard, a collision shows as
   a trailing `⚠ N unmergeable` marker (`unmerge` color) on the branch row.
+- **Declare overlay** (area 5, part 2) ✅ — `w` on the diff panel teaches Git the
+  constraint by writing a `-merge` attribute. Drawn in the panel's place, the same
+  mechanism as the target picker, and the same `j`/`k` · `enter` · `esc` shape, so an
+  overlay is an overlay wherever the user meets one. Two steps, each a real choice
+  shown with the reason it exists: **what** to declare (a matched config glob, tagged
+  with its class — declares the whole class; or the file's own path — declares one
+  file), then **where** it is written (`.gitattributes`, "committed and shared with the
+  team"; or `info/attributes`, "local only, never committed, highest precedence").
+  Never a default on either step, and never a guess — the same rule as pairing. `esc`
+  unwinds one step at a time and lands back on the choice just made. A repo may
+  allow-list destinations in `config.json`, in which case only the allowed ones are
+  offered at all — a team without a committed `.gitattributes` never sees it and cannot
+  pick it by accident.
+- **Declared badge** ✅ — the diff panel names, per file, whether **Git itself** has been
+  told never to merge it (`✓ declared to git`) or only Drift's config globs know (`not
+  declared to git — w declares it`, `unmerge` color). Without it the declare flow is
+  invisible: the file was already flagged as unmergeable, so writing the attribute
+  changes nothing else on screen. The badge is the state, `w` is the verb, and the flip
+  is the confirmation. Its new value is re-read from Git after a write rather than
+  assumed, so one glob can flip several files at once and the badge can never lie.
+- **Help overlay** (`?`) ✅ — keys and glyphs for **the screen you are on**, drawn in
+  the panel's place; any key closes it (and is consumed, so the closing key never also
+  acts on the screen underneath). `ctrl+c` still quits, as everywhere.
+  - The key table is **generated from the live keymap**, never hand-written. Named
+    actions are the contract (§3), so the help is a view of the bindings actually in
+    force: an area-12 rebind updates it with no code change, and it cannot drift from
+    what the keys do — the failure mode of every hand-maintained help screen. The nine
+    `1`–`9` accelerators collapse to one row, and an action with no wording yet shows
+    its own name rather than a blank row.
+  - Keys deliberately left *unbound* so they reach a component (the diff panel's
+    `j`/`k`/arrows, which the viewport handles) are added as static rows — otherwise
+    the help would claim the panel cannot scroll.
+  - The glyph legend is static, since glyphs are not rebindable. It is what pays back
+    the density §1 buys: a dot is not self-describing. Entries stay short — a legend
+    that wraps is harder to read than the row it explains — with the reasoning behind
+    each signal left to §1. **Each glyph is drawn in its own role's style**, not one
+    flat color: color *is* the signal in the status cluster, so a glyph explained in
+    the wrong color explains the wrong glyph. `↓N` appears in its warning style even
+    though zero-behind renders faint, because the case worth teaching is the one where
+    the target moved.
+  - Not offered on the ID-entry screen (every key there is text) or inside the target
+    picker / declare overlays (momentary choice steps with their own one-line help).
 - **Branch row selection** ✅ — the dashboard cursor moves over a **flat list of
   visible rows** (ticket headlines plus each expanded ticket's branch rows), so a
   branch is selectable in its own right — the prerequisite for a per-branch diff (and
@@ -98,6 +155,7 @@ Dashboard:
 | `f` | Fetch, then refresh |
 | `esc` | Cancel an in-flight fetch (no-op when idle) |
 | `l` | Manage local-only changes (area 6) |
+| `?` | Keys and glyphs for the current screen |
 | `q` / `ctrl+c` | Quit |
 
 Add flow (pairing checklist):
@@ -120,14 +178,19 @@ Diff panel (area 5):
 
 | Key | Action |
 |---|---|
-| `tab` / `shift+tab` | Next / previous colliding file |
+| `tab` / `shift+tab` | Next / previous colliding file (wraps at both ends) |
 | `j` / `k` / arrows / pgup / pgdn | Scroll the diff |
+| `w` | Declare this file unmergeable to Git (write the `-merge` attribute) |
 | `esc` | Back to the dashboard |
 | `q` / `ctrl+c` | Quit |
 
-Only file-stepping and back-out are named actions here; scrolling is left unbound so
-it falls through to the viewport's own keys — the panel needs no bespoke scroll
-bindings, and a rebind can still name the two actions it does define.
+Only file-stepping, declaring, and back-out are named actions here; scrolling is left
+unbound so it falls through to the viewport's own keys — the panel needs no bespoke
+scroll bindings, and a rebind can still name the actions it does define.
+
+Declare overlay: `j` / `k` move, `enter` chooses, `esc` steps back — and unlike the
+panel underneath, **every** key is bound while it is open, so `j`/`k` can never leak
+through and scroll the diff behind the choice.
 
 Git work runs as async `Cmd`s, so every one of these stays responsive — the UI must
 never freeze on a fetch. States ✅ (built with the dashboard): a **loading** spinner
@@ -141,3 +204,14 @@ refresh is local and fast, so it stays non-cancellable. The **selection band fil
 panel's full inner width** (which now spans the terminal — see §1 Panels) rather than
 hugging its text; the band width is applied once every row is built (`selectBand` in
 `view.go`).
+
+**The band has a second trap, distinct from the `Width()` one in §1.** A row is
+assembled from independently styled cells (branch name, target, `↓behind ↑ahead`, dirty
+dot, unmergeable marker), and each closes with a *full* SGR reset — which switches the
+band's background off partway along the line. Wrapping the row in a background style
+therefore paints the branch name, skips the middle of the row, and reappears only in
+the trailing pad. `selectBand` re-arms the band's sequence after every inner reset
+(`reopenBand`), discovering that sequence by rendering a sentinel through the style so
+it follows the terminal's actual color profile. Neither band trap is visible to a test
+— a test profile has no color, so nothing wraps and nothing resets — which is why both
+are asserted structurally rather than by eyeballing rendered output.

@@ -15,12 +15,32 @@ type branchStatus struct {
 	known         bool  // false when the branch's target key is absent from config
 	err           error // AheadBehind failed (e.g. the branch no longer exists locally)
 
-	// unmergeable is the repo-relative paths that changed on both this branch and
-	// its target since they diverged AND that Git must never merge (area 5). Empty
-	// unless the target moved past the merge base (behind>0), since only then is
-	// there an incoming change to collide with. In target-changed order, so the
-	// diff panel lists them deterministically.
-	unmergeable []string
+	// unmergeable is the paths that changed on both this branch and its target
+	// since they diverged AND that Git must never merge (area 5). Empty unless the
+	// target moved past the merge base (behind>0), since only then is there an
+	// incoming change to collide with. In target-changed order, so the diff panel
+	// lists them deterministically.
+	unmergeable []collision
+}
+
+// collision is one unmergeable path, plus how Drift knows it is unmergeable.
+//
+// declared is Git's own answer — the `-merge` attribute, which every Git
+// command respects — as against a config glob, which only Drift can see. That
+// difference is the entire point of the declare flow: it is the state declaring
+// changes, so the diff panel shows it per file and a write visibly flips it.
+type collision struct {
+	path     string
+	declared bool
+}
+
+// paths flattens collisions for a call that only needs the names.
+func paths(cs []collision) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.path
+	}
+	return out
 }
 
 // statusMsg carries a completed status sweep back into Update. One sweep
@@ -76,6 +96,46 @@ func loadDiffCmd(repo *git.Repo, branch, targetRef, path string) tea.Cmd {
 	return func() tea.Msg {
 		out, err := repo.FileDiff(context.Background(), branch, targetRef, path)
 		return diffMsg{branch: branch, targetRef: targetRef, path: path, content: out, err: err}
+	}
+}
+
+// declareMsg reports a completed `-merge` declaration. The destination rides
+// along so the notice can name where the line landed without re-deriving it.
+type declareMsg struct {
+	dest git.AttrDest
+	decl git.AttrDeclaration
+	err  error
+}
+
+// declareCmd writes the chosen pattern's `-merge` declaration off the UI thread
+// (area 5, part 2). It is file I/O, not a git shell-out, but it runs as a Cmd
+// like everything else: the model stays the only thing Update mutates.
+func declareCmd(repo *git.Repo, dest git.AttrDest, pattern string) tea.Cmd {
+	return func() tea.Msg {
+		decl, err := repo.DeclareUnmergeable(context.Background(), dest, pattern)
+		return declareMsg{dest: dest, decl: decl, err: err}
+	}
+}
+
+// declaredMsg carries a re-read of Git's `-merge` attribute for the files on
+// the diff panel. branch and targetRef identify the session it belongs to, the
+// same guard the diff itself uses against landing on the wrong branch.
+type declaredMsg struct {
+	branch    string
+	targetRef string
+	byPath    map[string]bool
+	err       error
+}
+
+// recheckDeclaredCmd asks Git again which of these paths it has been told never
+// to merge. It runs after a declaration lands, so the panel's per-file state
+// comes from Git rather than from what Drift assumes its own write achieved —
+// the same rule detection follows, and the reason a glob that covers several of
+// the listed files updates all of them at once.
+func recheckDeclaredCmd(repo *git.Repo, branch, targetRef string, files []string) tea.Cmd {
+	return func() tea.Msg {
+		got, err := repo.CheckAttrMerge(context.Background(), files)
+		return declaredMsg{branch: branch, targetRef: targetRef, byPath: got, err: err}
 	}
 }
 
@@ -188,7 +248,7 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 // (the working-tree edits, passed only for the checked-out branch). The
 // unmergeable filter is the hybrid rule — `git check-attr merge` (the
 // .gitattributes declaration) unioned with the config globs (CONTEXT.md).
-func detectUnmergeable(ctx context.Context, repo *git.Repo, cfg store.Config, branch, targetRef string, workTree map[string]bool) ([]string, error) {
+func detectUnmergeable(ctx context.Context, repo *git.Repo, cfg store.Config, branch, targetRef string, workTree map[string]bool) ([]collision, error) {
 	targetChanged, err := repo.ChangedFiles(ctx, branch, targetRef)
 	if err != nil {
 		return nil, err
@@ -205,24 +265,29 @@ func detectUnmergeable(ctx context.Context, repo *git.Repo, cfg store.Config, br
 		branchSide[p] = true
 	}
 
-	var collision []string // target-changed order, so the panel list is stable
+	var collisions []string // target-changed order, so the panel list is stable
 	for _, p := range targetChanged {
 		if branchSide[p] {
-			collision = append(collision, p)
+			collisions = append(collisions, p)
 		}
 	}
-	if len(collision) == 0 {
+	if len(collisions) == 0 {
 		return nil, nil
 	}
 
-	attr, err := repo.CheckAttrMerge(ctx, collision)
+	attr, err := repo.CheckAttrMerge(ctx, collisions)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
-	for _, p := range collision {
-		if attr[p] || cfg.MatchesUnmergeable(p) {
-			out = append(out, p)
+	var out []collision
+	for _, p := range collisions {
+		switch {
+		case attr[p]:
+			// Git's own declaration. Recorded as such: it is what the diff panel
+			// reports per file, and what declaring exists to bring about.
+			out = append(out, collision{path: p, declared: true})
+		case cfg.MatchesUnmergeable(p):
+			out = append(out, collision{path: p})
 		}
 	}
 	return out, nil

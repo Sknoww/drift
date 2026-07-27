@@ -78,6 +78,19 @@ choice**, and both destinations are first-class:
 Either destination means Drift teaches Git the constraint rather than routing around
 it, so Git behaves correctly even when Drift isn't running.
 
+A repo may **allow-list** which of the two it offers — `"declare": {"destinations":
+["local"]}` in `config.json`. A team that keeps no committed `.gitattributes` lists only
+`local`, and the shared destination stops being offered at all, so Drift can never dirty
+a file that team does not use. It is hand-edited config rather than a keypress on
+purpose: a guard against an unwanted commit is worth more when it cannot be toggled off
+by accident.
+
+Because both halves of the hybrid rule produce the same outcome, the UI has to say which
+one is in play — otherwise declaring a file already flagged as unmergeable looks like it
+did nothing. Each collision therefore records whether **Git's own attribute** is set, as
+against only a config glob; the diff panel badges it per file, and declaring flips the
+badge. The new value is re-read from `check-attr`, never assumed from what Drift wrote.
+
 ## Local-only changes (first-class concept)
 
 Full rules: [`docs/specs/local-only-changes.md`](./docs/specs/local-only-changes.md).
@@ -122,7 +135,7 @@ an ADR in `docs/adr/`.
 | TUI framework | Bubble Tea, with Lip Gloss for styling and Bubbles for text input. Pinned to the **v1 line** (bubbletea v1.3.x, lipgloss v1.x, bubbles v1.0.x); the v2 tags are still pre-release |
 | Git access | Shell out via `os/exec`, parse machine-readable output (`for-each-ref`, `status --porcelain`, `rev-list --count`). No Git library — this is how lazygit works and is the fastest path. Every call takes a `context.Context`, so a hung `fetch` is cancellable from the UI |
 | State | Elm-style `Model`/`Update`/`View`. Git calls run as async `Cmd`s so the UI never blocks; results return as messages |
-| Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets + unmergeable globs) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free. `config.json` is always hand-editable and Drift never rewrites one that exists, but hand-editing is not the *only* way in: a first-run wizard seeds targets from real refs (roadmap area 4), and the placeholder is the fallback for when it's declined or unavailable |
+| Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets, unmergeable globs, allowed declare destinations) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free. `config.json` is always hand-editable and Drift never rewrites one that exists, but hand-editing is not the *only* way in: a first-run wizard seeds targets from real refs (roadmap area 4), and the placeholder is the fallback for when it's declined or unavailable |
 | Config resolution | A **search path** of locations Drift reads config from. Entry zero is `<.git>/drift/` — per-repo, local-only, because the author has no rights to commit repo-wide files. A **user-global** root (`~/.config/drift/`, XDG-respecting) is the next entry, holding per-user preferences — keymaps are its first inhabitant (area 12). Defining a search path from the start makes each new root — user-global now, a committed team-wide config later — a purely additive change, no migration |
 | Keybindings | **Named actions are the contract; keys are a rebindable default.** Every screen dispatches on a named action, never a key literal, so a user-global `~/.config/drift/keymap.json` can override any binding as a pure additive layer. The named-action dispatch is adopted in the dashboard (area 3) from day one, so customization (area 12) is never a retrofit. Full keymap lives in `DESIGN.md` |
 | Grouping | **Manual pairing.** Ticket ID substring-matches candidate branches to pre-filter; the user confirms and assigns targets. Branch naming is inconsistent, so target is **never** parsed from the branch name. Optional pattern-based *pre-assignment* for teams with rigid conventions is deferred (roadmap area 10) and would still never be silent |
