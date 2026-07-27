@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -29,9 +30,19 @@ func New(dir string) *Repo {
 	return &Repo{Dir: dir}
 }
 
+// noEditor keeps a git subprocess from ever launching an editor. Drift owns the
+// terminal: a merge that opens vim into the middle of a Bubble Tea render
+// corrupts the display and strands the user in an editor they did not ask for and
+// may not know how to leave. `--no-edit` covers the merge message specifically;
+// this closes the door for every call, including the ones that would open an
+// editor for a reason Drift did not anticipate. Set in one place rather than per
+// call site, so a new shell-out inherits it rather than having to remember it.
+var noEditor = []string{"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"}
+
 func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
+	cmd.Env = append(os.Environ(), noEditor...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

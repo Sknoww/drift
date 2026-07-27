@@ -23,7 +23,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if !m.loading {
+		// A running shelve keeps the spinner alive on its own account: the step it
+		// is on is drawn with one, and the sequence is not a status sweep.
+		if !m.loading && !m.shelve.active {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -53,6 +55,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case localHoldMsg:
 		return m.applyLocalHold(msg)
+
+	case shelveMsg:
+		return m.applyShelve(msg)
 
 	case saveStateMsg:
 		if msg.err != nil {
@@ -152,6 +157,8 @@ func (m Model) activeKeys() Keymap {
 			return m.keys.localAdd
 		}
 		return m.keys.localOnly
+	case screenShelve:
+		return m.keys.shelve
 	default:
 		return m.keys.dashboard
 	}
@@ -210,6 +217,8 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 		return m.dispatchDiff(action)
 	case screenLocalOnly:
 		return m.dispatchLocalOnly(action)
+	case screenShelve:
+		return m.dispatchShelve(action)
 	default:
 		return m.dispatchDashboard(action)
 	}
@@ -264,6 +273,9 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 
 	case ActionLocalOnly:
 		return m.openLocalOnly()
+
+	case ActionShelve:
+		return m.beginShelve()
 	}
 	return m, nil
 }

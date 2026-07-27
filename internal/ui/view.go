@@ -24,6 +24,8 @@ func (m Model) View() string {
 		return m.diffView()
 	case screenLocalOnly:
 		return m.localOnlyView()
+	case screenShelve:
+		return m.shelveView()
 	default: // dashboard, and the delete confirmation drawn over it
 		return m.dashboardView()
 	}
@@ -324,7 +326,7 @@ func (m Model) help() string {
 		return m.styles.help.Render("y confirm · n cancel")
 	}
 	return m.styles.help.Render(
-		"j/k move · enter expand/diff · r refresh · f fetch · a add · d delete · l local · ? help · q quit",
+		"j/k move · enter expand/diff · s shelve · r refresh · f fetch · a add · d delete · l local · ? help · q quit",
 	)
 }
 

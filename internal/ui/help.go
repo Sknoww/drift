@@ -49,6 +49,7 @@ var actionText = map[Action]string{
 	ActionHoldLocal:       "hold a working-tree change on this machine",
 	ActionRelease:         "stop holding the selected path",
 	ActionEditNote:        "note why it's held",
+	ActionShelve:          "stash, pull the target, merge it in, put your work back",
 	ActionHelp:            "this help",
 	ActionQuit:            "quit",
 }
@@ -63,6 +64,7 @@ var actionOrder = []Action{
 	ActionNextFile, ActionPrevFile, ActionDeclare,
 	ActionHoldLocal, ActionRelease, ActionEditNote,
 	ActionConfirm, ActionCancel,
+	ActionShelve,
 	ActionAdd, ActionDelete, ActionRefresh, ActionFetch, ActionLocalOnly,
 	ActionHelp, ActionQuit,
 }
@@ -168,6 +170,17 @@ func (m Model) glyphLegend() []helpEntry {
 			{s.help.Render("◇"), "untracked — held with info/exclude, so it's ignored locally"},
 		}
 	}
+	if m.screen == screenShelve {
+		// The report's own glyphs. The distinction that matters is ■ against ✗:
+		// one is git telling you something you have to reconcile, the other is the
+		// sequence failing to run at all.
+		return []helpEntry{
+			{s.sync.Render("✓"), "step done, or the sequence landed clean"},
+			{s.unmerge.Render("■"), "stopped and handed back — there is something to reconcile"},
+			{s.errText.Render("✗"), "refused or failed before it could finish"},
+			{s.unmerge.Render("⚠ unmergeable"), "git can never merge this file — reconcile it in its own tool"},
+		}
+	}
 	return []helpEntry{
 		{s.ticket.Render("▸ / ▾"), "ticket collapsed / expanded"},
 		{s.behind.Render("↓N"), "commits the target has that you don't — it moved"},
@@ -201,6 +214,8 @@ func (m Model) screenName() string {
 		// the target picker and the declare overlay: a momentary choice step
 		// carries its own one-line help (DESIGN.md §2).
 		return "local-only changes"
+	case screenShelve:
+		return "shelve"
 	default:
 		return "dashboard"
 	}

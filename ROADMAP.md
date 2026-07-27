@@ -162,16 +162,48 @@ is; link its spec/ADR once one exists.
      `ChangedFiles` (area 5) already covers area 7's collision check. Exclude I/O is
      file-level, off `gitDir()`; the fence and the atomic write are now shared in
      `fence.go`, extracted on its second consumer
-7. ⏳ **One-key shelve sequence** — stash → merge target main → pop, as one keypress
-   per branch. Stops and hands back the moment an unmergeable conflict appears; the
-   reconciliation itself stays manual, always.
+7. ✅ **One-key shelve sequence** — `s` on a branch row runs pull → merge target main →
+   pop as one keypress. Stops and hands back the moment a conflict appears; the
+   reconciliation itself stays manual, always. Spec: `docs/specs/shelve-sequence.md`.
    - **Rides local-only changes through untouched.** Plain `git stash` (no `-u`) ignores
      skip-worktree files and untracked files, so both survive stash → merge → pop with no
-     re-apply step — the auto-preserve area 6 promises
+     re-apply step — the auto-preserve area 6 promises, now asserted against a real repo
    - **The one collision it must catch:** before merging, intersect the incoming
      changed-file set with the held set. If the target main changed a file you hold locally,
      halt *before* the merge and surface it — same shape as an unmergeable handoff, never a
      silent clobber. No collision → fully automatic
+   - **Pull, then merge.** Drift compares against `origin/<target>` and never checks a
+     target out, so "pull the target" is: fetch that ref, then merge it — the two halves of
+     `git pull` against a ref it never visits. Scoped to the **one** target being merged
+     (`FetchRef`), so a sequence started for one branch can't quietly move every other
+     branch's numbers. The remote/branch split asks `git remote` rather than cutting at the
+     first slash, since branch names contain slashes routinely. A target no remote owns is
+     said to be unfetchable and merged as it stands, never silently "fetched"
+   - **Read-only until the last possible moment** — the ordering is the central mechanic,
+     not an implementation detail. Preconditions, the recomputed `behind`, and the held-set
+     check all run *before* the stash, so a sequence that refuses has stashed nothing and
+     has nothing to undo. There is no partially-applied refusal
+   - **The mutating half is atomic**: a merge conflict is aborted *and* the stash restored,
+     so it either lands whole or leaves no trace. A pop conflict deliberately does **not**
+     restore — `git stash pop` retains its entry on conflict, so nothing is at risk, and
+     that halt *is* the reconciliation point the sequence was run to reach. Undoing it would
+     undo the one thing that went right
+   - **Checked-out branch only.** Drift's no-checkout invariant is correctness here, not
+     squeamishness: a stash belongs to the branch it was taken on, so any cross-branch
+     arrangement carries uncommitted work over a branch boundary to put it back. Another
+     branch's row names the fix (`git switch <branch>`) instead. Auto-checkout is deferred
+     with its questions open, and would earn an ADR — it reverses a documented invariant
+   - **Two footguns pinned as correctness, not polish**: `git stash push` on a clean tree
+     *succeeds and creates no entry*, so a sequence that popped unconditionally would pop
+     someone else's work — `Stash` resolves `refs/stash` before and after and reports what
+     really happened; and `stash@{0}` is a position, not an identity, so the created stash's
+     **OID** is recorded and `StashPop` refuses (`ErrStashMoved`) if the top has shifted
+   - New in area 1: `Remotes`, `RemoteRef`, `FetchRef`, `OperationInProgress`,
+     `ConflictedFiles`, `StashRef`, `Stash`, `StashPop`, `Merge`, `MergeAbort`. Nothing
+     parses git's English — outcomes are read from refs, exit status, and the unmerged
+     index. `run` now sets an editor-proof environment for *every* shell-out, in one place:
+     a git subprocess launching `vim` into a Bubble Tea render strands the user in an editor
+     they never asked for
 8. ⏸️ **Jira lookup** — deferred. Optional prefill (ticket title) and discovery
    ("assigned to me"). Slots in as a pure lookup source; the core must never depend
    on it and must work fully offline with hand-typed IDs.

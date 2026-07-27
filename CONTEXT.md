@@ -120,6 +120,31 @@ The design copies the unmergeable decision's shape exactly:
   *before* the merge by intersecting the incoming changed-file set with the held set,
   then surfaced like an unmergeable handoff. Drift never clobbers it silently.
 
+## The shelve sequence (the one place Drift writes)
+
+Full rules: [`docs/specs/shelve-sequence.md`](./docs/specs/shelve-sequence.md). One
+keypress runs pull → merge the target main → put your work back, on the checked-out
+branch. Everywhere else Drift reads; this is where it writes to the working tree and to
+history, so the rules about *when* it may are the substance of the feature.
+
+- **Drift never checks anything out.** This is a standing invariant, and here it is
+  correctness rather than style: a stash belongs to the branch it was taken on, so any
+  cross-branch arrangement of the sequence carries uncommitted work over a branch boundary
+  to put it back. `s` runs on the branch you are on; another branch's row names the fix.
+  Reversing this would earn an ADR.
+- **"Pull the target" is fetch-then-merge against a ref Drift never visits.** Targets are
+  compared as `origin/<target>`, so the pull half is a fetch **scoped to that one ref** —
+  a sequence started for one branch must not quietly move every other branch's numbers.
+- **Read-only until the last possible moment.** Every check that can refuse the sequence
+  runs before the stash, so a refusal has stashed nothing and has nothing to undo. There
+  is no partially-applied refusal.
+- **The mutating half is atomic, with one deliberate exception.** A merge conflict is
+  aborted *and* the stash restored: it either lands whole or leaves no trace. A stash-pop
+  conflict is **not** restored, because git retains the stash entry on conflict — nothing
+  is at risk, and that halt is the hand-reconciliation point the sequence exists to reach.
+- **Every halt is a handoff**, the same permanent rule as an unmergeable file: Drift
+  surfaces what it found, names the git command that resolves it, and stops.
+
 ---
 
 ## Architecture decisions

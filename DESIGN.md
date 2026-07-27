@@ -178,6 +178,7 @@ Dashboard:
 | `r` | Refresh statuses |
 | `f` | Fetch, then refresh |
 | `esc` | Cancel an in-flight fetch (no-op when idle) |
+| `s` | Shelve: pull the selected branch's target and merge it in (area 7) |
 | `l` | Manage local-only changes (area 6) |
 | `?` | Keys and glyphs for the current screen |
 | `q` / `ctrl+c` | Quit |
@@ -228,6 +229,35 @@ Local-only changes (area 6):
 | `esc` | Back to the dashboard |
 | `?` | Keys and glyphs for this screen |
 | `q` / `ctrl+c` | Quit |
+
+Shelve report (area 7):
+
+| Key | Action |
+|---|---|
+| `esc` | Cancel while nothing has been touched · back to the dashboard once it ends |
+| `?` | Keys and glyphs for this screen |
+| `q` / `ctrl+c` | Quit |
+
+The screen is a **report, not a list**: there is nothing to move over and nothing
+to choose, so `esc` is the only verb and `j`/`k`/`enter` are deliberately unbound.
+`esc` means two different things at two different moments, and the help line says
+which is live: while the read-only steps run it **cancels**; once the stash is
+taken it is **refused** with "it stops on its own", because there is no cancelling
+into an undefined middle. Both are the same named action — the screen decides what
+backing out means, exactly as every other screen does.
+
+The six steps are drawn as a checklist with the running one spinning, so the user
+can see which of pull / check / stash / merge / restore is happening. That is not
+decoration: the back half mutates the working tree, and a sequence that stops
+behind one undifferentiated spinner gives the user nothing to reason about. The
+first three steps are read-only, so a halt in that half has visibly touched
+nothing — the reassurance the step ordering was designed to give.
+
+Glyphs are their own legend under `?`, and the distinction that carries the weight
+is `■` against `✗`: one is git handing you something to reconcile, the other is
+the sequence refusing or failing to run. `⚠ unmergeable` on a reported file is the
+same signal in the same color as the dashboard's collision marker, because it
+answers the same question — text merge, or external tool.
 
 `a` and `r` carry their dashboard meaning across. `d` takes the dashboard's "remove the
 selected thing" key rather than the more mnemonic `r` — bound the other way, a reflexive

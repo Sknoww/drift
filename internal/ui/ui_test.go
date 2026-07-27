@@ -57,7 +57,8 @@ func TestDefaultDashboardKeysCoverTable(t *testing.T) {
 		"enter": ActionToggleExpand, " ": ActionToggleExpand,
 		"a": ActionAdd, "d": ActionDelete,
 		"r": ActionRefresh, "f": ActionFetch, "esc": ActionCancel,
-		"l": ActionLocalOnly, "q": ActionQuit, "ctrl+c": ActionQuit,
+		"l": ActionLocalOnly, "s": ActionShelve,
+		"q": ActionQuit, "ctrl+c": ActionQuit,
 	}
 	for key, action := range want {
 		if got, ok := k.action(key); !ok || got != action {

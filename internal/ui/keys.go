@@ -57,6 +57,11 @@ const (
 	ActionHoldLocal Action = "hold_local" // a: hold a working-tree change locally
 	ActionRelease   Action = "release"    // d: stop holding the selected path
 	ActionEditNote  Action = "edit_note"  // n: annotate why a path is held
+
+	// The one-key shelve sequence (area 7): stash → pull the target → merge →
+	// pop, on the checked-out branch. Its own verb rather than Confirm reused —
+	// the help table is generated per action, so a name has to mean one thing.
+	ActionShelve Action = "shelve" // s: run the sequence on the selected branch
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -104,6 +109,7 @@ type keymaps struct {
 	localOnly     Keymap
 	localAdd      Keymap
 	localNote     Keymap
+	shelve        Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -119,6 +125,20 @@ func defaultKeymaps() keymaps {
 		localOnly:     DefaultLocalOnlyKeys(),
 		localAdd:      DefaultLocalAddKeys(),
 		localNote:     DefaultLocalNoteKeys(),
+		shelve:        DefaultShelveKeys(),
+	}
+}
+
+// DefaultShelveKeys binds the shelve report (area 7). It is a report, not a list:
+// there is nothing to move over and nothing to choose, so esc is the only verb —
+// and while the mutating steps run it is refused rather than obeyed, since there
+// is no cancelling into an undefined middle.
+func DefaultShelveKeys() Keymap {
+	return Keymap{
+		"esc":    ActionCancel,
+		"?":      ActionHelp,
+		"q":      ActionQuit,
+		"ctrl+c": ActionQuit,
 	}
 }
 
@@ -139,6 +159,7 @@ func DefaultDashboardKeys() Keymap {
 		"f":      ActionFetch,
 		"esc":    ActionCancel, // aborts an in-flight fetch; a no-op otherwise
 		"l":      ActionLocalOnly,
+		"s":      ActionShelve,
 		"?":      ActionHelp,
 		"q":      ActionQuit,
 		"ctrl+c": ActionQuit,
