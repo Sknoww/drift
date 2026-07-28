@@ -284,10 +284,16 @@ is; link its spec/ADR once one exists.
     - **The cursor must never be invisible.** That is the actual bug the user hit, and
       the acceptance test: with N far larger than the terminal, the selection band is on
       screen at every cursor position, with an "N more" affordance at the clipped edge
-    - **Then type-to-filter** on the lists that are unbounded by nature — wizard refs and
-      pairing candidates. `j`/`k` through 400 branches is not navigation. Incremental,
+    - **Then type-to-filter.** `j`/`k` through 400 branches is not navigation. Incremental,
       case-insensitive substring to start; the match count belongs on screen, since a
       filter that silently hides the thing you wanted is worse than no filter
+    - **The wizard is the one that actually needs it** — confirmed twice by dogfooding.
+      It offers *every* ref under `refs/remotes`, unnarrowed, and asks the user to find
+      their handful of long-lived mains in it. The pairing checklist looks like the same
+      problem and isn't: `CandidateBranches` already narrows to local branches containing
+      the ticket ID (`git.go:153`), so a 400-branch repo still shows two or three rows
+      when adding `ABC-123`. Filter it too for consistency, but the wizard is where this
+      is load-bearing — build it there first and let the pairing screen inherit it
     - **Filtering must not silently drop selections.** A ref checked and then filtered
       out is still selected — the same "never guess" rule as pairing. Show the count of
       selected-but-hidden rather than letting the save quietly disagree with the screen
