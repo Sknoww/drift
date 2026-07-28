@@ -331,6 +331,31 @@ is; link its spec/ADR once one exists.
       wraps at the near-universal 80, and still wraps at 100. Either shorten it or elide
       it against the real width — it is the one line on screen that teaches the keys, so
       it wrapping into the panel border is the worst place to spend the overflow
+    - **The selection band barely renders.** Raised by dogfooding as "not the cleanest
+      looking thing", and measurement backs it: the band is ANSI 236 = `rgb(48,48,48)`,
+      which against common terminal backgrounds gives a contrast ratio of **1.06:1** on
+      One Dark, 1.08 Dracula, 1.12 Gruvbox, 1.26 VS Code Dark, and 1.59 on pure black —
+      its best case. On most modern themes it sits within ~3% luminance of the page. The
+      selected row is not badly designed so much as **almost not drawn**
+      - *The full-row band is the right concept* — htop, lazygit, k9s, ranger, gitui and
+        yazi all highlight the whole row, so this is not a reason to abandon it. What
+        those do differently is make it read: an accent **hue** rather than a lighter
+        grey, and/or a left-edge marker (`▌`, `>`) so the eye finds the row instantly
+        even when the background shift is subtle (fzf, Telescope pair both)
+      - *It is also under-specified.* `ticketSel` (`styles.go:65`) sets a background and
+        **no foreground**, which is the same defect as the light-terminal item below —
+        one style, two symptoms. Whatever replaces it should pin both ends
+      - *A marker-based selection would delete machinery.* The full-width background is
+        precisely what forces `reopenBand` (`view.go:193`) to re-arm the SGR after every
+        inner cell reset — subtle, test-invisible, and the source of a real bug already
+        (DESIGN.md §3). A left marker or a foreground treatment needs none of it. That is
+        an argument worth weighing, not a decision
+      - *Process note:* raising the contrast is a tweak to a value DESIGN.md §1 already
+        calls "considered-not-sacred" — no ADR needed. Replacing the band with a marker
+        reverses a documented §1/§3 decision and **earns an ADR**
+      - *Settle it by looking, not by reasoning.* This is the one item in this area that
+        argument cannot resolve — prototype two or three treatments against a real repo
+        on a dark **and** a light theme, and pick with your eyes
     - **The palette assumes a dark terminal.** Colors are fixed ANSI-256 (`styles.go:9`),
       and `ticketSel` sets `Background(236)` — near-black — with **no foreground**
       (`styles.go:65`). On a light-background terminal the default foreground is dark, so
