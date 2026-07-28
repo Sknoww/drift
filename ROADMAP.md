@@ -254,3 +254,56 @@ is; link its spec/ADR once one exists.
       (what changed) or of the *versions* (your file left, the target's right). Those
       are different tools, and the second may be the more useful one for hand
       reconciliation. Not a detail to settle in advance
+14. ⏳ **Large lists — windowing, then filtering.** Found by dogfooding v0.1.x on a real
+    work repo with hundreds of remote refs: the first-run wizard rendered every ref,
+    ran off the top of the terminal, and appeared to **freeze hard enough to force-quit
+    the window**. Not cosmetic — the tool is unusable on exactly the repo shape it was
+    built for. Every list screen has the flaw; the diff panel is the only one that
+    doesn't, because it already windows through a `viewport` (`diff.go:528`).
+    - **What was measured**, so the fix targets the real cause rather than the symptom:
+      - *Not git.* `RemoteBranches` is a local `for-each-ref refs/remotes` — no network,
+        fast at any ref count. Nothing hangs before the wizard opens
+      - *Not algorithmic.* `View()` is linear: 0.7 ms at 50 refs, 35 ms at 5000. Sluggish
+        at the top end, nowhere near a freeze on its own
+      - *The frame is unbounded.* 2000 refs is a ~500 KB frame; 5000 is ~1.26 MB — and
+        Bubble Tea rewrites the **whole** frame on every keystroke. The freeze is the
+        terminal drowning in ANSI, not Go being slow, which is why it presents as a hang
+        rather than as lag
+      - *Rows wrap, doubling everything.* 5000 short-named refs render 5007 lines; 5000
+        long-named refs render 10007 — every row wrapping. `deriveKey` keeps the whole
+        path after the remote (`origin/feature/TEAM-1234-x` → key `feature/TEAM-1234-x`)
+        and `keyColWidth` pads **every** row to the widest key, so one long branch name
+        inflates the column past the panel width for all of them
+    - **Windowing is the fix and the prerequisite.** Render only the rows that fit,
+      around the cursor. It bounds the frame at terminal height whatever the ref count,
+      which kills the freeze outright — filtering to 200 matches still overflows without
+      it. Applies to the wizard, dashboard, pairing checklist, target picker, and
+      local-only list; `m.height` is already tracked (`update.go:18`) and then ignored
+      everywhere but the diff panel. **`wizardModel` doesn't even keep a height** — it
+      takes the `WindowSizeMsg` and stores only width (`wizard.go:94`)
+    - **The cursor must never be invisible.** That is the actual bug the user hit, and
+      the acceptance test: with N far larger than the terminal, the selection band is on
+      screen at every cursor position, with an "N more" affordance at the clipped edge
+    - **Then type-to-filter** on the lists that are unbounded by nature — wizard refs and
+      pairing candidates. `j`/`k` through 400 branches is not navigation. Incremental,
+      case-insensitive substring to start; the match count belongs on screen, since a
+      filter that silently hides the thing you wanted is worse than no filter
+    - **Filtering must not silently drop selections.** A ref checked and then filtered
+      out is still selected — the same "never guess" rule as pairing. Show the count of
+      selected-but-hidden rather than letting the save quietly disagree with the screen
+    - **Open question, decide when building:** whether the wizard should also sort by
+      most-recent commit and default to a narrowed view. Asking "which of these 418 refs
+      are your long-lived mains?" may be the wrong question shape even with search
+      available — but recency is a heuristic, and a heuristic that hides the right answer
+      is worse than a long list. Not settled in advance
+15. ⏳ **UI polish pass.** The accumulated nits from dogfooding, once area 14 has made the
+    tool usable on a large repo. Deliberately after 14: polish on a screen that can't be
+    navigated is wasted work.
+    - **Key derivation is too eager** (fallout from 14's measurements, but a readability
+      bug in its own right). `feature/TEAM-1234-some-long-name` is not a usable target
+      *key* — keys are terse UI labels (`main`, `r2perf`). Derive something short by
+      default and let `e` do the rest, rather than seeding a key nobody would type
+    - Column widths currently size to the widest member with no cap, so one outlier
+      stretches every row. `candidateNameWidth` already caps; the wizard's `keyColWidth`
+      does not
+    - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list
