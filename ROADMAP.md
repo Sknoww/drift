@@ -302,14 +302,47 @@ is; link its spec/ADR once one exists.
       are your long-lived mains?" may be the wrong question shape even with search
       available — but recency is a heuristic, and a heuristic that hides the right answer
       is worse than a long list. Not settled in advance
-15. ⏳ **UI polish pass.** The accumulated nits from dogfooding, once area 14 has made the
-    tool usable on a large repo. Deliberately after 14: polish on a screen that can't be
-    navigated is wasted work.
-    - **Key derivation is too eager** (fallout from 14's measurements, but a readability
-      bug in its own right). `feature/TEAM-1234-some-long-name` is not a usable target
-      *key* — keys are terse UI labels (`main`, `r2perf`). Derive something short by
-      default and let `e` do the rest, rather than seeding a key nobody would type
-    - Column widths currently size to the widest member with no cap, so one outlier
-      stretches every row. `candidateNameWidth` already caps; the wizard's `keyColWidth`
-      does not
+15. ⏳ **UI polish pass.** The accumulated nits, found by auditing the render layer after
+    area 14's measurements. Deliberately after 14: polish on a screen that can't be
+    navigated is wasted work. Each item below was verified against the code, not guessed
+    — the file:line is the evidence.
+    - **Nothing truncates. Anywhere.** This is the systemic one, and the root of several
+      symptoms that look unrelated. `padRight` (`view.go:425`) pads to a width but
+      *returns long input unchanged*, so every "capped" column is only capped against
+      over-padding: `branchNameWidth` caps at 32 (`view.go:244`) and a 60-character
+      branch still renders all 60, shoving the status cluster right and wrapping the row.
+      There is no truncation helper in the package at all. Add one (display-width aware,
+      with an ellipsis) and make every computed column actually bound its cells
+    - **Two padding implementations, and the one used most is wrong.** `padCell`
+      (`help.go:272`) measures with `lipgloss.Width` and carries a comment explaining why
+      byte length misaligns a column of glyphs. `padRight` measures with `len()` — as do
+      `branchNameWidth`, `widestTargetKey` (`model.go:178`), and the wizard's
+      `keyColWidth` (`wizard.go:291`). Any non-ASCII or wide rune in a branch name
+      misaligns every column on the dashboard. Consolidate on the correct one
+    - **Key derivation is too eager.** `deriveKey` (`wizard.go:83`) keeps the whole path
+      after the remote, so `origin/feature/TEAM-1234-some-long-name` seeds a *key* of
+      `feature/TEAM-1234-some-long-name`. Keys are terse UI labels (`main`, `r2perf`) —
+      nobody would type that one. It is also what makes the wizard's uncapped
+      `keyColWidth` pad every row past the panel width, which is the row-wrapping that
+      doubled the frame in area 14's measurements. Derive something short; leave `e` for
+      the rest
+    - **The dashboard help line overflows a standard terminal.** 108 columns of text
+      (`view.go:329`) plus the app's 2 columns of padding needs a 110-column window. It
+      wraps at the near-universal 80, and still wraps at 100. Either shorten it or elide
+      it against the real width — it is the one line on screen that teaches the keys, so
+      it wrapping into the panel border is the worst place to spend the overflow
+    - **The palette assumes a dark terminal.** Colors are fixed ANSI-256 (`styles.go:9`),
+      and `ticketSel` sets `Background(236)` — near-black — with **no foreground**
+      (`styles.go:65`). On a light-background terminal the default foreground is dark, so
+      the selected row renders dark-on-dark: the selection band, the one thing that must
+      always be legible, is the thing that disappears. `lipgloss.AdaptiveColor` is the
+      fix. Worth confirming visually on a light theme before building — the mechanism is
+      clear from the code but the severity isn't. Note the ANSI-256 choice itself stays
+      right (DESIGN.md §1); this is about light vs dark, not color depth
+    - **Error text is unbounded.** `statusLine` (`view.go:316`) renders `err.Error()` raw,
+      and git errors are not short. One long error wraps the frame under the panel
+    - **No minimum usable width.** `contentWidth` (`view.go:147`) clamps to 1 rather than
+      declaring a floor, so a very narrow terminal renders garbage instead of saying it
+      is too narrow. Decide the floor when the truncation helper exists — the two answer
+      the same question
     - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list
