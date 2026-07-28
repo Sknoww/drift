@@ -14,6 +14,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
@@ -24,9 +26,38 @@ import (
 )
 
 // version is the release stamp, set at build time with
-// -ldflags "-X main.version=<tag>". A plain `go build` leaves it "dev", which
-// is also what the sandbox and any local run report.
+// -ldflags "-X main.version=<tag>" — which is how the Homebrew formula builds
+// it. Left alone, buildVersion falls back to what the toolchain recorded.
 var version = "dev"
+
+// buildVersion reports the release this binary came from, however it was built.
+// The three install paths stamp a version in three different places, and only
+// one of them is ldflags:
+//
+//   - Homebrew passes -ldflags, so version is already the release. A packager
+//     naming the version explicitly is the most authoritative answer, and wins.
+//   - `go install ...@v0.1.2` reaches no ldflags, but the toolchain records the
+//     module version in the build info. This is the case the fallback exists
+//     for — without it the install path the README advertises reported "dev".
+//   - `go build` inside a checkout records a VCS-derived version instead, so a
+//     working-tree build reports something like "0.1.1+dirty" — which is more
+//     honest than a bare "dev", since it says which release it is ahead of.
+//
+// "dev" survives only when there is neither a stamp nor VCS info to derive one
+// from, such as an unpacked source tarball built without ldflags.
+//
+// The leading "v" is trimmed so every path prints the same shape: ldflags carry
+// Homebrew's bare "0.1.2", build info carries "v0.1.2".
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok || bi.Main.Version == "" || bi.Main.Version == "(devel)" {
+		return version
+	}
+	return strings.TrimPrefix(bi.Main.Version, "v")
+}
 
 func main() {
 	// -version is the one thing drift does without a terminal or a repo: the
@@ -36,7 +67,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("drift", version)
+		fmt.Println("drift", buildVersion())
 		return
 	}
 
