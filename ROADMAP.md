@@ -254,7 +254,7 @@ is; link its spec/ADR once one exists.
       (what changed) or of the *versions* (your file left, the target's right). Those
       are different tools, and the second may be the more useful one for hand
       reconciliation. Not a detail to settle in advance
-14. ⏳ **Large lists — windowing, then filtering.** Found by dogfooding v0.1.x on a real
+14. 🛠️ **Large lists — windowing, then filtering.** Found by dogfooding v0.1.x on a real
     work repo with hundreds of remote refs: the first-run wizard rendered every ref,
     ran off the top of the terminal, and appeared to **freeze hard enough to force-quit
     the window**. Not cosmetic — the tool is unusable on exactly the repo shape it was
@@ -274,17 +274,33 @@ is; link its spec/ADR once one exists.
         path after the remote (`origin/feature/TEAM-1234-x` → key `feature/TEAM-1234-x`)
         and `keyColWidth` pads **every** row to the widest key, so one long branch name
         inflates the column past the panel width for all of them
-    - **Windowing is the fix and the prerequisite.** Render only the rows that fit,
+    - ✅ **Windowing was the fix and the prerequisite.** Render only the rows that fit,
       around the cursor. It bounds the frame at terminal height whatever the ref count,
       which kills the freeze outright — filtering to 200 matches still overflows without
-      it. Applies to the wizard, dashboard, pairing checklist, target picker, and
-      local-only list; `m.height` is already tracked (`update.go:18`) and then ignored
-      everywhere but the diff panel. **`wizardModel` doesn't even keep a height** — it
-      takes the `WindowSizeMsg` and stores only width (`wizard.go:94`)
-    - **The cursor must never be invisible.** That is the actual bug the user hit, and
-      the acceptance test: with N far larger than the terminal, the selection band is on
-      screen at every cursor position, with an "N more" affordance at the clipped edge
-    - **Then type-to-filter.** `j`/`k` through 400 branches is not navigation. Incremental,
+      it. Built once in `internal/ui/window.go` and routed through by every list screen:
+      wizard, dashboard, pairing checklist, target picker, local-only list and its hold
+      picker, and both declare overlays. `wizardModel` now keeps a height (it took the
+      `WindowSizeMsg` and stored only width). **The window is derived from the cursor,
+      not tracked as scroll state** — nothing to keep in sync, nothing to reset when a
+      list is rebuilt, and "the cursor is always drawn" holds by construction
+    - ✅ **The cursor must never be invisible.** That was the actual bug the user hit,
+      and the acceptance test: with N far larger than the terminal, the selection band is
+      on screen at every cursor position, with an "N more" affordance at the clipped
+      edge. Asserted by walking the cursor through all 400 positions and checking the
+      frame stays inside the terminal with the selected ref on it. **Measured:** a
+      5000-ref wizard frame went from ~1.26 MB to a flat 2.8 KB / 23 lines, unchanged by
+      ref count *or* name length
+    - ✅ **Row clipping came with it, because windowing alone is fiction.** Bounding the
+      row *count* does nothing if each row wraps: 400 long refs still rendered a 37-line
+      frame on a 24-line terminal, so the cursor still left the screen on exactly the
+      repo shape this area exists for. `clipRow` caps each windowed row at the panel's
+      content width, ANSI-aware (`charmbracelet/x/ansi`) — slicing a row of styled cells
+      by bytes would sever an escape sequence and bleed color down the frame. It runs
+      *before* `selectBand`, so the resets it introduces are re-armed by `reopenBand`.
+      This is the floor that keeps the geometry honest, **not** area 15's first bullet:
+      sizing each column properly, `padRight`'s `len()` bug, `deriveKey`, and the
+      minimum-width floor all remain open there
+    - ⏳ **Then type-to-filter.** `j`/`k` through 400 branches is not navigation. Incremental,
       case-insensitive substring to start; the match count belongs on screen, since a
       filter that silently hides the thing you wanted is worse than no filter
     - **The wizard is the one that actually needs it** — confirmed twice by dogfooding.
@@ -296,7 +312,10 @@ is; link its spec/ADR once one exists.
       is load-bearing — build it there first and let the pairing screen inherit it
     - **Filtering must not silently drop selections.** A ref checked and then filtered
       out is still selected — the same "never guess" rule as pairing. Show the count of
-      selected-but-hidden rather than letting the save quietly disagree with the screen
+      selected-but-hidden rather than letting the save quietly disagree with the screen.
+      The windowing half of this rule is already pinned by a test (a ref selected, then
+      scrolled 150 rows out of view, is still saved); filtering inherits the invariant
+      and owes the *count on screen*, which windowing does not
     - **Open question, decide when building:** whether the wizard should also sort by
       most-recent commit and default to a narrowed view. Asking "which of these 418 refs
       are your long-lived mains?" may be the wrong question shape even with search
@@ -306,13 +325,19 @@ is; link its spec/ADR once one exists.
     area 14's measurements. Deliberately after 14: polish on a screen that can't be
     navigated is wasted work. Each item below was verified against the code, not guessed
     — the file:line is the evidence.
-    - **Nothing truncates. Anywhere.** This is the systemic one, and the root of several
-      symptoms that look unrelated. `padRight` (`view.go:425`) pads to a width but
-      *returns long input unchanged*, so every "capped" column is only capped against
-      over-padding: `branchNameWidth` caps at 32 (`view.go:244`) and a 60-character
-      branch still renders all 60, shoving the status cluster right and wrapping the row.
-      There is no truncation helper in the package at all. Add one (display-width aware,
-      with an ellipsis) and make every computed column actually bound its cells
+    - **Nothing truncates *per column*.** This is the systemic one, and the root of
+      several symptoms that look unrelated. `padRight` pads to a width but *returns long
+      input unchanged*, so every "capped" column is only capped against over-padding:
+      `branchNameWidth` caps at 32 (`view.go:244`) and a 60-character branch still
+      renders all 60, shoving the status cluster right — the branch name eats the row and
+      the signals it was meant to sit beside are the thing that gets cut.
+      - Area 14 added `clipRow` (`window.go`), which caps the *assembled row* at the
+        panel width, ANSI-aware. That stops the wrapping and bounds the frame, and it is
+        deliberately only a floor: it clips whatever overflows off the right-hand end,
+        which on a long branch name means silently dropping the status cluster
+      - What remains is making each **column** bound its own cells, so a long name is
+        ellipsised in place and the cluster keeps its columns. `clipRow` is the backstop
+        underneath that, not a replacement for it
     - **Two padding implementations, and the one used most is wrong.** `padCell`
       (`help.go:272`) measures with `lipgloss.Width` and carries a comment explaining why
       byte length misaligns a column of glyphs. `padRight` measures with `len()` — as do
@@ -368,6 +393,15 @@ is; link its spec/ADR once one exists.
       and git errors are not short. One long error wraps the frame under the panel
     - **No minimum usable width.** `contentWidth` (`view.go:147`) clamps to 1 rather than
       declaring a floor, so a very narrow terminal renders garbage instead of saying it
-      is too narrow. Decide the floor when the truncation helper exists — the two answer
-      the same question
+      is too narrow. Decide the floor alongside the per-column truncation — the two
+      answer the same question. `listCapacity` (`window.go`) has the same shape in the
+      other axis: it floors at one row so the cursor is still drawn, which keeps a short
+      terminal correct rather than usable
+    - **The `?` help overlay runs off the top of a standard terminal.** Found while
+      measuring area 14: **27 lines on the dashboard** against a 24-line window, and
+      exactly 24 on the diff screen — so the keys it exists to teach are the ones
+      scrolled away. Same class as area 14's freeze, but **windowing does not apply**:
+      the overlay is not a cursor-navigated list, so there is no cursor to window around
+      and nothing to scroll with. It needs shortening, paging, or its own viewport —
+      decide which by counting what the table actually owes on the worst screen
     - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list

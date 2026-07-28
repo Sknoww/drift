@@ -468,13 +468,12 @@ func (m Model) declareView() string {
 // apart at a glance rather than by reading the globs.
 func (m Model) declarePatternBody() string {
 	d := m.diff.declare
-	lines := []string{
+	header := []string{
 		m.styles.hint.Render("Declare unmergeable — ") + m.styles.unmerge.Render(d.path),
 		m.styles.help.Render("git then stops merging it: your version is kept, the conflict is flagged,"),
 		m.styles.help.Render("and no conflict markers are written into a file you can't hand-edit."),
 		"",
 	}
-	head := len(lines)
 
 	width := 0
 	for _, p := range d.patterns {
@@ -482,11 +481,12 @@ func (m Model) declarePatternBody() string {
 			width = len(p.pattern)
 		}
 	}
+	var rows []string
 	for _, p := range d.patterns {
-		lines = append(lines, fmt.Sprintf("%s  %s",
+		rows = append(rows, fmt.Sprintf("%s  %s",
 			m.styles.target.Render(padRight(p.pattern, width)), m.styles.help.Render(p.why)))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+d.cursor), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
 }
 
 // declareDestBody asks where it goes, naming each destination's consequence
@@ -494,12 +494,11 @@ func (m Model) declarePatternBody() string {
 // "only this clone does".
 func (m Model) declareDestBody() string {
 	d := m.diff.declare
-	lines := []string{
+	header := []string{
 		m.styles.hint.Render("Write ") + m.styles.target.Render(d.pattern+" -merge") +
 			m.styles.hint.Render(" to…"),
 		"",
 	}
-	head := len(lines)
 
 	width := 0
 	for _, dest := range d.dests {
@@ -507,11 +506,12 @@ func (m Model) declareDestBody() string {
 			width = len(dest.Label())
 		}
 	}
+	var rows []string
 	for _, dest := range d.dests {
-		lines = append(lines, fmt.Sprintf("%s  %s",
+		rows = append(rows, fmt.Sprintf("%s  %s",
 			m.styles.branch.Render(padRight(dest.Label(), width)), m.styles.help.Render(dest.Detail())))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+d.cursor), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
 }
 
 // diffViewportWidth is the inner panel width the diff fills, falling back to a

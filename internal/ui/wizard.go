@@ -30,7 +30,7 @@ type wizardModel struct {
 	editing bool            // an inline key rename is open over the checklist
 	input   textinput.Model // the key editor, live only while editing
 
-	width int
+	width, height int
 
 	notice   string
 	declined bool           // esc/ctrl+c: fall back to the hand-edit path
@@ -92,7 +92,7 @@ func (m wizardModel) Init() tea.Cmd { return nil }
 func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -252,14 +252,14 @@ func (m wizardModel) View() string {
 // it maps to, so a terse key is never ambiguous — the same Key←Ref shape as the
 // area-3 target picker.
 func (m wizardModel) body() string {
-	lines := []string{
+	header := []string{
 		m.styles.hint.Render("Pick the target branches Drift tracks against."),
 		m.styles.help.Render("Your long-lived mains — one per version of the code in flight. Any number."),
 		"",
 	}
-	head := len(lines)
 
 	keyWidth := m.keyColWidth()
+	rows := make([]string, len(m.targets))
 	for i, t := range m.targets {
 		box := "[ ]"
 		if t.included {
@@ -271,13 +271,13 @@ func (m wizardModel) body() string {
 			keyCell = m.input.View()
 		}
 
-		lines = append(lines, fmt.Sprintf("%s %s  %s %s",
+		rows[i] = fmt.Sprintf("%s %s  %s %s",
 			box,
 			m.styles.target.Render(keyCell),
 			m.styles.help.Render("←"),
-			m.styles.branch.Render(t.ref)))
+			m.styles.branch.Render(t.ref))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+m.cursor), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, m.cursor)
 }
 
 func (m wizardModel) help() string {

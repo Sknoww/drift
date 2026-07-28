@@ -43,7 +43,30 @@ the home row. "Looks like raw text output" is a bug.
   beneath, one per target it aims at. Seeing a ticket's whole fan-out without
   scrolling is the point — but the target count is config-driven and unbounded, so
   "fits on screen" is a goal, not an invariant. An expanded ticket whose fan-out
-  overflows must scroll gracefully rather than break the layout.
+  overflows must scroll gracefully rather than break the layout — which is what
+  **Windowing** below now guarantees, for every list screen rather than just this one.
+- **Windowing** ✅ — **every list screen draws only the rows that fit, around the
+  cursor** (`listBody` / `rowWindow` in `internal/ui/window.go`; the diff panel is the
+  exception and always was, since it scrolls free text through a `viewport` rather than
+  selectable rows). This is a correctness rule, not an optimisation: Bubble Tea rewrites
+  the *whole* frame on every keystroke, so an unwindowed list of a few thousand rows is
+  a megabyte-plus of ANSI per press, and the terminal drowning in it presents as a **hard
+  freeze** rather than as lag. Measured on the first-run wizard: 5000 remote refs went
+  from a ~1.26 MB frame to a flat 2.8 KB.
+  - **The window is derived from the cursor, never tracked as scroll state.** There is
+    nothing to keep in sync and nothing to reset when a list is rebuilt, and the one
+    invariant that matters — *the cursor is always drawn* — holds by construction rather
+    than by remembering to clamp an offset.
+  - A clipped edge says so (`↑ N more` / `↓ N more`). A list that silently hides rows is
+    worse than a long one, the same rule filtering will inherit.
+  - **Windowing bounds the row count; clipping bounds what each row costs.** Without the
+    second the first is fiction — 400 long branch names still wrapped into a 37-line
+    frame on a 24-line terminal. `clipRow` caps each row at the panel's content width,
+    **ANSI-aware**: a row is assembled from styled cells, and slicing one by bytes would
+    sever an escape sequence and bleed color down the frame. It runs *before* the
+    selection band, so the resets it introduces are re-armed by `reopenBand` (§3).
+  - Windowing is a **render** concern only. A row selected and then scrolled out of view
+    is still selected and still saved — the same "never guess" rule as pairing.
 - **Status cluster** — per branch: target label · `↓behind ↑ahead` · dirty dot ·
   checked-out marker. Fixed order, aligned into columns so the eye scans down. The
   target label is **variable width** — column widths are computed from the config's
@@ -74,7 +97,7 @@ unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dash
   configured target in config order, showing `Key` and `Ref` so the choice is
   unambiguous when keys are terse. Number keys stay as an accelerator for the first 9
   (see §3) — the picker is the mechanism, numbers are the shortcut. Because targets are
-  unbounded, the overlay scrolls and never assumes its list fits.
+  unbounded, the overlay windows like every other list (§1) and never assumes its list fits.
 - **Diff panel** (area 5) ✅ — the incoming diff for an unmergeable file, read-only,
   the replacement for opening the web UI to hunt for changes. Scoped to **one branch**
   (`screenDiff`): its colliding files are cycled through with `tab`/`shift+tab`

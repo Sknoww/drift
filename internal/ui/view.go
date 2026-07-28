@@ -110,7 +110,7 @@ func (m Model) body() string {
 			}
 		}
 	}
-	return strings.Join(selectBand(m.styles, m.width, rows, selected), "\n")
+	return listBody(m.styles, m.width, m.height, nil, rows, selected)
 }
 
 // panelStyle is the bordered panel sized to span the terminal.
@@ -352,21 +352,20 @@ func (m Model) pairingView() string {
 // pairingBody lists the candidate branches with their inclusion box and
 // assigned target. An included branch with no target is flagged, never guessed.
 func (m Model) pairingBody() string {
-	lines := []string{m.styles.hint.Render("Pair branches for " + m.add.id)}
+	header := []string{m.styles.hint.Render("Pair branches for " + m.add.id)}
 
 	if !m.add.loaded {
-		return strings.Join(append(lines, "", m.styles.help.Render("scanning branches…")), "\n")
+		return strings.Join(append(header, "", m.styles.help.Render("scanning branches…")), "\n")
 	}
 	if len(m.add.candidates) == 0 {
-		lines = append(lines, "",
+		return strings.Join(append(header, "",
 			m.styles.help.Render("No local branch contains "+quote(m.add.id)+"."),
-			m.styles.help.Render("enter saves the ticket with no branches; pair them later."))
-		return strings.Join(lines, "\n")
+			m.styles.help.Render("enter saves the ticket with no branches; pair them later.")), "\n")
 	}
 
-	lines = append(lines, "")
-	head := len(lines) // first candidate row; the cursor indexes from here
+	header = append(header, "")
 	nameWidth := m.candidateNameWidth()
+	var rows []string
 	for _, c := range m.add.candidates {
 		box := "[ ]"
 		if c.included {
@@ -382,9 +381,9 @@ func (m Model) pairingBody() string {
 			}
 		}
 
-		lines = append(lines, fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign))
+		rows = append(rows, fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+m.add.cursor), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, m.add.cursor)
 }
 
 // pickerBody lists every configured target for the selected candidate, showing
@@ -392,18 +391,18 @@ func (m Model) pairingBody() string {
 // against the first nine; the rest are reachable by moving the cursor.
 func (m Model) pickerBody() string {
 	cand := m.add.candidates[m.add.cursor].branch
-	lines := []string{m.styles.hint.Render("Target for " + cand), ""}
+	header := []string{m.styles.hint.Render("Target for " + cand), ""}
 
-	head := len(lines) // first target row; pickerCur indexes from here
+	var rows []string
 	for i, t := range m.cfg.Targets {
 		acc := "  "
 		if i < 9 {
 			acc = fmt.Sprintf("%d ", i+1)
 		}
-		lines = append(lines, fmt.Sprintf("%s %s  %s",
+		rows = append(rows, fmt.Sprintf("%s %s  %s",
 			m.styles.help.Render(acc), padRight(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref)))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+m.add.pickerCur), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, m.add.pickerCur)
 }
 
 // candidateNameWidth is the widest candidate branch name, capped so a single

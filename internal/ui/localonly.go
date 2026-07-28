@@ -365,23 +365,22 @@ func (m Model) localOnlyView() string {
 // user checks out. The UI must not imply otherwise (CONTEXT.md), and a list of
 // paths with no scope stated would.
 func (m Model) localOnlyBody() string {
-	lines := []string{
+	header := []string{
 		m.styles.hint.Render("Local-only changes — kept on this machine, never committed"),
 		m.styles.help.Render("Held on every branch you check out: these are git index and ignore flags, not per-branch."),
 		"",
 	}
 
 	if !m.local.loaded {
-		return strings.Join(append(lines, m.styles.help.Render("reading what's held…")), "\n")
+		return strings.Join(append(header, m.styles.help.Render("reading what's held…")), "\n")
 	}
 	if len(m.local.entries) == 0 {
-		return strings.Join(append(lines,
+		return strings.Join(append(header,
 			m.styles.hint.Render("Nothing held yet."),
 			m.styles.help.Render("Press a to hold a working-tree change — a log tweak, a local override, a scratch file."),
 		), "\n")
 	}
 
-	head := len(lines)
 	pathWidth, mechWidth := 0, 0
 	for _, h := range m.local.entries {
 		if len(h.path) > pathWidth {
@@ -391,14 +390,15 @@ func (m Model) localOnlyBody() string {
 			mechWidth = len(h.mechanism())
 		}
 	}
+	var rows []string
 	for _, h := range m.local.entries {
-		lines = append(lines, fmt.Sprintf("%s %s  %s  %s",
+		rows = append(rows, fmt.Sprintf("%s %s  %s  %s",
 			m.heldGlyph(h),
 			m.styles.branch.Render(padRight(h.path, pathWidth)),
 			m.styles.help.Render(padRight(h.mechanism(), mechWidth)),
 			m.styles.target.Render(h.note)))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+m.local.cursor), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, m.local.cursor)
 }
 
 // heldGlyph marks which primitive holds a path. The tracked one is filled and
@@ -416,33 +416,33 @@ func (m Model) heldGlyph(h heldPath) string {
 // would hold it, so the routing is visible rather than magic — the user picks a
 // change, and Drift says out loud what it will do about it.
 func (m Model) localAddBody() string {
-	lines := []string{
+	header := []string{
 		m.styles.hint.Render("Hold a change locally"),
 		m.styles.help.Render("It stays in your working tree on every branch, and never reaches a commit."),
 		"",
 	}
 
 	if !m.local.add.loaded {
-		return strings.Join(append(lines, m.styles.help.Render("scanning the working tree…")), "\n")
+		return strings.Join(append(header, m.styles.help.Render("scanning the working tree…")), "\n")
 	}
 	if len(m.local.add.candidates) == 0 {
-		return strings.Join(append(lines,
+		return strings.Join(append(header,
 			m.styles.help.Render("No working-tree change to hold — everything is committed or already held."),
 		), "\n")
 	}
 
-	head := len(lines)
 	width := 0
 	for _, c := range m.local.add.candidates {
 		if len(c.path) > width {
 			width = len(c.path)
 		}
 	}
+	var rows []string
 	for _, c := range m.local.add.candidates {
-		lines = append(lines, fmt.Sprintf("%s  %s",
+		rows = append(rows, fmt.Sprintf("%s  %s",
 			m.styles.branch.Render(padRight(c.path, width)), m.candidateDetail(c)))
 	}
-	return strings.Join(selectBand(m.styles, m.width, lines, head+m.local.add.cursor), "\n")
+	return listBody(m.styles, m.width, m.height, header, rows, m.local.add.cursor)
 }
 
 // candidateDetail says what holding this change would do — or why it can't.
