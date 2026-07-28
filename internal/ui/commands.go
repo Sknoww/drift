@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"drift/internal/git"
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/git"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // branchStatus is one branch's computed signal against its paired target.

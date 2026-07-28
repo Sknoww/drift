@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // Update is the single event sink. Key presses are resolved to a named action

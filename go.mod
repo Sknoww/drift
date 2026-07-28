@@ -1,4 +1,4 @@
-module drift
+module github.com/Sknoww/drift
 
 go 1.24.2
 

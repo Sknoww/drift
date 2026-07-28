@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // View renders the current screen. It reads only model state — every git signal

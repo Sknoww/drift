@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // addFlow is the state of the add-ticket flow: the entered ID, the candidate

@@ -15,8 +15,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"drift/internal/git"
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/git"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // screen is the surface the UI is currently on. The dashboard is the home;

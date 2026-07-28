@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"drift/internal/git"
+	"github.com/Sknoww/drift/internal/git"
 )
 
 // The rest of the package's tests fake GitDir. These drive the real git layer,

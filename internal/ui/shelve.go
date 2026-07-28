@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"drift/internal/git"
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/git"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // The one-key shelve sequence (roadmap area 7, docs/specs/shelve-sequence.md):

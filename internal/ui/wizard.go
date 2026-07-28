@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"drift/internal/git"
-	"drift/internal/store"
+	"github.com/Sknoww/drift/internal/git"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // wizardModel is the first-run setup wizard (roadmap area 4). It runs as its own

@@ -18,9 +18,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
 
-	"drift/internal/git"
-	"drift/internal/store"
-	"drift/internal/ui"
+	"github.com/Sknoww/drift/internal/git"
+	"github.com/Sknoww/drift/internal/store"
+	"github.com/Sknoww/drift/internal/ui"
 )
 
 // version is the release stamp, set at build time with
