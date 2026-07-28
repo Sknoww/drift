@@ -345,7 +345,16 @@ func (m Model) pairingView() string {
 		help := m.styles.help.Render("j/k move · enter select · esc back")
 		return m.screenView(m.pickerBody(), help)
 	}
-	help := m.styles.help.Render("space toggle · t target · 1–9 quick-target · enter save · esc cancel")
+	if m.add.filter.open {
+		help := m.styles.help.Render("type to filter · ↑/↓ move · enter accept · esc clear")
+		return m.screenView(m.pairingBody(), help)
+	}
+	// esc means one thing at a time, and the line says which is live.
+	if m.add.filter.active() {
+		help := m.styles.help.Render("space toggle · t target · 1–9 quick-target · / refine · enter save · esc clear filter")
+		return m.screenView(m.pairingBody(), help)
+	}
+	help := m.styles.help.Render("space toggle · t target · 1–9 quick-target · / filter · enter save · esc cancel")
 	return m.screenView(m.pairingBody(), help)
 }
 
@@ -364,9 +373,23 @@ func (m Model) pairingBody() string {
 	}
 
 	header = append(header, "")
-	nameWidth := m.candidateNameWidth()
-	var rows []string
-	for _, c := range m.add.candidates {
+
+	vis := m.add.visible()
+	if m.add.filter.open || m.add.filter.active() {
+		hidden := hiddenSelectedCount(len(m.add.candidates), vis,
+			func(i int) bool { return m.add.candidates[i].included })
+		header = append(header,
+			m.add.filter.line(m.styles, len(vis), len(m.add.candidates), hidden), "")
+	}
+	if len(vis) == 0 {
+		return strings.Join(append(header,
+			m.styles.help.Render("No candidate matches "+quote(m.add.filter.query())+" — esc clears the filter.")), "\n")
+	}
+
+	nameWidth := m.candidateNameWidth(vis)
+	rows := make([]string, len(vis))
+	for i, ci := range vis {
+		c := m.add.candidates[ci]
 		box := "[ ]"
 		if c.included {
 			box = "[x]"
@@ -381,7 +404,7 @@ func (m Model) pairingBody() string {
 			}
 		}
 
-		rows = append(rows, fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign))
+		rows[i] = fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign)
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, m.add.cursor)
 }
@@ -390,7 +413,10 @@ func (m Model) pairingBody() string {
 // Key and Ref so a terse key is never ambiguous. The 1–9 accelerators are shown
 // against the first nine; the rest are reachable by moving the cursor.
 func (m Model) pickerBody() string {
-	cand := m.add.candidates[m.add.cursor].branch
+	cand := ""
+	if ci, ok := m.add.selected(); ok {
+		cand = m.add.candidates[ci].branch
+	}
 	header := []string{m.styles.hint.Render("Target for " + cand), ""}
 
 	var rows []string
@@ -407,12 +433,14 @@ func (m Model) pickerBody() string {
 
 // candidateNameWidth is the widest candidate branch name, capped so a single
 // long name cannot shove the target column off-screen (mirrors branchNameWidth).
-func (m Model) candidateNameWidth() int {
+// Measured over the visible rows only: the column aligns what is on screen, so a
+// name the filter is hiding has no business padding the rows that are drawn.
+func (m Model) candidateNameWidth(visible []int) int {
 	const cap = 32
 	w := 0
-	for _, c := range m.add.candidates {
-		if len(c.branch) > w {
-			w = len(c.branch)
+	for _, i := range visible {
+		if len(m.add.candidates[i].branch) > w {
+			w = len(m.add.candidates[i].branch)
 		}
 	}
 	if w > cap {

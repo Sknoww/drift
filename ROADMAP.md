@@ -260,6 +260,8 @@ is; link its spec/ADR once one exists.
     the window**. Not cosmetic — the tool is unusable on exactly the repo shape it was
     built for. Every list screen has the flaw; the diff panel is the only one that
     doesn't, because it already windows through a `viewport` (`diff.go:528`).
+    Windowing, row clipping and type-to-filter have all shipped; the area stays open on
+    one deliberately-unsettled question (recency sort — last bullet).
     - **What was measured**, so the fix targets the real cause rather than the symptom:
       - *Not git.* `RemoteBranches` is a local `for-each-ref refs/remotes` — no network,
         fast at any ref count. Nothing hangs before the wizard opens
@@ -300,9 +302,25 @@ is; link its spec/ADR once one exists.
       This is the floor that keeps the geometry honest, **not** area 15's first bullet:
       sizing each column properly, `padRight`'s `len()` bug, `deriveKey`, and the
       minimum-width floor all remain open there
-    - ⏳ **Then type-to-filter.** `j`/`k` through 400 branches is not navigation. Incremental,
-      case-insensitive substring to start; the match count belongs on screen, since a
-      filter that silently hides the thing you wanted is worse than no filter
+    - ✅ **Then type-to-filter.** `j`/`k` through 400 branches is not navigation. `/` opens
+      an incremental, case-insensitive substring filter, built once in `internal/ui/filter.go`
+      and routed through by the wizard and the pairing checklist. **The matching set is
+      derived from the query, never stored** — the same move as the window: the cursor
+      means "the n-th visible row", so there is no second copy of the list to fall out of
+      sync. Changing a query keeps the cursor on the row it was on when that row survives
+      (`cursorFor`), so narrowing does not throw you to the top and clearing returns you
+      to where you left off in 418 refs
+    - ✅ **The counts are the component, not decoration.** `12 of 418` is what distinguishes
+      "my query missed" from "this repo is empty", and a query matching nothing says so in
+      words. Alongside it, `⚠ N selected rows hidden by the filter` — see the never-drop
+      rule below
+    - ✅ **A text field on a screen of single-letter verbs.** While the field has focus only
+      `↑`/`↓` · `enter` · `esc` · `ctrl+c` act; everything else types, because `e`, `j`, `t`,
+      `space`, the 1–9 accelerators and `/` itself all occur in real branch names. Movement
+      is the arrows for the same reason. **`esc` now means two things one step at a time** —
+      with a filter applied it clears the filter, only otherwise does it decline the wizard
+      or abandon the add. Found by writing the test, not by reasoning: accepting a query
+      with `enter` and then pressing `esc` quit first-run setup outright
     - **The wizard is the one that actually needs it** — confirmed twice by dogfooding.
       It offers *every* ref under `refs/remotes`, unnarrowed, and asks the user to find
       their handful of long-lived mains in it. The pairing checklist looks like the same
@@ -310,17 +328,27 @@ is; link its spec/ADR once one exists.
       the ticket ID (`git.go:153`), so a 400-branch repo still shows two or three rows
       when adding `ABC-123`. Filter it too for consistency, but the wizard is where this
       is load-bearing — build it there first and let the pairing screen inherit it
-    - **Filtering must not silently drop selections.** A ref checked and then filtered
-      out is still selected — the same "never guess" rule as pairing. Show the count of
-      selected-but-hidden rather than letting the save quietly disagree with the screen.
-      The windowing half of this rule is already pinned by a test (a ref selected, then
-      scrolled 150 rows out of view, is still saved); filtering inherits the invariant
-      and owes the *count on screen*, which windowing does not
-    - **Open question, decide when building:** whether the wizard should also sort by
-      most-recent commit and default to a narrowed view. Asking "which of these 418 refs
-      are your long-lived mains?" may be the wrong question shape even with search
-      available — but recency is a heuristic, and a heuristic that hides the right answer
-      is worse than a long list. Not settled in advance
+    - ✅ **Filtering must not silently drop selections.** A ref checked and then filtered
+      out is still selected — the same "never guess" rule as pairing. The count of
+      selected-but-hidden is on screen so the save can never quietly disagree with it,
+      and the invariant is pinned on both screens. Its corollary fell out of building it:
+      **save validates every row, not just the visible ones**, so a block can land on a row
+      the query is hiding — the screen clears the filter and puts the cursor on that row
+      rather than naming something the user cannot see. Revealing a choice the user already
+      made is not guessing on their behalf
+    - ⏳ **Open question, still open — decide before calling area 14 done:** whether the
+      wizard should also sort by most-recent commit and default to a narrowed view. Asking
+      "which of these 418 refs are your long-lived mains?" may be the wrong question shape
+      even with search available — but recency is a heuristic, and a heuristic that hides
+      the right answer is worse than a long list. Not settled in advance, and deliberately
+      left open *after* the filter rather than before: with `/` in hand the long list is
+      navigable, which lowers what a default narrowing has to buy to be worth its risk
+    - ⏸️ **Other list screens** — the local-only manager, its hold picker, the target
+      picker, and the declare overlays all window but do not filter. The shared piece makes
+      each a few lines. The hold picker is the next real candidate (a working tree mid-
+      refactor is a long list, and finding one file in it is exactly the filter's job); the
+      target picker and the declare overlays are bounded by config and by a file's matched
+      globs, so they are unlikely ever to need it
 15. ⏳ **UI polish pass.** The accumulated nits, found by auditing the render layer after
     area 14's measurements. Deliberately after 14: polish on a screen that can't be
     navigated is wasted work. Each item below was verified against the code, not guessed

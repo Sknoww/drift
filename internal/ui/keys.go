@@ -33,6 +33,11 @@ const (
 	ActionToggleCandidate Action = "toggle_candidate" // space: include/exclude a candidate branch
 	ActionOpenPicker      Action = "open_picker"      // t: open the target picker for the selection
 
+	// Type-to-filter (area 14), shared by every list long enough to need it.
+	// Opening the field is a named action like any other; the keys *inside* it
+	// are their own keymap, since almost all of them have to type.
+	ActionFilter Action = "filter" // /: narrow the list by substring
+
 	// First-run wizard action: rename the selected target's key inline. Movement,
 	// ToggleCandidate (include a ref), Confirm (save), and Cancel (decline) are
 	// shared with the pairing checklist, so the wizard needs only this one verb.
@@ -110,6 +115,7 @@ type keymaps struct {
 	localAdd      Keymap
 	localNote     Keymap
 	shelve        Keymap
+	filter        Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -126,6 +132,30 @@ func defaultKeymaps() keymaps {
 		localAdd:      DefaultLocalAddKeys(),
 		localNote:     DefaultLocalNoteKeys(),
 		shelve:        DefaultShelveKeys(),
+		filter:        DefaultFilterKeys(),
+	}
+}
+
+// DefaultFilterKeys binds the filter field while it has focus, on whichever list
+// screen opened it. Only the control keys are bound — every other key has to
+// type, or an incremental filter is impossible on a screen whose verbs are
+// single letters (`e`, `t`, `space`, `1`–`9`).
+//
+// Movement stays bound so the user can arrow straight onto a match without
+// leaving the field, and it is deliberately the *arrows* rather than j/k: j and k
+// are two of the letters that must remain typeable.
+//
+// enter and esc split the two ways out. enter accepts the query and hands the
+// keys back to the list, so j/k navigate what is left; esc clears the filter
+// outright, which is the screen's usual "back out one step" — the step being
+// backed out of is the narrowing, not the screen.
+func DefaultFilterKeys() Keymap {
+	return Keymap{
+		"up":     ActionMoveUp,
+		"down":   ActionMoveDown,
+		"enter":  ActionConfirm,
+		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
 	}
 }
 
@@ -186,6 +216,7 @@ func DefaultPairingKeys() Keymap {
 		"up":     ActionMoveUp,
 		" ":      ActionToggleCandidate,
 		"t":      ActionOpenPicker,
+		"/":      ActionFilter,
 		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
 		"?":      ActionHelp,
@@ -225,9 +256,10 @@ func DefaultConfirmDeleteKeys() Keymap {
 }
 
 // DefaultWizardKeys binds the first-run wizard: a checklist of remote refs with
-// space to include one as a target, e to rename its key, enter to save, esc to
-// decline (back to the hand-edit fallback). Deliberately the same move/space/
-// enter/esc shape as the pairing checklist, so the wizard needs no learning.
+// space to include one as a target, e to rename its key, / to narrow the list,
+// enter to save, esc to decline (back to the hand-edit fallback). Deliberately
+// the same move/space//-filter/enter/esc shape as the pairing checklist, so the
+// wizard needs no learning.
 func DefaultWizardKeys() Keymap {
 	return Keymap{
 		"j":      ActionMoveDown,
@@ -236,6 +268,7 @@ func DefaultWizardKeys() Keymap {
 		"up":     ActionMoveUp,
 		" ":      ActionToggleCandidate,
 		"e":      ActionEditKey,
+		"/":      ActionFilter,
 		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
 		"ctrl+c": ActionQuit,

@@ -71,18 +71,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Wherever a text field is live, everything else (cursor blink) drives it.
 	if m.typing() {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m.feedField(msg)
 	}
 	return m, nil
 }
 
 // typing reports whether a text field is live, so an unbound key is a keystroke
-// rather than a no-op. Two screens qualify: ID entry, where the whole screen is
-// the field, and the local-only note editor open over its list.
+// rather than a no-op. Three screens qualify: ID entry, where the whole screen
+// is the field; the local-only note editor open over its list; and the pairing
+// checklist's filter field, which has to swallow `space`, `t` and 1–9 or an
+// incremental query could never contain them.
 func (m Model) typing() bool {
-	return m.screen == screenAddID || (m.screen == screenLocalOnly && m.local.note.open)
+	return m.screen == screenAddID ||
+		(m.screen == screenLocalOnly && m.local.note.open) ||
+		(m.screen == screenPairing && !m.add.picker && m.add.filter.open)
+}
+
+// feedField routes a keystroke to whichever field typing() found live. The
+// filter owns its own input rather than borrowing m.input: m.input still holds
+// the ticket ID that got the user to this screen, and a filter that typed over
+// it would be a bug waiting for the first person to press esc.
+func (m Model) feedField(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.screen == screenPairing && m.add.filter.open {
+		f, cmd := m.add.filter.typed(msg)
+		m.add = m.add.applyFilter(f)
+		return m, cmd
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
 }
 
 // handleKey resolves a key through the active screen's keymap. On the ID-entry
@@ -102,9 +119,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if action, ok := m.activeKeys().action(msg.String()); ok {
 			return m.dispatch(action)
 		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m.feedField(msg)
 	}
 	// On the diff panel, a bound key steps between files or backs out; every
 	// other key falls through to the viewport so its own j/k/arrows/pgup/pgdn
@@ -138,8 +153,13 @@ func (m Model) activeKeys() Keymap {
 	case screenAddID:
 		return m.keys.addID
 	case screenPairing:
-		if m.add.picker {
+		switch {
+		case m.add.picker:
 			return m.keys.picker
+		case m.add.filter.open:
+			// Only the filter's control keys act while it has focus; every other
+			// key falls through typing() into the query.
+			return m.keys.filter
 		}
 		return m.keys.pairing
 	case screenConfirmDelete:

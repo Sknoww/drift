@@ -36,6 +36,7 @@ var actionText = map[Action]string{
 	ActionConfirm:         "confirm this screen",
 	ActionCancel:          "back out one step",
 	ActionToggleCandidate: "include / exclude the selected row",
+	ActionFilter:          "narrow the list — type to match, esc clears",
 	ActionOpenPicker:      "choose a target for it",
 	ActionEditKey:         "rename the target key",
 	ActionNextFile:        "next colliding file (wraps)",
@@ -59,7 +60,7 @@ var actionText = map[Action]string{
 // action missing from this list still shows up — see helpEntries — so adding an
 // action can never silently drop it from the help.
 var actionOrder = []Action{
-	ActionMoveUp, ActionMoveDown,
+	ActionMoveUp, ActionMoveDown, ActionFilter,
 	ActionToggleExpand, ActionToggleCandidate, ActionOpenPicker, ActionEditKey,
 	ActionNextFile, ActionPrevFile, ActionDeclare,
 	ActionHoldLocal, ActionRelease, ActionEditNote,

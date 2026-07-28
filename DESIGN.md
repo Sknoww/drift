@@ -67,6 +67,29 @@ the home row. "Looks like raw text output" is a bug.
     selection band, so the resets it introduces are re-armed by `reopenBand` (§3).
   - Windowing is a **render** concern only. A row selected and then scrolled out of view
     is still selected and still saved — the same "never guess" rule as pairing.
+- **Type-to-filter** ✅ — `/` opens an incremental, case-insensitive substring filter over
+  a list (`filterState` in `internal/ui/filter.go`; live on the first-run wizard and the
+  pairing checklist). Windowing made a long list *renderable*; it did nothing to make one
+  *navigable*, and `j`/`k` through 418 remote refs is not navigation. Like the window,
+  the matching set is **derived from the query on every render, never stored** — the
+  cursor means "the n-th visible row", so there is no second copy of the list to fall out
+  of sync with a query that has since changed.
+  - **The counts are part of the component, not decoration.** `12 of 418` is the answer
+    to "did my query find it, or is it just not there" — without it a narrowed list is
+    indistinguishable from an empty repo. A query matching nothing says so in words.
+  - **Filtering never drops a selection**, and the screen says how many it is hiding
+    (`⚠ N selected rows hidden by the filter`, in the error style — it means the same
+    thing that style always means here: what is about to happen is not what is on
+    screen). A row filtered out is still selected and still saved, exactly as a row
+    scrolled out of view is.
+  - **A blocked save reveals the row it names.** Save validates every row, not just the
+    visible ones, so a block can land on one the query is hiding — the screen clears the
+    filter and puts the cursor on it rather than naming a row the user cannot see.
+    Revealing a choice the user already made is not guessing on their behalf.
+  - **Column widths are measured over the visible rows only.** The column exists to align
+    what is on screen; padding every drawn row to fit a name the filter is hiding is the
+    row-wrapping that doubled the frame before windowing.
+  - Interaction and the two-meanings-of-`esc` rule are in §3.
 - **Status cluster** — per branch: target label · `↓behind ↑ahead` · dirty dot ·
   checked-out marker. Fixed order, aligned into columns so the eye scans down. The
   target label is **variable width** — column widths are computed from the config's
@@ -214,8 +237,35 @@ Add flow (pairing checklist):
 | `space` | Toggle candidate branch |
 | `t` | Open the target picker for the selected candidate |
 | `1`–`9` | Accelerator: assign the Nth configured target directly, no picker |
+| `/` | Filter the list (area 14) |
 | `enter` | Save |
-| `esc` | Cancel |
+| `esc` | Clear the filter if one is applied · else cancel |
+
+**The filter field is a text field, and binds like one.** While it has focus only
+`↑`/`↓` · `enter` · `esc` · `ctrl+c` act (`DefaultFilterKeys`); every other key types.
+That is not a shortcut — it is the only arrangement that works on a screen whose verbs
+are single letters, since `e`, `j`, `t`, `space` and the digits all appear in real branch
+names and all have to be typeable. Movement is deliberately the **arrows** and not `j`/`k`
+for the same reason. `/` itself types too: ref names are full of slashes.
+
+`enter` accepts the query and hands the keys back, so `j`/`k` navigate what is left;
+`esc` clears the filter. **`esc` therefore means two things on these screens, one step at
+a time** — the same unwinding the declare overlay does. With a filter applied it undoes
+the filter; only with no filter does it decline the wizard or abandon the add. Declining
+first-run setup by accident because the last thing you did was narrow a list is exactly
+the surprise the one-step rule exists to stop, and the help line says which meaning is
+live.
+
+The **`?` table documents `/` with no code change**, because it is generated from the live
+keymap — the property that makes an area-12 rebind free. The field itself binds no `?`,
+for the same reason the ID-entry screen does not: every key there is text.
+
+First-run wizard: the same shape, plus `e` to rename a key. It is the screen the filter
+was built for — it offers *every* ref under `refs/remotes`, unnarrowed, and asks the user
+to find their handful of long-lived mains in it. The pairing checklist looks like the same
+problem and is not (`CandidateBranches` already narrows to branches containing the ticket
+ID), and filters anyway: one list screen that filters and one that does not is a worse
+tool than either.
 
 Target picker overlay: `j` / `k` move, `enter` selects, `esc` cancels — deliberately
 the same shape as the dashboard, so the overlay needs no learning. Targets past the
