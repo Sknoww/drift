@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 
@@ -22,7 +23,23 @@ import (
 	"drift/internal/ui"
 )
 
+// version is the release stamp, set at build time with
+// -ldflags "-X main.version=<tag>". A plain `go build` leaves it "dev", which
+// is also what the sandbox and any local run report.
+var version = "dev"
+
 func main() {
+	// -version is the one thing drift does without a terminal or a repo: the
+	// packaging story (Homebrew's `test do` block, `brew upgrade` diffing an
+	// installed build) needs a way to ask which build this is that doesn't
+	// open the full-screen dashboard.
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println("drift", version)
+		return
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "drift:", err)
 		os.Exit(1)

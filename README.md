@@ -1,6 +1,21 @@
 # drift
 A ticket based git TUI
 
+## Install
+
+```sh
+brew install Sknoww/tap/drift
+```
+
+Or build it from a checkout — drift needs Go 1.24+ and nothing else:
+
+```sh
+go build -o drift .
+```
+
+Run `drift` from inside a git repo. The first run opens a setup wizard that seeds
+the config from the repo's own remote refs.
+
 ## Sandbox
 
 `scripts/sandbox.sh` builds a throwaway repo that exercises everything drift does, so a
