@@ -1007,14 +1007,17 @@ func TestUpdateIsReachableFromTheDashboardKeymap(t *testing.T) {
 // --- area 17a end to end, against a real repo -----------------------------
 
 // updateOrigin builds a bare repo holding main and feature, the shape a clone
-// can actually pull from and push back to.
+// can actually pull from and push back to. --initial-branch sets the bare HEAD,
+// which is what `git clone` checks out; leaving it to the ambient
+// init.defaultBranch points HEAD at a branch we never push on any machine where
+// that default is not main.
 func updateOrigin(t *testing.T) string {
 	t.Helper()
 	work := newTestRepo(t)
 	writeCommit(t, work, "app.conf", "level=info\n")
 	rungit(t, work, "branch", "feature")
 	bare := t.TempDir()
-	rungit(t, work, "init", "--quiet", "--bare", bare)
+	rungit(t, work, "init", "--quiet", "--bare", "--initial-branch=main", bare)
 	rungit(t, work, "push", "--quiet", bare, "main", "feature")
 	return bare
 }

@@ -16,11 +16,16 @@ import (
 // the shape a clone can actually push back to. A non-bare origin refuses a push
 // to its checked-out branch, which would make every push test fail for a reason
 // that has nothing to do with what is being tested.
+//
+// --initial-branch is not optional: it sets the bare repo's HEAD, and a HEAD
+// naming a branch we never push leaves `git clone` with nothing to check out.
+// Without it the name comes from the ambient init.defaultBranch, which is main
+// on a Mac (Xcode ships a system gitconfig setting it) and master on CI.
 func bareOrigin(t *testing.T) string {
 	t.Helper()
 	work := newRepo(t)
 	bare := t.TempDir()
-	git(t, work, "init", "--quiet", "--bare", bare)
+	git(t, work, "init", "--quiet", "--bare", "--initial-branch=main", bare)
 	git(t, work, "push", "--quiet", bare, "main")
 	return bare
 }
