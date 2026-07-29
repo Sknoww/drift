@@ -189,6 +189,11 @@ func (m Model) activeKeys() Keymap {
 		}
 		return m.keys.localOnly
 	case screenShelve:
+		if m.shelve.confirm {
+			// The stash-plan overlay shadows the report's keymap while it is open,
+			// exactly as the declare overlay shadows the diff panel's.
+			return m.keys.confirmStash
+		}
 		return m.keys.shelve
 	default:
 		return m.keys.dashboard

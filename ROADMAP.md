@@ -691,13 +691,14 @@ is; link its spec/ADR once one exists.
         the accent **only when it was overridden**: an accent is literally the colour the
         label is drawn beside, so naming it otherwise is noise, where `pair` and
         `contrast` differ subtly enough that the screen does not tell you which you got
-17. 🛠️ **`u` update — carry a branch all the way, including the checkout and the push.**
+17. ✅ **`u` update — carry a branch all the way, including the checkout and the push.**
     Raised by dogfooding v0.2.0, and it is the sharpest kind of finding: the tool does not
     do the thing it was built to do. Going down the branch list and pressing `s` refuses on
     every row but the one you happen to be standing on, so the "one keypress per branch"
-    payoff only ever arrives for one branch. **17a** — the git layer, the sequence, the
-    unwind, the spec rewrite and the ADR — has shipped; **17b** is the confirmation overlay
-    and the dashboard's ahead-of-`origin/<branch>` signal. Three pieces were missing, and
+    payoff only ever arrives for one branch. **17a** shipped the git layer, the sequence,
+    the unwind, the spec rewrite and the ADR; **17b** shipped the confirmation overlay and
+    the dashboard's ahead-of-`origin/<branch>` signal, which together are what make the
+    dirty cross-branch case runnable and its result visible. Three pieces were missing, and
     only the first was a design question — the other two were simply absent:
     - ✅ **No checkout.** `beginShelve` refused when the row was not `m.current`, and
       `internal/git`'s package doc opened with "nothing checks anything out". Both are
@@ -764,20 +765,39 @@ is; link its spec/ADR once one exists.
         when it returns, so the work still never lands on a tree it was not taken from.
         That is a narrower claim than the spec's blanket refusal, and it is the reason
         this is now buildable
-    - ⏳ **17b — a confirmation overlay, then the full automated round trip.** Settled, and
-      the only piece of the dirty-cross-branch case still outstanding: the machinery under
-      it shipped with 17a, so this is the prompt and nothing else. Not a flat refusal —
-      being blocked by unrelated dirt is the friction the area exists to remove. The
-      overlay names the actual plan before anything runs (which branch is being left, that
-      the work is stashed, that Drift comes back and pops), and the user confirms. Same
-      shape as the `y/n` delete confirm and the declare overlay, so an overlay is still an
-      overlay wherever the user meets one. A clean tree gets no overlay at all — there is
-      nothing to warn about
-      - **Until it lands, 17a refuses that one case** — at `stepReady`, where everything
-        is still read-only and a refusal costs nothing — and names the two ways to proceed.
-        Shipping the round trip without the prompt would have been the one thing the
-        overlay exists to prevent: being stashed without having agreed to it. Unlocking it
-        is a change to that gate and nothing else
+    - ✅ **17b — the confirmation overlay, and with it the full automated round trip.**
+      The machinery shipped with 17a, so this was the prompt and nothing else: the gate at
+      `stepReady` that refused is now the gate that asks. Not a flat refusal — being
+      blocked by unrelated dirt is the friction the area exists to remove. The overlay
+      names the actual plan before anything runs (which branch is being left, that the
+      work is stashed, that Drift comes back and pops), and the user confirms. Same shape
+      as the `y/n` delete confirm and the declare overlay, so an overlay is still an
+      overlay wherever the user meets one. A clean tree gets no overlay at all, and
+      neither does a dirty tree on the branch you are already standing on
+      - **The placement was the one decision, and it is step 0 rather than step 3.** The
+        prompt could have waited until the fetches had settled what there was to do, which
+        would spare the case that prompts and then finds nothing. It asks first anyway,
+        for two reasons pointing the same way: the question is about the user's own
+        uncommitted work, which is fully known before a single ref is touched, so nothing
+        a fetch returns could change the answer; and a verb whose whole promise is *one
+        keypress* must not stop for input in the middle. Press `u`, press `y`, walk away —
+        the alternative pauses after a network round trip, which is the babysitting the
+        area exists to remove. The cost is a prompt on a sequence that then reports
+        nothing was touched, which is true
+      - **The prompt gates whether the sequence runs, never how.** Accepting resumes at
+        the fetches and nowhere else, so there is exactly one path through the mutating
+        steps and no second arrangement to keep in step with the first. Declining is the
+        screen's ordinary cancel, unchanged — everything is still read-only, so there is
+        nothing to undo and the notice already said so
+      - **Prose breaks a frame exactly as rows do**, and this screen does not window,
+        so it is measured rather than assumed. The guarantee line is deliberately
+        name-free where the plan above it interpolates branches: naming the branch twice
+        measured 79 cells into a 76-cell panel at an ordinary 80-column terminal, and the
+        clip cut the one sentence carrying the guarantee mid-word. What is left is bounded
+        whatever the branches are called
+      - **The `?` overlay's "any key closes, and is consumed" rule earns its keep here.**
+        This is the one screen where the key dismissing the help would otherwise stash the
+        user's work, and it is pinned as such
     - ✅ **Settled: you end up where you started.** The list is a list, not a place you
       move to. Updating five branches must not silently relocate you, and each Update has
       to start from the same known place as the last. The return is part of the sequence,
@@ -806,7 +826,7 @@ is; link its spec/ADR once one exists.
       "merge the target into this branch — nothing is published" against "bring the
       selected branch up to date and publish it", and pinned by a test, so the two can
       never drift into describing the same thing
-    - ⏳ **17b — the dashboard gains an ahead-of-`origin/<branch>` signal.** Without it
+    - ✅ **17b — the dashboard gained an ahead-of-`origin/<branch>` signal.** Without it
       `u`'s push is invisible: today's `↓behind ↑ahead` measures against the *target*, so a
       pushed branch and a locally-merged-but-unpushed one render identically, and the
       column would be silent about the only step that touches the remote. This is the
@@ -814,3 +834,20 @@ is; link its spec/ADR once one exists.
       screen rather than only in the help — `s` leaves the branch ahead of its own remote,
       `u` does not. Unpaired with a target and unrelated to it: a branch can be current
       with its target and still unpushed
+      - **Settled: a glyph, not a count, and the denominator is why.** `↑N` is already on
+        the row and counts against the *target*; a second number would put two up-arrows
+        with two different meanings side by side and ask the reader to remember which was
+        which. `⇡` reads as a **state** — there is work here that has not left this
+        machine — which is the whole of what the signal has to say, and it costs two fixed
+        cells rather than another variable column on a row area 15 spent itself narrowing
+      - **No new alarm colour.** `⇡` takes the dirty style on the argument area 6 already
+        made for `◆`: that colour has always meant "work that exists only here", and
+        uncommitted and unpublished are its two kinds. `behind` stays the only thing on
+        screen shouting. `⊘` recedes into the hint style — an unpublished branch is a fact
+        about the branch, not something that went wrong
+      - **Three answers, never conflated.** A branch with no upstream is `⊘`, not
+        zero-unpublished — the same distinction the push itself already draws — and a
+        probe that fails renders blank, making no claim rather than a wrong one. That
+        rests on `Upstreams`, the one new git call: present-with-an-empty-value means a
+        branch that has never been published, absent means a branch that is not there.
+        One shell-out for the whole repo per sweep rather than one per row

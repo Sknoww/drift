@@ -181,9 +181,11 @@ func TestStatusPairAlignsAcrossRows(t *testing.T) {
 	m.width, m.height = 100, 24
 	m.expanded["ABC-1"] = true
 
+	// The publish glyph is varied alongside the pair, since it is a fixed-width
+	// column between them and the two glyphs the alignment is really for.
 	brs := m.store.Tickets[0].Branches
-	m.status[statusKey("ABC-1", brs[0].Branch)] = branchStatus{known: true, behind: 3, ahead: 1}
-	m.status[statusKey("ABC-1", brs[1].Branch)] = branchStatus{known: true, behind: 12, ahead: 345}
+	m.status[statusKey("ABC-1", brs[0].Branch)] = branchStatus{known: true, behind: 3, ahead: 1, unpublished: 2}
+	m.status[statusKey("ABC-1", brs[1].Branch)] = branchStatus{known: true, behind: 12, ahead: 345, noUpstream: true}
 
 	cols := m.branchColumns()
 	a := lipgloss.Width(m.branchRow("ABC-1", brs[0], cols))

@@ -172,6 +172,14 @@ func (m Model) glyphLegend() []helpEntry {
 			{s.help.Render("◇"), "untracked — held with info/exclude, so it's ignored locally"},
 		}
 	}
+	if m.screen == screenShelve && m.shelve.confirm {
+		// The prompt draws exactly one glyph, and the report's three are not on
+		// screen yet. A legend explains the screen you are on or it teaches the
+		// wrong thing — the same rule that has each glyph drawn in its own colour.
+		return []helpEntry{
+			{s.dirty.Render("●"), "the uncommitted work this is about to stash"},
+		}
+	}
 	if m.screen == screenShelve {
 		// The report's own glyphs. The distinction that matters is ■ against ✗:
 		// one is git telling you something you have to reconcile, the other is the
@@ -187,6 +195,11 @@ func (m Model) glyphLegend() []helpEntry {
 		{s.ticket.Render("▸ / ▾"), "ticket collapsed / expanded"},
 		{s.behind.Render("↓N"), "commits the target has that you don't — it moved"},
 		{s.ahead.Render("↑N"), "commits you have that the target doesn't"},
+		// The two below are about the branch's own remote, not the target — the
+		// one place on the row where the denominator changes, which is exactly why
+		// the wording names origin/<branch> outright.
+		{s.dirty.Render("⇡"), "commits not yet on origin/<branch> — u publishes them"},
+		{s.help.Render("⊘"), "no upstream — nothing to publish to yet"},
 		{s.dirty.Render("●"), "uncommitted changes (checked-out branch only)"},
 		{s.marker.Render("▸"), "the branch you have checked out"},
 		{s.unmerge.Render("⚠ N unmergeable"), "both sides changed a file git can't merge — enter opens it"},
@@ -217,6 +230,9 @@ func (m Model) screenName() string {
 		// carries its own one-line help (DESIGN.md §2).
 		return "local-only changes"
 	case screenShelve:
+		if m.shelve.confirm {
+			return "stash confirmation"
+		}
 		// One screen, two verbs: the report names the one that is running, so the
 		// help overlay opened over it does too.
 		if m.shelve.mode == modeUpdate {

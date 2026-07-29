@@ -556,6 +556,81 @@ func TestViewRendersStatusCluster(t *testing.T) {
 	}
 }
 
+// The publish signal (roadmap 17b). Without it `u`'s push is invisible: today's
+// ↓behind ↑ahead measures against the *target*, so a branch merged locally and
+// one merged and published render identically, and the difference between the
+// two verbs would live only in the help.
+func TestViewRendersThePublishSignal(t *testing.T) {
+	tests := []struct {
+		name   string
+		st     branchStatus
+		want   string
+		absent []string
+	}{
+		{"unpublished commits", branchStatus{known: true, unpublished: 2}, "⇡", []string{"⊘"}},
+		{"no upstream at all", branchStatus{known: true, noUpstream: true}, "⊘", []string{"⇡"}},
+		{"published and current", branchStatus{known: true}, "", []string{"⇡", "⊘"}},
+		// A degraded probe makes no claim rather than a wrong one — the same rule
+		// the unmergeable marker follows.
+		{"probe degraded", branchStatus{known: true, ahead: 4}, "", []string{"⇡", "⊘"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel()
+			m.expanded["ABC-2"] = true
+			m.status = map[string]branchStatus{statusKey("ABC-2", "abc-2"): tc.st}
+			out := m.View()
+
+			if tc.want != "" && !strings.Contains(out, tc.want) {
+				t.Errorf("view missing %q:\n%s", tc.want, out)
+			}
+			for _, no := range tc.absent {
+				if strings.Contains(out, no) {
+					t.Errorf("view claims %q, which is not this branch's state:\n%s", no, out)
+				}
+			}
+		})
+	}
+}
+
+// The glyph is two cells whatever state it is in, so the two beside it stay in
+// one column down the list — "aligned so the eye scans down" (DESIGN.md §1) is
+// what the cluster is for, and a variable-width cell breaks it for every row.
+func TestPublishGlyphIsOneFixedWidthColumn(t *testing.T) {
+	m := newModel()
+	states := []branchStatus{
+		{known: true, unpublished: 3},
+		{known: true, noUpstream: true},
+		{known: true},
+	}
+	want := lipgloss.Width(m.renderPublish(states[0]))
+	for _, st := range states[1:] {
+		if got := lipgloss.Width(m.renderPublish(st)); got != want {
+			t.Errorf("renderPublish(%+v) is %d cells, want %d — the column has to hold", st, got, want)
+		}
+	}
+}
+
+// The two signals are about different remotes, and the row is the only place
+// that has to be unambiguous about it: ↑N counts against the target, ⇡ against
+// origin/<branch>. A branch can be level with its target and still unpublished,
+// which is exactly the state `s` leaves behind.
+func TestPublishSignalIsIndependentOfTheTarget(t *testing.T) {
+	m := newModel()
+	m.expanded["ABC-2"] = true
+	m.status = map[string]branchStatus{
+		statusKey("ABC-2", "abc-2"): {known: true, ahead: 0, behind: 0, unpublished: 2},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "↓0 ↑0") {
+		t.Errorf("view lost the target comparison:\n%s", out)
+	}
+	if !strings.Contains(out, "⇡") {
+		t.Errorf("a branch level with its target but unpublished shows nothing:\n%s", out)
+	}
+}
+
 func TestViewRendersUnknownTarget(t *testing.T) {
 	st := store.Store{Tickets: []store.Ticket{
 		{ID: "X", Branches: []store.TicketBranch{{Branch: "b", TargetKey: "gone"}}},
@@ -607,6 +682,44 @@ func TestSweepComputesAheadBehindAndRoutesUnknownTarget(t *testing.T) {
 
 	if ghost := msg.byKey[statusKey("T", "solo")]; ghost.known {
 		t.Errorf("branch with absent target key should route to known=false: %+v", ghost)
+	}
+}
+
+// The publish half of the sweep, against a real remote (roadmap 17b). The three
+// answers are deliberately distinct: a branch that has never been published is
+// not a branch with zero unpublished commits, and neither is a branch whose
+// probe could not run.
+func TestSweepReadsEachBranchAgainstItsOwnRemote(t *testing.T) {
+	origin := updateOrigin(t) // main and feature, both published
+	dir := updateClone(t, origin)
+
+	// feature gains a commit that never leaves this machine — the state `s` is
+	// designed to leave behind, and the one the dashboard could not see.
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	writeCommit(t, dir, "mine.txt", "mine\n")
+	rungit(t, dir, "checkout", "--quiet", "main")
+	rungit(t, dir, "branch", "never-pushed")
+
+	cfg := store.Config{Targets: []store.Target{{Key: "main", Ref: "origin/main"}}}
+	tickets := []store.Ticket{{ID: "T", Branches: []store.TicketBranch{
+		{Branch: "feature", TargetKey: "main"},
+		{Branch: "never-pushed", TargetKey: "main"},
+		{Branch: "main", TargetKey: "main"},
+	}}}
+
+	msg := sweep(context.Background(), git.New(dir), cfg, tickets, false)
+	if msg.err != nil {
+		t.Fatalf("sweep: %v", msg.err)
+	}
+
+	if got := msg.byKey[statusKey("T", "feature")]; got.unpublished != 1 || got.noUpstream {
+		t.Errorf("feature = %+v, want 1 unpublished commit and an upstream", got)
+	}
+	if got := msg.byKey[statusKey("T", "never-pushed")]; !got.noUpstream || got.unpublished != 0 {
+		t.Errorf("never-pushed = %+v, want no upstream — that is a third answer, not zero", got)
+	}
+	if got := msg.byKey[statusKey("T", "main")]; got.unpublished != 0 || got.noUpstream {
+		t.Errorf("main = %+v, want published and current", got)
 	}
 }
 
@@ -1450,6 +1563,8 @@ func TestGlyphLegendUsesEachSignalsRealStyle(t *testing.T) {
 		s.ticket.Render("▸ / ▾"),
 		s.behind.Render("↓N"),
 		s.ahead.Render("↑N"),
+		s.dirty.Render("⇡"),
+		s.help.Render("⊘"),
 		s.dirty.Render("●"),
 		s.marker.Render("▸"),
 		s.unmerge.Render("⚠ N unmergeable"),

@@ -32,6 +32,11 @@ func (r *Repo) Checkout(ctx context.Context, branch string) error {
 	return err
 }
 
+// upstreamFormat pairs each ref with the remote-tracking ref it follows. Shared
+// by the two readers below so the one branch and the whole set are answering
+// literally the same question in the same words.
+const upstreamFormat = "--format=%(refname:short)%09%(upstream:short)"
+
 // Upstream names the remote-tracking ref a local branch is configured to track,
 // returning "" when it tracks nothing. A branch that has never been published
 // has no upstream, which is not an error — it is the answer that tells the
@@ -45,7 +50,7 @@ func (r *Repo) Checkout(ctx context.Context, branch string) error {
 // `feature` and `feature/thing` from coexisting, so this is reading a keyed
 // answer rather than guarding a live hazard.
 func (r *Repo) Upstream(ctx context.Context, branch string) (string, error) {
-	out, err := r.run(ctx, "for-each-ref", "--format=%(refname:short)%09%(upstream:short)", "refs/heads/"+branch)
+	out, err := r.run(ctx, "for-each-ref", upstreamFormat, "refs/heads/"+branch)
 	if err != nil {
 		return "", err
 	}
@@ -56,6 +61,32 @@ func (r *Repo) Upstream(ctx context.Context, branch string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// Upstreams is the same question asked of every local branch at once, for the
+// dashboard's status sweep: branch name → the ref it tracks, "" when it tracks
+// nothing. One shell-out for the whole repo rather than one per row.
+//
+// **Present-with-an-empty-value is a distinct answer from absent**, and the
+// sweep depends on the difference: a branch in the map with no upstream has
+// never been published and the row says so, while a branch missing from the map
+// does not exist locally and there is nothing to say about it at all. Upstream
+// above cannot draw that distinction (both are "") and does not need to — it is
+// asked about a branch the sequence has already established is there.
+func (r *Repo) Upstreams(ctx context.Context) (map[string]string, error) {
+	out, err := r.run(ctx, "for-each-ref", upstreamFormat, "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	upstreams := make(map[string]string)
+	for _, l := range lines(out) {
+		name, upstream, _ := strings.Cut(l, "\t")
+		if name == "" {
+			continue
+		}
+		upstreams[name] = upstream
+	}
+	return upstreams, nil
 }
 
 // PushOutcome is what a push did to the remote branch.

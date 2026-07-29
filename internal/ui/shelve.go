@@ -151,6 +151,13 @@ type shelveState struct {
 	pushBranch  string // the branch's name on that remote, which need not match
 	switched    bool
 
+	// confirm is the stash-plan overlay, open while the user decides (roadmap
+	// 17b). It exists for exactly one case — leaving a branch that has
+	// uncommitted work on it — and it is a *prompt*, not a warning: the machinery
+	// under it is the same machinery every other path uses, and the thing being
+	// agreed to is being stashed at all.
+	confirm bool
+
 	step    shelveStep // the step running now, or the one that ended the sequence
 	outcome shelveOutcome
 	skipped map[shelveStep]bool // steps that had nothing to do, drawn as such
@@ -307,22 +314,27 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 	ctx := context.Background() // only the read-only head of the chain is cancellable
 	switch msg.step {
 	case stepReady:
-		// The one case 17a does not yet run: leaving a branch with uncommitted work
-		// on it. The machinery underneath handles it — Drift stashes on the branch
-		// it leaves and pops on that same branch when it returns — but being
-		// stashed without having agreed to it is a surprise, and the confirmation
-		// overlay that removes the surprise is roadmap 17b. Until then this is a
-		// refusal, taken while everything is still read-only.
+		// Leaving a branch that has uncommitted work on it: the machinery handles
+		// it — Drift stashes on the branch it leaves and pops on that same branch
+		// when it returns — but being stashed without having agreed to it is a
+		// surprise, so the plan is stated and the user confirms (roadmap 17b).
+		//
+		// Asked here, at the last moment before anything at all happens, rather
+		// than once the fetches have narrowed down what there is to do. Two reasons,
+		// and they point the same way. The question is about the user's own
+		// uncommitted work, which is already fully known — nothing a fetch can
+		// return would change the answer. And a verb whose whole promise is one
+		// keypress must not stop for input *in the middle*: press u, press y, walk
+		// away. The cost is a prompt on a sequence that then finds nothing to do,
+		// which ends by saying nothing was touched.
 		if m.shelve.leaves() && msg.dirty {
-			return m.endShelve(shelveStopped,
-				"you have uncommitted work on "+m.shelve.from+", and "+m.shelve.branch+" isn't checked out",
-				"commit or stash it, or git switch "+m.shelve.branch+" and press u there"), nil
+			m.shelve.confirm = true
+			return m, nil
 		}
 		// msg.dirty settles the gate above and nothing else: whether there is
 		// anything to *put back* is stepStash's own answer, and marking the steps
 		// from here would be predicting a result git has not given yet.
-		m.shelve.step = stepPull
-		return m, shelvePullCmd(m.shelve.ctx, m.repo, m.shelve.seq, m.shelve.mode, m.shelve.branch, m.shelve.targetRef)
+		return m.startPull()
 
 	case stepPull:
 		if msg.skipped {
@@ -439,6 +451,15 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// startPull moves the sequence off the preconditions and onto the fetches. Its
+// own method because two paths reach it — a sequence that needed no permission,
+// and one the user has just granted it — and they must be the same path: the
+// confirmation gates *whether* the sequence runs, never how.
+func (m Model) startPull() (tea.Model, tea.Cmd) {
+	m.shelve.step = stepPull
+	return m, shelvePullCmd(m.shelve.ctx, m.repo, m.shelve.seq, m.shelve.mode, m.shelve.branch, m.shelve.targetRef)
+}
+
 // nothingToDo ends the sequence when the freshly-fetched refs say there is
 // nothing for it to do, before anything is stashed. What counts as nothing
 // differs by verb, and that difference *is* the difference between them: `s` is
@@ -527,6 +548,7 @@ func (m Model) endShelve(outcome shelveOutcome, reason, next string) Model {
 	}
 	m.shelve.active = false
 	m.shelve.cancellable = false
+	m.shelve.confirm = false // whatever ended it, there is nothing left to agree to
 	m.shelve.outcome = outcome
 	m.shelve.reason = reason
 	m.shelve.next = next
@@ -564,10 +586,19 @@ func (s shelveState) stashMessage() string {
 	return fmt.Sprintf("drift: %s %s ← %s", verb, s.branch, s.targetKey)
 }
 
-// dispatchShelve handles the report screen. Cancel is the only verb: while the
-// mutating steps run it is refused rather than obeyed, since there is no
-// cancelling into an undefined middle.
+// dispatchShelve handles the report screen. Cancel is the only verb once the
+// sequence is running: while the mutating steps run it is refused rather than
+// obeyed, since there is no cancelling into an undefined middle.
+//
+// The stash-plan overlay adds the one place Confirm means anything here. It
+// needs no cancel case of its own: the sequence is still on its read-only head,
+// so declining is exactly the cancel the screen already had, down to the notice
+// saying nothing was touched.
 func (m Model) dispatchShelve(action Action) (tea.Model, tea.Cmd) {
+	if m.shelve.confirm && action == ActionConfirm {
+		m.shelve.confirm = false
+		return m.startPull()
+	}
 	if action != ActionCancel {
 		return m, nil
 	}
@@ -931,6 +962,10 @@ func (m Model) shelveView() string {
 		}
 	}
 
+	if s.confirm {
+		return m.screenView(m.confirmStashBody(title), m.shelveHelp())
+	}
+
 	lines := []string{
 		m.styles.hint.Render(title),
 		m.styles.help.Render("  " + sub),
@@ -943,6 +978,54 @@ func (m Model) shelveView() string {
 		lines = append(lines, "", body)
 	}
 	return m.screenView(strings.Join(lines, "\n"), m.shelveHelp())
+}
+
+// confirmStashBody is the stash-plan overlay (roadmap 17b), drawn in the panel's
+// place — the same mechanism as the declare overlay and the target picker.
+//
+// It names the plan in the order the sequence will run it, in the user's own
+// terms: which branch is being left, that the work is stashed, that Drift comes
+// back and puts it back. Being blocked by unrelated dirt is the friction `u`
+// exists to remove, so this is deliberately a prompt and not a refusal — but a
+// prompt that says nothing more than "are you sure?" would be the same surprise
+// with an extra keystroke.
+//
+// The last line is the one that answers the question actually being asked, which
+// is not "will this work" but "where does my work end up": it is stashed on the
+// branch it was taken from and popped back on that same branch, on every path
+// including every halt. That is the invariant ADR 0002 kept when it traded away
+// "Drift never checks anything out", and this is the one screen where the user
+// has to take it on trust before it happens.
+//
+// Every line is clipped rather than wrapped, for the reason the help overlay's
+// are: this panel's height is budgeted in lines, and prose that wraps spends
+// lines the budget never costed (DESIGN.md §1).
+func (m Model) confirmStashBody(title string) string {
+	s := m.shelve
+	lines := []string{
+		m.styles.hint.Render(title),
+		"",
+		m.styles.dirty.Render("  ● " + s.from + " has uncommitted work, and " + s.branch + " isn't checked out."),
+		"",
+		m.styles.help.Render("  Drift will:"),
+		m.styles.help.Render("    1.  stash your work on " + s.from),
+		m.styles.help.Render("    2.  check out " + s.branch + ", update it, and publish it"),
+		m.styles.help.Render("    3.  return to " + s.from + " and put your work back"),
+		"",
+		// Deliberately name-free, unlike the plan above it. A line that interpolated
+		// the branch twice measured 79 cells into a 76-cell panel at the ordinary
+		// 80-column terminal, and clipping cut the sentence that carries the
+		// guarantee mid-word. What is left is bounded, so the point lands whatever
+		// the branches are called and however narrow the terminal gets.
+		m.styles.help.Render("  Your work is stashed and popped on the same branch — it never"),
+		m.styles.help.Render("  crosses a boundary, and every halt unwinds the same way."),
+		"",
+		m.styles.hint.Render("  Stash it and go?  (y/n)"),
+	}
+	for i, l := range lines {
+		lines[i] = clipPanelLine(m.styles, m.width, l)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // shelveStepRow draws one step with its state. The steps before the stash are
@@ -1058,6 +1141,11 @@ func (m Model) shelveFileRow(f shelveFile) string {
 }
 
 func (m Model) shelveHelp() string {
+	if m.shelve.confirm {
+		// The two answers are the whole contract while the prompt is up, so they are
+		// what the line must never stop saying — the tail, paid for first (chrome.go).
+		return helpLine(m.styles, m.width, nil, []string{"y stash and go", "n cancel", "? help"})
+	}
 	if m.shelve.active && m.shelve.cancellable {
 		return helpLine(m.styles, m.width, nil, []string{"esc cancel", "? help", "q quit"})
 	}

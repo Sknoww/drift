@@ -109,6 +109,35 @@ func TestUpstreamIsEmptyForABranchThatIsGone(t *testing.T) {
 	}
 }
 
+func TestUpstreamsAnswersForEveryLocalBranchAtOnce(t *testing.T) {
+	// The dashboard's sweep asks this once for the whole repo rather than once per
+	// row. The distinction it depends on is present-with-an-empty-value against
+	// absent: the first is a branch that has never been published, the second is a
+	// branch that is not here at all, and the row says different things about them.
+	origin := newRepo(t)
+	clone := cloneOf(t, origin)
+	git(t, clone, "branch", "local-only")
+	r := New(clone)
+
+	got, err := r.Upstreams(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["main"] != "origin/main" {
+		t.Errorf("Upstreams()[main] = %q, want origin/main", got["main"])
+	}
+	up, present := got["local-only"]
+	if !present {
+		t.Error("an unpublished branch is missing from the map; it is local, it just tracks nothing")
+	}
+	if up != "" {
+		t.Errorf("Upstreams()[local-only] = %q, want \"\"", up)
+	}
+	if _, present := got["never-existed"]; present {
+		t.Error("a branch that does not exist locally must be absent, not empty")
+	}
+}
+
 func TestPushPublishesTheBranch(t *testing.T) {
 	origin := bareOrigin(t)
 	clone := cloneOf(t, origin)

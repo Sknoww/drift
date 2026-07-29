@@ -112,8 +112,9 @@ Checked in this order; the first failure is reported and stops the sequence:
   also earns its keep later: anything the rollback finds in flight is necessarily
   Drift's own.
 - **The branch has a paired target**, and that target resolves to a real ref.
-- **For `u` only, and only for now: the tree is clean, or the branch is already checked
-  out.** See *The dirty tree, and where it splits*.
+- **For `u` only: if the tree is dirty *and* the branch is not already checked out, the
+  user confirms.** Not a precondition that can fail — a prompt. See *The dirty tree, and
+  where it splits*.
 
 ## Scope
 
@@ -156,11 +157,35 @@ Conflating these two is what made cross-branch work look harder than it is:
   leaving and pops on that same branch when it returns, so the narrow claim above still
   holds.
 
-The second case is **built and currently gated**: being stashed without having agreed to
-it is a surprise, so `u` refuses it at the read-only stage, where a refusal costs
-nothing, and names the two ways to proceed. The confirmation overlay that states the
-plan up front and unlocks it is roadmap 17b. A clean tree gets no overlay and no
-refusal — there is nothing to warn about.
+The second case **asks first**. Being blocked by unrelated dirt is the friction `u`
+exists to remove, so it is not a refusal — but being stashed without having agreed to it
+is a surprise, and one `y`/`n` is the whole of the difference. A clean tree gets no
+prompt and neither does a dirty tree on the branch you are already standing on: there is
+nothing to warn about in either.
+
+### The stash prompt
+
+An overlay drawn in the panel's place, the same mechanism as the declare overlay and the
+target picker, and bound like the delete confirmation — `y`/`enter` proceed, `n`/`esc`
+decline. It **names the plan in run order** rather than asking "are you sure?": which
+branch is being left, that the work is stashed there, that Drift checks the branch out,
+updates and publishes it, and that it comes back and puts the work down where it picked
+it up. A prompt that said less would be the same surprise with an extra keystroke.
+
+Asked at **step 0**, before the fetches, and that placement is the decision:
+
+- The question is about the user's own uncommitted work, which is fully known then.
+  Nothing a fetch returns could change the answer.
+- A verb whose promise is one keypress must not stop for input *in the middle*. Press
+  `u`, press `y`, walk away — the alternative is a sequence that pauses after a network
+  round trip, which is the babysitting this exists to remove.
+- The cost is accepted: a sequence that prompts and then finds nothing to do. It ends by
+  saying nothing was touched, which is true.
+
+Declining is the screen's ordinary cancel — the sequence is still on its read-only head,
+so nothing is stashed, nothing is merged, and there is nothing to undo. Accepting
+resumes at step 1 and nowhere else: **the prompt gates whether the sequence runs, never
+how**, so there is exactly one path through the mutating steps.
 
 ## Pulling the target
 
@@ -203,8 +228,16 @@ push.
 ## Pushing (`u`)
 
 The push is what makes "this branch is up to date" a claim about the remote rather than
-about one laptop, and it is the whole of the difference the dashboard has to render
-(roadmap 17b's ahead-of-`origin/<branch>` column).
+about one laptop, and it is the whole of the difference the dashboard has to render.
+
+That is the **`⇡` glyph** on a branch row: commits this branch holds that
+`origin/<branch>` does not. Without it the two verbs are indistinguishable on screen —
+`↓behind ↑ahead` measures against the *target*, so a branch merged locally and one
+merged and published render identically, and the difference between `s` and `u` would
+live only in the help. `s` leaves `⇡`, `u` clears it. A branch with no upstream at all
+renders `⊘`, the third answer the push already treats as distinct from zero. Read once
+per sweep for the whole repo (`Upstreams`), and unpaired with the target: a branch can be
+level with its target and still unpublished.
 
 **Never forced.** A rejection means the branch moved on the remote after the fetch read
 it, which is someone else's commit — exactly the class of thing Drift stops and hands
@@ -384,6 +417,10 @@ Area 17 added three more:
   rather than an exit code to be told apart from a real failure.
 - `Push(ctx, remote, local, remoteBranch)` — `git push --porcelain`, distinguishing
   updated / already-up-to-date / **rejected**.
+- `Upstreams(ctx)` — the same question as `Upstream`, asked of every local branch at
+  once, for the dashboard's sweep. One shell-out for the whole repo rather than one per
+  row. Present-with-an-empty-value and absent are **different answers**: the first is a
+  branch that has never been published (`⊘`), the second is a branch that is not there.
 
 Every one of these takes a `context.Context` and runs through the existing `run` helper,
 so the editor-proof environment above is set in **one** place rather than per call site.

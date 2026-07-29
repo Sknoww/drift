@@ -124,6 +124,7 @@ type keymaps struct {
 	localAdd      Keymap
 	localNote     Keymap
 	shelve        Keymap
+	confirmStash  Keymap
 	filter        Keymap
 }
 
@@ -141,6 +142,7 @@ func defaultKeymaps() keymaps {
 		localAdd:      DefaultLocalAddKeys(),
 		localNote:     DefaultLocalNoteKeys(),
 		shelve:        DefaultShelveKeys(),
+		confirmStash:  DefaultConfirmStashKeys(),
 		filter:        DefaultFilterKeys(),
 	}
 }
@@ -164,6 +166,26 @@ func DefaultFilterKeys() Keymap {
 		"down":   ActionMoveDown,
 		"enter":  ActionConfirm,
 		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultConfirmStashKeys binds the stash-plan overlay (area 17b) — the one
+// moment `u` asks before it acts, when it has to leave a branch that has
+// uncommitted work on it.
+//
+// Deliberately the delete confirmation's shape rather than the picker overlays':
+// this is a y/n question, not a list, so it binds the keys that answer one. `q`
+// is left unbound for the reason the delete confirm leaves it unbound — while a
+// yes/no is on screen the contract is yes or no, and a key that quietly means a
+// third thing is not part of it. ctrl+c still quits, as everywhere.
+func DefaultConfirmStashKeys() Keymap {
+	return Keymap{
+		"y":      ActionConfirm,
+		"enter":  ActionConfirm,
+		"n":      ActionCancel,
+		"esc":    ActionCancel,
+		"?":      ActionHelp,
 		"ctrl+c": ActionQuit,
 	}
 }

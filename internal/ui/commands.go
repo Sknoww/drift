@@ -10,11 +10,25 @@ import (
 	"github.com/Sknoww/drift/internal/store"
 )
 
-// branchStatus is one branch's computed signal against its paired target.
+// branchStatus is one branch's computed signal against its paired target, plus
+// the one signal that is not about the target at all — see unpublished.
 type branchStatus struct {
 	ahead, behind int
 	known         bool  // false when the branch's target key is absent from config
 	err           error // AheadBehind failed (e.g. the branch no longer exists locally)
+
+	// The publish half of the row (roadmap area 17b): how far the branch is ahead
+	// of *its own* upstream, which is a different question from ahead/behind and
+	// has a different denominator. Without it `u`'s push is invisible — a branch
+	// merged locally and one merged and published render identically — and the
+	// difference between the two verbs would live only in the help. noUpstream is
+	// the third answer, not a zero: a branch that has never been published cannot
+	// be up to date with a remote it does not have.
+	//
+	// Both stay zero-valued when the probe degrades, so the row makes no claim
+	// rather than a wrong one — the same rule the unmergeable marker follows.
+	unpublished int
+	noUpstream  bool
 
 	// unmergeable is the paths that changed on both this branch and its target
 	// since they diverged AND that Git must never merge (area 5). Empty unless the
@@ -303,6 +317,13 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 		}
 	}
 
+	// Which branch tracks what, for the whole repo in one shell-out. It answers a
+	// question the target knows nothing about — whether a branch's commits have
+	// reached its own remote — so it is read once here rather than per row. A
+	// failure drops the publish signal alone: the ahead/behind row is what a
+	// branch row is chiefly for, and it is unaffected.
+	upstreams, _ := repo.Upstreams(ctx)
+
 	msg.byKey = make(map[string]branchStatus)
 	for _, t := range tickets {
 		for _, b := range t.Branches {
@@ -318,6 +339,7 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 				continue
 			}
 			st := branchStatus{ahead: ab.Ahead, behind: ab.Behind, known: true}
+			st.unpublished, st.noUpstream = publishState(ctx, repo, upstreams, b.Branch)
 			// The target only has an incoming change to collide with when it moved
 			// past the merge base — so gate detection on behind>0 and reuse the
 			// count we already have. A detection error degrades the marker only,
@@ -333,6 +355,36 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 		}
 	}
 	return msg
+}
+
+// publishState is how far a branch is ahead of its own upstream, and whether it
+// has one at all (roadmap area 17b). It is the only signal on a branch row that
+// is not measured against the target: `u` publishes and `s` deliberately does
+// not, and without this the two leave states the dashboard cannot tell apart.
+//
+// Three answers, kept distinct. A branch **absent** from the map does not exist
+// locally, so there is nothing to say — the AheadBehind above has already
+// reported that as the row's error. A branch present with **no upstream** has
+// never been published, which is not zero-unpublished. Everything else is
+// counted against the remote-tracking ref, whose freshness is the fetch's job
+// exactly as it is for behind.
+//
+// Anything that fails degrades to "no claim". A missing remote-tracking ref
+// (the branch was deleted on the remote while config still names it) is the
+// realistic case, and a silent blank beats a signal that would be a guess.
+func publishState(ctx context.Context, repo *git.Repo, upstreams map[string]string, branch string) (unpublished int, noUpstream bool) {
+	ref, local := upstreams[branch]
+	switch {
+	case !local:
+		return 0, false
+	case ref == "":
+		return 0, true
+	}
+	ab, err := repo.AheadBehind(ctx, branch, ref)
+	if err != nil {
+		return 0, false
+	}
+	return ab.Ahead, false
 }
 
 // detectUnmergeable resolves one branch's unmergeable collisions against its

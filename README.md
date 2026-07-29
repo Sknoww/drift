@@ -52,8 +52,8 @@ Tickets are rows you expand into their branches:
 
 ```
 ▾ ABC-101  Fix the sync indicator
-  ▸ ABC-101-main     → main    ↓4 ↑2  ●  ⚠ 2 unmergeable
-    ABC-101-r2perf   → r2perf  ↓3 ↑2     ⚠ 2 unmergeable
+  ▸ ABC-101-main     → main    ↓4 ↑2  ⇡ ●  ⚠ 2 unmergeable
+    ABC-101-r2perf   → r2perf  ↓3 ↑2      ⚠ 2 unmergeable
 ▸ ABC-202  Tidy the settings pane
 ```
 
@@ -62,9 +62,17 @@ Tickets are rows you expand into their branches:
 | `▸` / `▾` | ticket collapsed / expanded |
 | `↓N` | commits the target has that you don't — **it moved** |
 | `↑N` | commits you have that the target doesn't |
+| `⇡` | commits not yet on `origin/<branch>` — `u` publishes them |
+| `⊘` | no upstream — nothing to publish to yet |
 | `●` | uncommitted changes (checked-out branch only) |
 | `▸` (on a branch) | the branch you have checked out |
 | `⚠ N unmergeable` | both sides changed a file git can't merge — `enter` opens the diff |
+
+`↑N` and `⇡` count against **different** remotes, and it is the one place on the
+row where the denominator changes: `↑N` is how far you are ahead of the *target*,
+`⇡` is how far you are ahead of *your own branch's* remote. A branch can be level
+with its target and still unpublished — which is exactly the state `s` leaves
+behind and `u` clears.
 
 ## Keys
 
@@ -129,13 +137,15 @@ were standing on and pops your work. Every halt unwinds the same way, so a confl
 still leaves you where you started.
 
 The two differ by **commitment**. `s` merges the target in and publishes nothing, which
-leaves the branch ahead of its own remote — useful when you want to look at the merge
-before it goes anywhere. `u` finishes the job. Nothing is ever force-pushed: a rejected
-push means someone else's commit is in the way, so Drift leaves the branch merged
-locally and tells you.
+leaves the branch ahead of its own remote — `⇡` on the dashboard, and useful when you
+want to look at the merge before it goes anywhere. `u` finishes the job and clears it.
+Nothing is ever force-pushed: a rejected push means someone else's commit is in the way,
+so Drift leaves the branch merged locally and tells you.
 
-Today `u` declines to leave a branch that has uncommitted work on it — commit or stash
-it first, or press `u` while standing on the branch itself.
+If `u` has to leave a branch that has uncommitted work on it, it **asks first** — one
+`y`/`n` naming the plan: which branch is being left, that your work is stashed, and that
+Drift comes back and pops it. Your work is stashed and popped on the same branch, never
+on the one it visits, and that holds on every halt path too. A clean tree gets no prompt.
 
 **Unmergeable detection** is hybrid. Drift reads git's own declaration via
 `git check-attr merge` — `*.uwe -merge` in a `.gitattributes` — and adds the glob

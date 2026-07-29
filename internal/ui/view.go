@@ -293,9 +293,10 @@ type branchCols struct{ name, target, ab int }
 
 // branchRowFixed is what a branch row costs before its variable columns: the
 // 4-space indent, the three separators ("   ", "   ", "  ") between name,
-// target, the status pair and the dirty dot, and the two 2-cell cells that
-// close it (dirty, checked-out marker). It is the constant in the budget below.
-const branchRowFixed = 4 + 3 + 3 + 2 + 2 + 2
+// target, the status pair and the glyph cluster, and the three 2-cell cells
+// that close it (publish, dirty, checked-out marker). It is the constant in the
+// budget below.
+const branchRowFixed = 4 + 3 + 3 + 2 + 2 + 2 + 2
 
 // branchColumns sizes a branch row's variable columns against the panel the row
 // actually has to fit in, rather than against the longest string in the store.
@@ -354,8 +355,8 @@ func (m Model) branchColumns() branchCols {
 
 // branchRow renders one paired branch beneath its ticket, with the status
 // cluster in the fixed order from DESIGN.md §1: target · ↓behind ↑ahead ·
-// dirty · checked-out marker, then the area-5 unmergeable marker at the end so
-// it never disturbs the aligned columns.
+// unpublished · dirty · checked-out marker, then the area-5 unmergeable marker
+// at the end so it never disturbs the aligned columns.
 func (m Model) branchRow(ticketID string, br store.TicketBranch, cols branchCols) string {
 	st := m.status[statusKey(ticketID, br.Branch)]
 
@@ -376,7 +377,7 @@ func (m Model) branchRow(ticketID string, br store.TicketBranch, cols branchCols
 		marker = m.styles.marker.Render("▸ ")
 	}
 
-	row := fmt.Sprintf("%s   %s   %s  %s%s", name, target, ab, dirty, marker)
+	row := fmt.Sprintf("%s   %s   %s  %s%s%s", name, target, ab, m.renderPublish(st), dirty, marker)
 
 	// An unmergeable collision is the signal this whole area exists to surface:
 	// the target moved under a file that must be reconciled by hand. Flag it with
@@ -407,6 +408,35 @@ func (m Model) renderAheadBehind(br store.TicketBranch, st branchStatus) string 
 	}
 	ahead := m.styles.ahead.Render(fmt.Sprintf("↑%d", st.ahead))
 	return behind + " " + ahead
+}
+
+// renderPublish draws the branch's standing with its *own* remote (roadmap
+// 17b): `⇡` when it holds commits origin/<branch> does not, `⊘` when it has no
+// upstream at all, blank when it is published and current.
+//
+// A glyph rather than a count, deliberately. `↑ahead` is already on this row and
+// is measured against the target, so a second number would put two up-arrows
+// with two different denominators side by side and ask the reader to remember
+// which was which. A glyph reads as a *state* — there is work here that has not
+// left this machine — which is the whole of what the signal has to say, and it
+// is what makes `s` and `u` legible on screen: `s` leaves `⇡`, `u` clears it.
+//
+// It takes the dirty style for the reason area 6's held-tracked glyph does:
+// that colour has always meant "work that exists only here", and uncommitted and
+// unpublished are the two kinds of it. `behind` stays the only alarm on screen,
+// so this adds no new one. `⊘` recedes into the hint style instead — an
+// unpublished branch is a fact about the branch, not something that went wrong.
+//
+// Two cells wide whichever state it is in, so the two glyphs beside it stay in
+// the same column down the whole list (DESIGN.md §1).
+func (m Model) renderPublish(st branchStatus) string {
+	switch {
+	case st.noUpstream:
+		return m.styles.help.Render("⊘ ")
+	case st.unpublished > 0:
+		return m.styles.dirty.Render("⇡ ")
+	}
+	return "  "
 }
 
 // statusLine surfaces the last error or transient notice under the panel.

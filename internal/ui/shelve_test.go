@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sknoww/drift/internal/git"
 	"github.com/Sknoww/drift/internal/store"
@@ -400,7 +401,17 @@ func runChainAs(t *testing.T, m Model, mode shelveMode) Model {
 	} else {
 		next, cmd = m.beginShelve()
 	}
-	m = next.(Model)
+	return driveChain(t, next.(Model), cmd)
+}
+
+// driveChain runs the Cmd chain until it stops. It ends of its own accord where
+// the sequence stops for input — the stash prompt fires no Cmd — so a test that
+// wants the answered path has to say so, which is the point: the prompt is a
+// halt, and a driver that answered it silently would be testing a sequence
+// nobody agreed to.
+func driveChain(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	var next tea.Model
 	for i := 0; m.shelve.active && cmd != nil; i++ {
 		if i > len(m.shelve.steps()) {
 			t.Fatal("the sequence did not terminate")
@@ -413,6 +424,17 @@ func runChainAs(t *testing.T, m Model, mode shelveMode) Model {
 		m = next.(Model)
 	}
 	return m
+}
+
+// answerStashPrompt presses y and runs the rest of the chain, the way a user who
+// agreed to the plan does.
+func answerStashPrompt(t *testing.T, m Model) Model {
+	t.Helper()
+	if !m.shelve.confirm {
+		t.Fatal("expected the sequence to be waiting on the stash prompt")
+	}
+	next, cmd := m.dispatch(ActionConfirm)
+	return driveChain(t, next.(Model), cmd)
 }
 
 // shelveResult runs a Cmd and digs the sequence's own message out of it. The
@@ -669,22 +691,195 @@ func TestShelveStillRefusesAnotherBranchAndPointsAtUpdate(t *testing.T) {
 	}
 }
 
-func TestUpdateRefusesToLeaveABranchWithUncommittedWork(t *testing.T) {
-	// 17a's one deliberate gap. The machinery underneath handles it, but being
-	// stashed on a branch you are leaving is a surprise, and the confirmation
-	// overlay that removes it is 17b. The refusal is taken at stepReady, while
-	// everything is still read-only, so there is nothing to undo.
+func TestUpdateAsksBeforeStashingWorkOnTheBranchItLeaves(t *testing.T) {
+	// The one case `u` asks about. Being blocked by unrelated dirt is the friction
+	// the verb exists to remove, so this is a prompt and not a refusal — but being
+	// stashed without having agreed to it is the surprise the prompt exists to
+	// prevent. It is taken at stepReady, while everything is still read-only.
 	m := beginUpdateOn(updateModel())
 	m = step(m, shelveMsg{step: stepReady, dirty: true})
 
-	if m.shelve.outcome != shelveStopped {
-		t.Fatalf("outcome = %v, want shelveStopped", m.shelve.outcome)
+	if !m.shelve.confirm {
+		t.Fatal("u stashed work on the branch it is leaving without asking")
+	}
+	if !m.shelve.active || m.shelve.outcome != shelveRunning {
+		t.Error("the prompt ended the sequence; it is a question, not a refusal")
 	}
 	if m.shelve.step != stepReady {
-		t.Errorf("stopped at %v, want stepReady — nothing may have been touched", m.shelve.step)
+		t.Errorf("asked at %v, want stepReady — nothing may have been touched yet", m.shelve.step)
 	}
-	if !strings.Contains(m.shelve.next, "git switch") {
-		t.Errorf("next = %q, want the way to run it anyway named", m.shelve.next)
+	if !m.shelve.cancellable {
+		t.Error("declining must still be a cancel that has nothing to undo")
+	}
+}
+
+func TestStashPromptNamesThePlanRatherThanAskingAreYouSure(t *testing.T) {
+	// A prompt that says no more than "are you sure?" is the same surprise with an
+	// extra keystroke. It has to name which branch is being left, that the work is
+	// stashed, and that Drift comes back and puts it back.
+	m := beginUpdateOn(updateModel())
+	m.width, m.height = 100, 40
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	view := m.View()
+	for _, want := range []string{
+		"somewhere-else", // the branch being left, named
+		"abc-1-perf",     // the branch being updated
+		"stash your work",
+		"return to",
+		"(y/n)",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the prompt never says %q:\n%s", want, view)
+		}
+	}
+	// The step list is what the prompt replaces — an overlay is drawn in the
+	// panel's place, the same mechanism as the declare overlay.
+	if strings.Contains(view, "check the repo is ready") {
+		t.Error("the prompt was drawn over the step list instead of in its place")
+	}
+}
+
+func TestDecliningTheStashPromptTouchesNothing(t *testing.T) {
+	// The sequence is still on its read-only head, so declining is exactly the
+	// cancel the screen already had — down to the notice saying so.
+	m := beginUpdateOn(updateModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	next, _ := m.dispatch(ActionCancel)
+	m = next.(Model)
+
+	if m.shelve.active || m.shelve.confirm {
+		t.Fatal("declining left the sequence running")
+	}
+	if m.screen != screenDashboard {
+		t.Errorf("screen = %v, want the dashboard back", m.screen)
+	}
+	if !strings.Contains(m.notice, "nothing was touched") {
+		t.Errorf("notice = %q, want it to say nothing was touched", m.notice)
+	}
+}
+
+func TestAcceptingTheStashPromptRunsTheSameSequenceAsEveryOtherPath(t *testing.T) {
+	// The confirmation gates *whether* the sequence runs, never how: it resumes at
+	// the fetches, exactly where a sequence that needed no permission goes.
+	m := beginUpdateOn(updateModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	next, cmd := m.dispatch(ActionConfirm)
+	m = next.(Model)
+
+	if m.shelve.confirm {
+		t.Fatal("the prompt stayed open after it was answered")
+	}
+	if m.shelve.step != stepPull {
+		t.Errorf("step = %v, want stepPull — the fetches are what comes next", m.shelve.step)
+	}
+	if cmd == nil {
+		t.Error("nothing was fired; the sequence agreed to must actually run")
+	}
+}
+
+func TestNoStashPromptWhenThereIsNothingToWarnAbout(t *testing.T) {
+	// Two of the three cases need no prompt at all, and conflating them with the
+	// third is what made cross-branch work look harder than it is.
+	tests := []struct {
+		name  string
+		model Model
+		dirty bool
+	}{
+		{"clean tree, crossing a branch boundary", updateModel(), false},
+		{"dirty tree, but no boundary to cross", shelveModel(), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := beginUpdateOn(tc.model)
+			m = step(m, shelveMsg{step: stepReady, dirty: tc.dirty})
+
+			if m.shelve.confirm {
+				t.Fatal("asked permission for something there is nothing to warn about")
+			}
+			if m.shelve.step != stepPull {
+				t.Errorf("step = %v, want the sequence to have carried straight on", m.shelve.step)
+			}
+		})
+	}
+}
+
+func TestHelpOverTheStashPromptCannotAnswerIt(t *testing.T) {
+	// "Any key closes it, and is consumed" is what stops a key pressed to dismiss
+	// the help from also acting on the screen underneath — and there is no screen
+	// where that matters more than a y/n whose y stashes your work.
+	m := beginUpdateOn(updateModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = next.(Model)
+	if !m.showHelp {
+		t.Fatal("? did not open the help over the prompt")
+	}
+	if !strings.Contains(m.View(), "stash confirmation") {
+		t.Errorf("the help names the wrong screen:\n%s", m.View())
+	}
+
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = next.(Model)
+	if m.showHelp {
+		t.Error("y did not close the help")
+	}
+	if !m.shelve.confirm || m.shelve.step != stepReady {
+		t.Error("closing the help answered the prompt underneath it")
+	}
+}
+
+func TestStashPromptFitsTheTerminalItIsDrawnInto(t *testing.T) {
+	// Prose can break a frame exactly as rows can (DESIGN.md §1), and this screen
+	// does not window — there is nothing to window around. So the overlay is
+	// measured directly, with branch names long enough to be the thing that would
+	// overflow if any line were left to wrap.
+	m := beginUpdateOn(updateModel())
+	m.shelve.from = "release/2024-q4-maintenance-and-then-some"
+	m.shelve.branch = "feature/ABC-1234-a-name-nobody-would-type-twice"
+
+	for _, size := range [][2]int{{minTerminalWidth, 24}, {80, 24}, {100, 30}} {
+		m.width, m.height = size[0], size[1]
+		next := m
+		next = step(next, shelveMsg{step: stepReady, dirty: true})
+
+		lines := strings.Split(next.View(), "\n")
+		if len(lines) > size[1] {
+			t.Errorf("%dx%d: the frame is %d lines and runs off the top", size[0], size[1], len(lines))
+		}
+		for _, l := range lines {
+			if w := lipgloss.Width(l); w > size[0] {
+				t.Errorf("%dx%d: a line is %d cells wide and wraps: %q", size[0], size[1], w, l)
+			}
+		}
+	}
+}
+
+func TestStashPromptShadowsTheReportsKeymap(t *testing.T) {
+	// An overlay is an overlay wherever the user meets one: while it is open the
+	// keys are the delete confirmation's y/n shape, not the report's esc-only one.
+	m := beginUpdateOn(updateModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	k := m.activeKeys()
+	for key, want := range map[string]Action{
+		"y": ActionConfirm, "enter": ActionConfirm,
+		"n": ActionCancel, "esc": ActionCancel,
+	} {
+		if got, ok := k.action(key); !ok || got != want {
+			t.Errorf("%q -> %q, %v; want %q", key, got, ok, want)
+		}
+	}
+	// A y/n question's contract is y or n. A key that quietly means a third thing
+	// is not part of it — the same reason the delete confirmation leaves q unbound.
+	if _, ok := k.action("q"); ok {
+		t.Error("q quits out from under a confirmation the user is still answering")
+	}
+	if _, ok := m.keys.shelve.action("y"); ok {
+		t.Error("the report's own keymap grew a y; the overlay's keys must not leak into it")
 	}
 }
 
@@ -931,9 +1126,10 @@ func TestUpdateEndToEndPutsYouBackWhenTheMergeConflicts(t *testing.T) {
 	}
 }
 
-func TestUpdateEndToEndRefusesADirtyTreeBeforeTouchingAnything(t *testing.T) {
-	// 17a's gate, driven for real: the refusal happens at stepReady, so the
-	// working tree is exactly as it was found and no stash exists to remember.
+func TestUpdateEndToEndWaitsOnTheDirtyTreeBeforeTouchingAnything(t *testing.T) {
+	// The prompt, driven for real: the sequence stops at stepReady, so the working
+	// tree is exactly as it was found and no stash exists to remember. Whatever the
+	// user answers next, this much is true — which is what makes asking free.
 	origin := updateOrigin(t)
 	dir := updateClone(t, origin)
 	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
@@ -944,18 +1140,58 @@ func TestUpdateEndToEndRefusesADirtyTreeBeforeTouchingAnything(t *testing.T) {
 
 	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
 
-	if m.shelve.outcome != shelveStopped {
-		t.Fatalf("outcome = %v (%s), want shelveStopped", m.shelve.outcome, m.shelve.reason)
+	if !m.shelve.confirm {
+		t.Fatalf("outcome = %v (%s), want the sequence waiting on the prompt", m.shelve.outcome, m.shelve.reason)
 	}
 	if got := readFile(t, dir, "seed.txt"); got != "my work\n" {
-		t.Errorf("seed.txt = %q, want the refusal to have touched nothing", got)
+		t.Errorf("seed.txt = %q, want the prompt to have touched nothing", got)
 	}
 	oid, err := git.New(dir).StashRef(context.Background())
 	if err != nil || oid != "" {
-		t.Errorf("StashRef() = %q, %v; want no stash — a refusal has nothing to undo", oid, err)
+		t.Errorf("StashRef() = %q, %v; want no stash — an unanswered prompt has nothing to undo", oid, err)
 	}
 	if got, _ := git.New(dir).CurrentBranch(context.Background()); got != "main" {
-		t.Errorf("the refusal moved the user to %q", got)
+		t.Errorf("the prompt moved the user to %q", got)
+	}
+}
+
+func TestUpdateEndToEndCarriesADirtyTreeAcrossTheBoundaryAndBack(t *testing.T) {
+	// The case 17b unlocks, and the whole of what the prompt is agreeing to: work
+	// is stashed on the branch being left, another branch is carried all the way,
+	// and the work comes back on the branch it was taken from. The narrow claim —
+	// a stash belongs to the branch it was taken on — is enforced by the return.
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	r := git.New(dir)
+	ctx := context.Background()
+
+	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
+
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("my work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := answerStashPrompt(t, runChainAs(t, updateRepoModel(t, dir), modeUpdate))
+
+	if m.shelve.outcome != shelveLanded {
+		t.Fatalf("outcome = %v (%s), want shelveLanded", m.shelve.outcome, m.shelve.reason)
+	}
+	if got, _ := r.CurrentBranch(ctx); got != "main" {
+		t.Errorf("left the user on %q, want main — the list is not a place you move to", got)
+	}
+	if got := readFile(t, dir, "seed.txt"); got != "my work\n" {
+		t.Errorf("seed.txt = %q, want the work back on the branch it was taken from", got)
+	}
+	if oid, err := r.StashRef(ctx); err != nil || oid != "" {
+		t.Errorf("StashRef() = %q, %v; want the stash popped, not left behind", oid, err)
+	}
+	// feature was carried all the way: the target merged in, and the result on the
+	// remote rather than only on this machine.
+	if ab, err := r.AheadBehind(ctx, "feature", "origin/main"); err != nil || ab.Behind != 0 {
+		t.Errorf("feature vs origin/main = %+v, %v; want the target merged in", ab, err)
+	}
+	if ab, err := r.AheadBehind(ctx, "feature", "origin/feature"); err != nil || ab.Ahead != 0 {
+		t.Errorf("feature vs origin/feature = %+v, %v; want it published", ab, err)
 	}
 }
 

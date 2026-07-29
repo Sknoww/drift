@@ -223,14 +223,35 @@ the home row. "Looks like raw text output" is a bug.
     windowing exists to prevent.
   - A ref whose date git could not report renders an **empty** cell, never a guessed age.
     The column states the one thing it exists to state, or nothing.
-- **Status cluster** — per branch: target label · `↓behind ↑ahead` · dirty dot ·
-  checked-out marker. Fixed order, aligned into columns so the eye scans down. The
-  target label is **variable width** — column widths are computed from the config's
-  longest `Target.Key`, never hardcoded, though bounded like every other column above
-  (a key is terse by intent and nothing in the config enforces it). **`↓behind ↑ahead`
-  is a column too**: unpadded, a `↓3 ↑1` row and a `↓12 ↑345` row put the dirty dot in
-  different places, and "aligned so the eye scans down" stops being true of the two
-  glyphs that most need it.
+- **Status cluster** — per branch: target label · `↓behind ↑ahead` · unpublished ·
+  dirty dot · checked-out marker. Fixed order, aligned into columns so the eye scans
+  down. The target label is **variable width** — column widths are computed from the
+  config's longest `Target.Key`, never hardcoded, though bounded like every other column
+  above (a key is terse by intent and nothing in the config enforces it). **`↓behind
+  ↑ahead` is a column too**: unpadded, a `↓3 ↑1` row and a `↓12 ↑345` row put the dirty
+  dot in different places, and "aligned so the eye scans down" stops being true of the
+  two glyphs that most need it.
+- **One signal on the row is not about the target** ✅ (area 17b) — `⇡` means the branch
+  holds commits `origin/<branch>` does not, `⊘` that it has no upstream at all, blank
+  that it is published and current. It is what makes `s` and `u` legible on screen
+  rather than only in the help: `s` leaves `⇡` by design, `u` clears it, and without the
+  glyph a branch merged locally and one merged *and published* render identically.
+  - **A glyph, not a count, and the reason is the denominator.** `↑N` is already on the
+    row and counts against the *target*; a second number would put two up-arrows with
+    two different meanings side by side and ask the reader to hold which is which. A
+    glyph reads as a **state** — there is work here that has not left this machine —
+    which is the whole of what it has to say.
+  - **It takes the dirty colour, and adds no alarm.** That colour has always meant "work
+    that exists only here", and uncommitted and unpublished are its two kinds — the same
+    reuse, on the same argument, as the local-only list's `◆`. `behind` stays the only
+    thing on screen shouting. `⊘` recedes into the hint style instead: an unpublished
+    branch is a fact about the branch, not something that went wrong.
+  - **Fixed width in every state**, because it sits between the pair and the two glyphs
+    the alignment above exists for. A cell that grew with its content would break the
+    column for every row.
+  - A degraded probe renders **blank**, never a guessed state — the rule the unmergeable
+    marker already follows. "No upstream" is a third answer, not a zero, and the two are
+    never conflated.
 
 **The Model holds:** loaded `Config` + `Store`; current screen; cursor position; which
 ticket is expanded; a computed status map keyed by `ticketID + branch`; a
@@ -354,6 +375,26 @@ repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not 
   - **Note editor** ✅ — `n` opens an inline field over the list, the same shape as the
     wizard's key rename. The note is the only thing Drift persists about a hold, and it
     answers the question the list exists to answer three weeks later: why is this here?
+- **Stash prompt** (area 17b) ✅ — the one moment `u` asks before it acts: it has to
+  leave a branch that has uncommitted work on it. Drawn in the panel's place, the same
+  mechanism as the declare overlay and the target picker; bound like the delete
+  confirmation (`y`/`enter` · `n`/`esc`), because it is a yes/no question and not a list.
+  - **It names the plan, in run order, rather than asking "are you sure?"** — which
+    branch is being left, that the work is stashed there, that Drift checks the branch
+    out and publishes it, and that it comes back and puts the work down where it picked
+    it up. A prompt that said less would be the same surprise with an extra keystroke.
+    The closing line is the guarantee ADR 0002 kept when it traded away "Drift never
+    checks anything out", and this is the one screen where it has to be taken on trust
+    before it happens — so it is **name-free and bounded**, where the plan above it
+    interpolates branches: a line naming the branch twice measured 79 cells into a
+    76-cell panel at an ordinary 80-column terminal, and the clip cut the sentence
+    carrying the guarantee mid-word.
+  - **A prompt, not a refusal.** Being blocked by unrelated dirt is the friction `u`
+    exists to remove. A clean tree gets no overlay, and neither does a dirty tree on the
+    branch you are already standing on — there is nothing to warn about in either.
+  - The screen does not window (there is no cursor to window around), so its frame is
+    **measured directly** at the width floor and at 80×24, with branch names long enough
+    to be what would overflow. Prose breaks a frame exactly as rows do (§1).
 - **Branch row selection** ✅ — the dashboard cursor moves over a **flat list of
   visible rows** (ticket headlines plus each expanded ticket's branch rows), so a
   branch is selectable in its own right — the prerequisite for a per-branch diff (and
@@ -473,6 +514,21 @@ which is live: while the read-only steps run it **cancels**; once the stash is
 taken it is **refused** with "it stops on its own", because there is no cancelling
 into an undefined middle. Both are the same named action — the screen decides what
 backing out means, exactly as every other screen does.
+
+Stash prompt (area 17b), open over the report before anything runs:
+
+| Key | Action |
+|---|---|
+| `y` / `enter` | Stash it and go |
+| `n` / `esc` | Decline — nothing has been touched |
+| `?` | Keys and glyphs for this screen |
+
+`q` is deliberately **unbound**, the same as on the delete confirmation: while a yes/no
+is on screen the contract is yes or no, and a key that quietly means a third thing is
+not part of it. `ctrl+c` still quits, as everywhere. The `?` overlay opened over it obeys
+its own "any key closes, and is consumed" rule — so the `y` that dismisses the help never
+also answers the prompt underneath, which is the one screen where that would cost
+something.
 
 The six steps are drawn as a checklist with the running one spinning, so the user
 can see which of pull / check / stash / merge / restore is happening. That is not
