@@ -437,7 +437,7 @@ func (m Model) help() string {
 		return helpLine(m.styles, m.width, nil, []string{"y confirm", "n cancel"})
 	}
 	return helpLine(m.styles, m.width,
-		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "s shelve", "r refresh", "f fetch", "l local"},
+		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "u update", "s shelve", "r refresh", "f fetch", "l local"},
 		[]string{"? help", "q quit"})
 }
 

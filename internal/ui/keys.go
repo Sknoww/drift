@@ -67,6 +67,15 @@ const (
 	// pop, on the checked-out branch. Its own verb rather than Confirm reused —
 	// the help table is generated per action, so a name has to mean one thing.
 	ActionShelve Action = "shelve" // s: run the sequence on the selected branch
+
+	// The update sequence (area 17): the same merge carried all the way — the
+	// branch checked out, its own upstream pulled, the result pushed, and the
+	// user returned to where they were standing. Two verbs rather than one
+	// because they differ by *commitment*: `s` publishes nothing and stays on the
+	// checked-out branch, `u` publishes and works on any paired branch. The cost
+	// is that their help entries have to carry the distinction on their own, since
+	// the table is generated per action.
+	ActionUpdate Action = "update" // u: bring the selected branch up to date and publish it
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -190,6 +199,7 @@ func DefaultDashboardKeys() Keymap {
 		"esc":    ActionCancel, // aborts an in-flight fetch; a no-op otherwise
 		"l":      ActionLocalOnly,
 		"s":      ActionShelve,
+		"u":      ActionUpdate,
 		"?":      ActionHelp,
 		"q":      ActionQuit,
 		"ctrl+c": ActionQuit,

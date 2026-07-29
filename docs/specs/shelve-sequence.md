@@ -1,12 +1,16 @@
-# Spec — One-key shelve sequence
+# Spec — The one-key sequences: shelve and update
 
-> Feature spec for roadmap **area 7**. Governs the rules and mechanics; the visual
-> surface is ratified in [`DESIGN.md`](../../DESIGN.md), the architectural fit in
+> Feature spec for roadmap **areas 7 and 17**. Governs the rules and mechanics; the
+> visual surface is ratified in [`DESIGN.md`](../../DESIGN.md), the architectural fit in
 > [`CONTEXT.md`](../../CONTEXT.md). Read the unmergeable section of `CONTEXT.md` and
 > [`local-only-changes.md`](./local-only-changes.md) first — this feature is where both
-> of them cash out. It is also the first thing Drift does that **writes to the repo's
+> of them cash out. It is also the only thing Drift does that **writes to the repo's
 > working tree and history**, so the rules about when it may do so are the substance of
 > this spec.
+>
+> Area 17 reversed this spec's original *Scope* section, under
+> [ADR 0002](../adr/0002-update-checks-out.md). What that section said — the sequence
+> runs on the checked-out branch only — is still true of `s` and no longer true of `u`.
 
 ## The problem
 
@@ -21,20 +25,64 @@ it's behind, which files are unmergeable, which files you hold locally. The sequ
 the payoff for storing the grouping in the first place — **one keypress per branch**,
 and it either lands or it leaves you exactly where you were.
 
+## Two verbs, differing by commitment
+
+One state machine runs both. They share every halt, the stash identity rules and the
+report; what differs is how far each is willing to go.
+
+| | `s` shelve | `u` update |
+|---|---|---|
+| Which branch | the checked-out one | any paired branch |
+| Pulls the target | yes | yes |
+| Pulls the branch's own upstream | no | yes |
+| Pushes | **no** | yes |
+| Leaves you | where you were | where you were |
+
+`s` leaves the branch **ahead of its own remote**, and that is its point, not an
+oversight: it is the path for seeing a merge before it goes anywhere. `u` finishes the
+job. A verb that has shipped is a verb someone has, so `s` keeps its original scope
+exactly; its refusal on another branch's row now names `u` rather than only `git switch`.
+
+Because the `?` overlay's key table is generated per action, the two one-line
+descriptions have to carry the distinction on their own — "merge the target into this
+branch, nothing is published" against "bring the selected branch up to date and publish
+it". If that cannot be said in one line each, the split is wrong.
+
 ## The sequence
 
-Run against the **checked-out** branch and its paired target. Steps 1–3 mutate nothing.
+Steps 0–3 mutate nothing. Steps marked *update* are skipped by `s`.
 
 | # | Step | Mutates |
 |---|---|---|
 | 0 | **Preconditions** — see below. Any failure stops here with nothing done | no |
-| 1 | **Pull the target** — `git fetch <remote> <branch>` for this target's ref only | refs |
-| 2 | **Recompute behind** against the freshly-updated ref. `behind == 0` → *already current*, stop | no |
-| 3 | **Local-only collision check** — incoming changed files ∩ held set. Non-empty → halt | no |
-| 4 | **Stash** — plain `git stash push` (no `-u`, no `-a`) | tree, index |
-| 5 | **Merge** — `git merge --no-edit <targetRef>`. Conflict → abort and restore (below) | tree, HEAD |
-| 6 | **Pop** — `git stash pop --index`. Conflict → halt in place (below) | tree, index |
-| 7 | **Refresh** the branch's status so the row shows the new reality | no |
+| 1 | **Fetch the target** — `git fetch <remote> <branch>` for this target's ref only | refs |
+| 1b | *update:* **fetch the branch's own upstream**, the same way | refs |
+| 2 | **Recompute the divergence** against the freshly-updated refs. Nothing to do → stop | no |
+| 3 | **Local-only collision check** — everything incoming ∩ held set. Non-empty → halt | no |
+| 4 | **Stash** — plain `git stash push` (no `-u`, no `-a`). Clean tree → nothing created | tree, index |
+| 5 | *update:* **check the branch out**, if it is not already current | tree, HEAD |
+| 6 | *update:* **merge the branch's own upstream**. Conflict → the branch diverged from itself | tree, HEAD |
+| 7 | **Merge the target** — `git merge --no-edit <targetRef>`. Conflict → roll back (below) | tree, HEAD |
+| 8 | *update:* **push** — never forced. Rejected → a handoff, not a failure | remote |
+| 9 | *update:* **return** to the branch the user was standing on | tree, HEAD |
+| 10 | **Pop** — `git stash pop --index`. Conflict → halt in place (below) | tree, index |
+| 11 | **Refresh** the branch's status so the row shows the new reality | no |
+
+Both fetches are **hoisted above the stash**, and that is not an optimisation — it is
+what keeps the read-only rule below true for a sequence that merges two refs instead of
+one. Fetching is how the numbers step 2 refuses on become true, and none of it touches
+the working tree.
+
+### What "nothing to do" means, per verb
+
+For `s`: the target hasn't moved (`behind == 0`). For `u` it takes all three — the
+target hasn't moved, the branch is level with its own upstream, and there is nothing to
+publish. Half of "this branch is up to date" is a claim about the remote, so a branch
+level with its target but ahead of its own upstream is not done.
+
+A branch with **no upstream at all** is a third answer, and reporting it as up to date
+is the one claim `u` must never make: there is nothing to pull into it and nowhere to
+publish it, so the sequence says so and names `git push -u`.
 
 ### Read-only until the last possible moment
 
@@ -54,35 +102,72 @@ leave the user somewhere they did not ask to be.
 
 Checked in this order; the first failure is reported and stops the sequence:
 
-- **HEAD is on a branch.** Detached HEAD has nothing to merge into.
-- **The selected branch is the checked-out one.** See *Scope* below.
+- **HEAD is on a branch.** Detached HEAD has nothing to merge into, and for `u` it is
+  also nowhere to come back to — the return is part of the sequence, so a starting point
+  that is not a branch is refused rather than approximated.
+- **For `s` only: the selected branch is the checked-out one.** See *Scope*.
 - **No operation already in progress** — no `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
   `REVERT_HEAD`, `rebase-merge/`, or `rebase-apply/` under the git dir. The repo is
-  already mid-something; Drift will not stack a sequence on top of it.
+  already mid-something; Drift will not stack a sequence on top of it. This precondition
+  also earns its keep later: anything the rollback finds in flight is necessarily
+  Drift's own.
 - **The branch has a paired target**, and that target resolves to a real ref.
+- **For `u` only, and only for now: the tree is clean, or the branch is already checked
+  out.** See *The dirty tree, and where it splits*.
 
-## Scope: the checked-out branch only
+## Scope
 
 `s` runs on the branch you are on. On any other branch row it reports *"not checked out
-— `git switch <branch>` first"* and does nothing.
+— press `u` to update it, or `git switch <branch>`"* and does nothing.
 
-This preserves Drift's standing invariant: **it never checks anything out.** The reason
-is not squeamishness, it is correctness — a stash belongs to the branch it was taken on.
-A cross-branch sequence would have to `checkout` → merge → `checkout` back → pop, and
-every arrangement of those steps either carries uncommitted work across a branch
-boundary or pops it onto the wrong tree. The roadmap's "one keypress per branch" means
-*per branch, as you get to it*, not *all of them from where you stand*.
+`u` runs on any paired branch, checking it out and putting you back afterwards. That
+reverses the standing "Drift never checks anything out" invariant, under
+[ADR 0002](../adr/0002-update-checks-out.md).
 
-Auto-checkout is not refused forever, only deferred with its questions open: what
-happens to uncommitted work on the branch you are leaving, and whether Drift wants to
-own the "put me back where I was" bookkeeping that implies. It would earn an ADR, since
-it reverses a documented invariant.
+The invariant's *reason* is preserved rather than discarded. **A stash belongs to the
+branch it was taken on**, and it still does: Drift stashes on the branch it is leaving
+and pops on that same branch once it has returned, so uncommitted work never crosses a
+branch boundary. What changed is that the guarantee is enforced by the **return**
+instead of by never leaving.
+
+### You end up where you started
+
+The branch list is a list, not a place you move to. Updating five branches must not
+silently relocate you, and each `u` has to start from the same known place as the last.
+So the return is part of the sequence rather than a courtesy, and **every halt path
+unwinds too** — a conflict at step 6, 7 or 8 still puts you back and still pops.
+
+The unwind runs in one order: roll the merge back, return, then pop. It stops at the
+first failure and reports it rather than stacking the next step on top — a rollback
+already not going to plan is exactly when carrying on turns one problem into two.
+
+The one thing it will not do is pop when it could not get back. Popping a stash wherever
+Drift happens to be standing is the single thing this whole arrangement exists to
+prevent, so a failed return reports the two commands that finish it by hand and stops.
+
+### The dirty tree, and where it splits
+
+Conflating these two is what made cross-branch work look harder than it is:
+
+- **Same branch, dirty** — exactly today's shelve. Stash and pop happen on one branch,
+  no boundary is crossed, and it is already atomic. It needs no new argument: it only
+  gains the upstream pull and the push.
+- **Different branch, dirty** — the new case. Drift stashes on the branch you are
+  leaving and pops on that same branch when it returns, so the narrow claim above still
+  holds.
+
+The second case is **built and currently gated**: being stashed without having agreed to
+it is a surprise, so `u` refuses it at the read-only stage, where a refusal costs
+nothing, and names the two ways to proceed. The confirmation overlay that states the
+plan up front and unlocks it is roadmap 17b. A clean tree gets no overlay and no
+refusal — there is nothing to warn about.
 
 ## Pulling the target
 
-Drift compares against `origin/<target>` and never checks a target out, so "pull the
-target main" means: **update that remote-tracking ref, then merge it.** That is what
-`git pull` is; Drift just does the two halves against a ref it never has to visit.
+Drift compares against `origin/<target>` and never checks a *target* out — that half of
+the invariant is untouched — so "pull the target main" means: **update that
+remote-tracking ref, then merge it.** That is what `git pull` is; Drift just does the two
+halves against a ref it never has to visit.
 
 The fetch is **scoped to the one target being merged** — `git fetch <remote> <branch>`,
 not the whole remote. It is faster, and it cannot quietly change the ahead/behind
@@ -97,6 +182,44 @@ pull — the fetch step is **skipped and said so**, and the sequence continues a
 ref as it stands. A target that cannot be fetched is not an error; silently pretending
 it was fetched would be.
 
+## Pulling the branch's own upstream (`u`)
+
+The same split, applied to the branch instead of the target: fetch `origin/<branch>`,
+then merge it. Normally a fast-forward, and often a no-op.
+
+It exists because without it `u` is wrong on a second machine: it would merge the target
+into a *stale* branch and then be unable to push the result — which is the exact failure
+the verb was added to prevent. It is also what makes a push rejection rare enough to be
+worth treating as a genuine handoff rather than a routine outcome.
+
+A **conflict here is a real halt**, not a rollback of somebody else's doing: it means the
+branch diverged from itself, and no amount of merging the target will settle it. Drift
+rolls back and names the two refs to reconcile.
+
+A branch with **no upstream** has nothing to pull. The step is skipped and said so — the
+same rule as an unfetchable target — and the missing upstream surfaces properly at the
+push.
+
+## Pushing (`u`)
+
+The push is what makes "this branch is up to date" a claim about the remote rather than
+about one laptop, and it is the whole of the difference the dashboard has to render
+(roadmap 17b's ahead-of-`origin/<branch>` column).
+
+**Never forced.** A rejection means the branch moved on the remote after the fetch read
+it, which is someone else's commit — exactly the class of thing Drift stops and hands
+back rather than resolving. It is **not** a failure of the sequence: the branch is left
+updated and merged locally, the user is still returned and their work still popped, and
+the report says the publish is the one thing that did not happen. The same is true of a
+branch with no upstream, which cannot be published at all.
+
+The rejection is read from `git push --porcelain`'s flag column rather than from git's
+message text — the same rule as everywhere else in the git layer — because a rejected
+push and an unreachable remote are the same non-zero exit and need opposite responses.
+The refspec is written out in full rather than left to `push.default`: a branch may track
+an upstream under a different name, and publishing the right commits to the wrong ref is
+the failure that would otherwise hide behind a bare push.
+
 ## Halts
 
 Every halt is a **handoff**: Drift stops, names what it found, and leaves the
@@ -105,14 +228,17 @@ permanent.
 
 ### Held-file collision (step 3) — before anything is touched
 
-The hazard [`local-only-changes.md`](./local-only-changes.md) names: the target main
+The hazard [`local-only-changes.md`](./local-only-changes.md) names: something incoming
 changed a file you hold on this machine. Drift does not rely on Git's behavior here (it
 varies by version — abort vs. clobber), it checks first:
 
 ```
-git diff --name-only <branch>...<targetRef>    # what the merge will bring in
+git diff --name-only <branch>...<ref>    # what each merge will bring in
 ∩  held set (skip-worktree `S`-tagged + fenced exclude block)
 ```
+
+**Every** ref about to be merged is checked, not just the target's: for `u` the branch's
+own upstream can carry a change to a held file exactly as readily.
 
 Non-empty → halt, list the colliding paths with their notes, and stop. Nothing has been
 stashed or merged. The user releases the hold, or reconciles by hand, and re-runs.
@@ -120,32 +246,42 @@ stashed or merged. The user releases the hold, or reconciles by hand, and re-run
 Empty (the common case) → the held set rides the rest of the sequence untouched, with no
 re-apply step, because a plain `git stash` cannot see it. **Step 4 must never grow a
 `-u` or `-a` flag**; that is the one thing this sequence owes area 6, and adding either
-would silently break the promise.
+would silently break the promise. The held set rides the *checkout* the same way: git
+refusing to switch because a skip-worktree file differs between the branches is a result
+worth halting on, which is why the checkout is never forced.
 
-### Merge conflict (step 5) — abort and restore
+### Merge conflict (steps 6 and 7) — roll the whole thing back
 
-A conflict here means both sides *committed* to the same file. Drift runs
-`git merge --abort`, then `git stash pop --index`, and reports the conflicting paths —
-flagging which of them are unmergeable, since that is what determines whether the
-reconciliation is a text merge or a trip to an external tool.
+A conflict here means both sides *committed* to the same file. Drift rolls back — abort
+the merge, return to the branch the sequence started on, put the stash back — and reports
+the conflicting paths, flagging which of them are unmergeable, since that is what
+determines whether the reconciliation is a text merge or a trip to an external tool.
 
 **The sequence is therefore atomic across its mutating steps: it either lands whole, or
 it leaves no trace.** The user ends up byte-for-byte where they started, holding a list
 of what they are about to have to deal with. Nothing is half-merged, and nothing is
 sitting in a stash they have to remember about.
 
-If `merge --abort` itself fails, Drift **halts without popping.** A failed abort means
-the repo is not in the state Drift thought it was, and stacking a pop on top of that
-turns one problem into two. It reports the raw git error and stops.
+The rollback aborts a merge only when one is actually in flight, which it finds out by
+asking rather than by being told. That is what lets every post-stash halt share one
+rollback path, including the ones where a merge failed without conflicting and so left
+nothing to abort — and it is safe precisely because the preconditions refused to start on
+top of anybody else's operation.
 
-### Pop conflict (step 6) — halt in place, stash retained
+If a step of the rollback itself fails, Drift **stops there** rather than running the
+next one: a rollback already not going to plan is exactly when carrying on turns one
+problem into two. That case outranks whatever prompted it in the report — the work is
+still stashed and the user may be standing somewhere they did not choose — and the
+commands that finish it by hand are named.
+
+### Pop conflict (step 10) — halt in place, stash retained
 
 Your uncommitted work vs. the target's newly-merged content. This is the case the whole
 feature exists for: with the unmergeable file's local edit safely in the stash, the merge
 itself was clean, and the conflict surfaces here — over a `-merge` file, with no conflict
 markers ever written into it, which is precisely the flow `CONTEXT.md` describes.
 
-**This halt does not restore, and the asymmetry with step 5 is deliberate.** `git stash
+**This halt does not restore, and the asymmetry with a merge conflict is deliberate.** `git stash
 pop` does not drop the stash entry when it conflicts, so nothing is at risk: the work is
 still in the stash, the merge is committed, and the user is standing exactly at the
 reconciliation point they ran the sequence to reach. Auto-restoring here would undo the
@@ -163,7 +299,7 @@ Two failure modes that a naive implementation hits and a user only discovers aft
   "No local changes to save" and exits 0. A sequence that pops unconditionally would then
   pop *someone else's* stash — an unrelated pile of work, applied onto a branch it was
   never taken from. Drift resolves `refs/stash` before and after the push; unchanged (or
-  still absent) means nothing was stashed, and step 6 is skipped entirely.
+  still absent) means nothing was stashed, and the pop is skipped entirely.
 - **`stash@{0}` is a position, not an identity.** Anything that stashes concurrently —
   another terminal, an IDE, a hook — shifts it. Drift records the stash **commit OID**
   created in step 4 and verifies `refs/stash` still points at it before popping. If it
@@ -171,7 +307,7 @@ Two failure modes that a naive implementation hits and a user only discovers aft
   their work is in the stash list under Drift's message. Popping the wrong stash is not a
   recoverable mistake in the way most git mistakes are.
 
-The stash is created with an identifying message — `drift: shelve <branch> ← <targetKey>`
+The stash is created with an identifying message — `drift: <verb> <branch> ← <targetKey>`
 — so the entry is findable by eye in `git stash list` on any path where Drift hands back.
 
 `pop --index` is used unconditionally. With nothing staged it behaves identically to a
@@ -188,24 +324,31 @@ in an editor they did not ask for and may not know how to leave.
 
 ## Interaction rules (UI surface; visuals ratified in DESIGN.md)
 
-- **`s` on a branch row** runs the sequence — named action `shelve`. It is offered
-  (and its key documented in the `?` overlay) on the dashboard.
-- **One at a time.** While a sequence is in flight, a second `shelve` is refused, not
-  queued. Two concurrent stash/merge sequences against one index is not a state worth
-  being able to reach.
+- **`s` and `u` on a branch row** run the sequence — named actions `shelve` and
+  `update`. Both are offered (and their keys documented in the `?` overlay) on the
+  dashboard, and the report screen names the verb that is running.
+- **One at a time.** While a sequence is in flight, a second one is refused, not
+  queued — either verb. Two concurrent stash/merge sequences against one index is not a
+  state worth being able to reach.
 - **The running sequence is visible step by step** — the user must be able to see which
-  of fetch / check / stash / merge / pop is happening. A sequence that mutates the
-  working tree behind a single undifferentiated spinner gives the user nothing to reason
-  about when it stops.
-- **Cancellation applies to step 1 only.** `esc` kills an in-flight fetch, as it already
+  of fetch / check / stash / switch / merge / push / return / pop is happening. A
+  sequence that mutates the working tree behind a single undifferentiated spinner gives
+  the user nothing to reason about when it stops. The step list is the one for the verb
+  that is running, so `s` never shows steps it will not take.
+- **A step with nothing to do says so**, rather than sitting unticked forever. "Pending"
+  and "not needed" are the two things a stopped sequence must never conflate — and the
+  answer comes from what git reported, never from a prediction made a step earlier.
+- **Cancellation applies to the fetches only.** `esc` kills an in-flight fetch, as it already
   does on the dashboard. Once the stash is taken the sequence runs to a halt or to
   completion; there is no cancelling into an undefined middle.
 - **Quitting mid-sequence is allowed, deliberately.** `q` and `ctrl+c` are not trapped
   while the mutating steps run: an escape hatch you can be locked out of is worse than
   the state it protects. And that state is already handled — a half-finished merge is
-  what the `OperationInProgress` precondition exists to detect, so the next `s` refuses
+  what the `OperationInProgress` precondition exists to detect, so the next run refuses
   and names it rather than stacking on top. The failure mode is self-healing, which is
-  exactly why it does not justify trapping the user.
+  exactly why it does not justify trapping the user. `u` widens what can be left behind —
+  a quit mid-sequence can leave you on a branch you did not choose, with your work in a
+  stash — so the report names the way back on every path Drift itself takes.
 - **Every halt names its next action** — the git command that resolves it, in the same
   register as area 6's staged-change refusal (`git restore --staged`). Drift's job is to
   hand back a well-lit problem, not a stack trace.
@@ -213,7 +356,7 @@ in an editor they did not ask for and may not know how to leave.
   to each colliding path. Natural, and the panel already exists — but not required for
   the area to be done.
 
-`s` does not collide with any bound key on the dashboard.
+Neither `s` nor `u` collides with any bound key on the dashboard.
 
 ## Area-1 (git wrapper) additions
 
@@ -233,12 +376,28 @@ in an editor they did not ask for and may not know how to leave.
 - `ChangedFiles` (area 5) already serves the collision check; `AheadBehind` (area 1)
   already serves the recompute. Neither needs changing.
 
+Area 17 added three more:
+
+- `Checkout(ctx, branch)` — `git switch --quiet <branch>`, deliberately unforced.
+- `Upstream(ctx, branch)` — the remote-tracking ref a branch follows, `""` when it
+  follows none, read via `for-each-ref` so "no upstream" is empty output and exit 0
+  rather than an exit code to be told apart from a real failure.
+- `Push(ctx, remote, local, remoteBranch)` — `git push --porcelain`, distinguishing
+  updated / already-up-to-date / **rejected**.
+
 Every one of these takes a `context.Context` and runs through the existing `run` helper,
 so the editor-proof environment above is set in **one** place rather than per call site.
+`Push` is the single exception, and only in one respect: it needs stdout kept on a
+non-zero exit, because that is where the rejection is reported.
 
 ## Out of scope
 
-- **Cross-branch and batch shelving.** One branch, the checked-out one, per keypress.
+- **Batch update.** One branch per keypress, either verb. "Update every paired branch"
+  is where this is heading and is deliberately not here: one conflict mid-sweep raises
+  questions about the other branches that the per-branch path does not have to answer
+  yet, and ADR 0002 should cover one reversal rather than two.
+- **Force-pushing, ever.** A rejected push is someone else's commit, and it is handed
+  back. There is no flag for this and there is not going to be one.
 - **Reconciling anything.** Drift surfaces conflicts and hands to the human — the
   permanent rule from `CONTEXT.md`, and the reason the sequence has halts at all.
 - **Committing the resolution**, staging resolved files, or `merge --continue`. Once
@@ -248,4 +407,8 @@ so the editor-proof environment above is set in **one** place rather than per ca
 - **`git stash -u` / `-a`.** Would sweep up exactly the local-only changes area 6 holds.
 - **Stash management** — listing, dropping, or applying stashes Drift did not create.
   Drift creates one stash and pops the same one; `git` owns the rest.
-- **Pushing.** The sequence brings the target *in*; it never sends anything out.
+- **Pushing, for `s`.** That verb brings the target *in* and never sends anything out;
+  it is `u` that publishes, and the split is the whole distinction between them.
+- **Setting an upstream.** A branch that has never been published is reported, with
+  `git push -u` named. Choosing the remote and the remote name on the user's behalf is a
+  guess, and publishing something new is the wrong place to make one.

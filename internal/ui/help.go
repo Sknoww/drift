@@ -50,7 +50,8 @@ var actionText = map[Action]string{
 	ActionHoldLocal:       "hold a working-tree change on this machine",
 	ActionRelease:         "stop holding the selected path",
 	ActionEditNote:        "note why it's held",
-	ActionShelve:          "stash, pull the target, merge it in, put your work back",
+	ActionShelve:          "merge the target into this branch — nothing is published",
+	ActionUpdate:          "bring the selected branch up to date and publish it",
 	ActionHelp:            "this help",
 	ActionQuit:            "quit",
 }
@@ -65,7 +66,7 @@ var actionOrder = []Action{
 	ActionNextFile, ActionPrevFile, ActionDeclare,
 	ActionHoldLocal, ActionRelease, ActionEditNote,
 	ActionConfirm, ActionCancel,
-	ActionShelve,
+	ActionUpdate, ActionShelve,
 	ActionAdd, ActionDelete, ActionRefresh, ActionFetch, ActionLocalOnly,
 	ActionHelp, ActionQuit,
 }
@@ -216,6 +217,11 @@ func (m Model) screenName() string {
 		// carries its own one-line help (DESIGN.md §2).
 		return "local-only changes"
 	case screenShelve:
+		// One screen, two verbs: the report names the one that is running, so the
+		// help overlay opened over it does too.
+		if m.shelve.mode == modeUpdate {
+			return "update"
+		}
 		return "shelve"
 	default:
 		return "dashboard"

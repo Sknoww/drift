@@ -308,6 +308,9 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 
 	case ActionShelve:
 		return m.beginShelve()
+
+	case ActionUpdate:
+		return m.beginUpdate()
 	}
 	return m, nil
 }

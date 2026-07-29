@@ -691,39 +691,69 @@ is; link its spec/ADR once one exists.
         the accent **only when it was overridden**: an accent is literally the colour the
         label is drawn beside, so naming it otherwise is noise, where `pair` and
         `contrast` differ subtly enough that the screen does not tell you which you got
-17. ⏳ **`u` update — carry a branch all the way, including the checkout and the push.**
+17. 🛠️ **`u` update — carry a branch all the way, including the checkout and the push.**
     Raised by dogfooding v0.2.0, and it is the sharpest kind of finding: the tool does not
     do the thing it was built to do. Going down the branch list and pressing `s` refuses on
     every row but the one you happen to be standing on, so the "one keypress per branch"
-    payoff only ever arrives for one branch. Three pieces are missing, and only the first
-    is a design question — the other two are simply absent:
-    - **No checkout.** `beginShelve` refuses when the row is not `m.current`
-      (`internal/ui/shelve.go`), and `internal/git`'s package doc opens with "nothing
-      checks anything out"
-    - **No push.** The sequence ends at pop, so a landed merge never leaves the machine.
-      Half of "this branch is up to date" is a claim about the *remote*
-    - **The branch's own upstream is never pulled.** `shelvePullCmd` fetches the target
-      ref only. On a second machine that merges the target into a stale branch and then
-      cannot push — which is the exact failure the area exists to prevent
-    - **This reverses a documented invariant, so it earns ADR 0002.** The shelve spec's
-      *Scope* section defers auto-checkout "with its questions open", and this area's job
-      is to answer them rather than to quietly delete the section. `docs/specs/shelve-
-      sequence.md` gets rewritten in the same commit — a spec that still says "checked-out
-      branch only" while the code checks out is worse than no spec
-    - **The sequence**, in run order. Everything before the stash stays read-only, which is
-      area 7's central mechanic and is not up for renegotiation: a refusal must still have
-      nothing to undo:
+    payoff only ever arrives for one branch. **17a** — the git layer, the sequence, the
+    unwind, the spec rewrite and the ADR — has shipped; **17b** is the confirmation overlay
+    and the dashboard's ahead-of-`origin/<branch>` signal. Three pieces were missing, and
+    only the first was a design question — the other two were simply absent:
+    - ✅ **No checkout.** `beginShelve` refused when the row was not `m.current`, and
+      `internal/git`'s package doc opened with "nothing checks anything out". Both are
+      gone: `Checkout` exists, deliberately **unforced**, because git refusing to switch
+      is a result the sequence needs — something the stash could not see (a skip-worktree
+      file that differs between the branches) is exactly what area 6 protects
+    - ✅ **No push.** `Push` reads its outcome from `git push --porcelain`'s flag column,
+      not from git's English, and distinguishes updated / already-up-to-date / **rejected**.
+      It is the one call in the git layer that keeps stdout on a non-zero exit, because
+      that is where a rejection is reported — and a rejected push and an unreachable
+      remote are otherwise the same exit code needing opposite responses
+    - ✅ **The branch's own upstream is never pulled.** `Upstream` reads it with
+      `for-each-ref`, so "no upstream" is empty output and exit 0 rather than an exit code
+      to be told apart from a real failure — and a branch that has never been published is
+      an *answer*, not an error: nothing to pull into it, nowhere to publish it, and
+      `git push -u` named rather than a remote guessed on the user's behalf
+    - ✅ **This reversed a documented invariant, so it earned
+      [ADR 0002](./docs/adr/0002-update-checks-out.md).** The invariant's *reason* survives
+      intact and is the thing worth keeping: a stash belongs to the branch it was taken on,
+      which is now enforced by the **return** rather than by never leaving.
+      `docs/specs/shelve-sequence.md` was rewritten in the same commit to cover both verbs
+      — a spec still saying "checked-out branch only" while the code checks out is worse
+      than no spec
+    - ✅ **The sequence**, in run order. Everything before the stash stays read-only, which
+      is area 7's central mechanic and was not up for renegotiation: a refusal must still
+      have nothing to undo. Holding that for a verb which merges *two* refs is what
+      decided the one refinement to the order below — **both fetches are hoisted above the
+      stash**, since fetching is how the numbers a refusal rests on become true and it
+      touches no files. So the divergence recompute and the held-set check still run before
+      anything mutates, exactly as they do for `s`:
       1. Preconditions — no operation in progress, the row has a paired target, the target
          resolves to a real ref. All as today
-      2. Stash, if the tree is dirty — the confirmation below decides whether this happens
-      3. Check out the branch, if it is not already current
-      4. Pull the branch's own upstream — fetch `origin/<branch>`, then merge it. Normally
-         a fast-forward; a *conflict* here is a genuine halt, since it means the branch
-         diverged from itself
-      5. Fetch the target ref and merge it in — today's steps, held-set collision check
-         and all
-      6. Push
-      7. Return to the branch you started on, and pop the stash
+      2. Fetch the target ref **and** the branch's own upstream
+      3. Recompute the divergence against both, then the held-set collision check — over
+         **every** incoming ref, since the branch's own upstream can carry a change to a
+         held file exactly as readily as the target can
+      4. Stash, if the tree is dirty
+      5. Check out the branch, if it is not already current
+      6. Merge the branch's own upstream. Normally a fast-forward; a *conflict* here is a
+         genuine halt, since it means the branch diverged from itself
+      7. Merge the target in
+      8. Push
+      9. Return to the branch you started on, and pop the stash
+    - ✅ **The unwind is one path, and it asks rather than being told.** Every post-stash
+      halt shares it: abort a merge *if one is actually in flight*, return, pop — stopping
+      at the first failure rather than stacking the next step on a rollback already going
+      wrong. The probe is what lets a merge that failed *without* conflicting (nothing to
+      abort) use the same path as one that conflicted, and it is safe precisely because the
+      preconditions refused to start on top of anybody else's operation. The one thing it
+      will not do is pop when it could not get back — popping wherever Drift happens to be
+      standing is the single thing the whole arrangement exists to prevent
+    - ✅ **A step with nothing to do says so.** "Pending" and "not needed" are the two
+      things a stopped sequence must never conflate, and the answer comes from what git
+      reported rather than from a prediction made a step earlier: `stepReady` knows the
+      tree is clean, but whether there is anything to *put back* is `stepStash`'s own
+      answer, and marking it early would be a claim about a result git had not given yet
     - ✅ **Settled: the dirty tree splits in two, and only one half is new.** Conflating
       them is what made this look harder than it is:
       - **Same branch, dirty** — exactly today's shelve. Stash and pop happen on one
@@ -734,21 +764,30 @@ is; link its spec/ADR once one exists.
         when it returns, so the work still never lands on a tree it was not taken from.
         That is a narrower claim than the spec's blanket refusal, and it is the reason
         this is now buildable
-    - ✅ **Settled: a confirmation overlay, then the full automated round trip.** Not a
-      flat refusal — being blocked by unrelated dirt is the friction the area exists to
-      remove. The overlay names the actual plan before anything runs (which branch is
-      being left, that the work is stashed, that Drift comes back and pops), and the user
-      confirms. Same shape as the `y/n` delete confirm and the declare overlay, so an
-      overlay is still an overlay wherever the user meets one. A clean tree gets no
-      overlay at all — there is nothing to warn about
+    - ⏳ **17b — a confirmation overlay, then the full automated round trip.** Settled, and
+      the only piece of the dirty-cross-branch case still outstanding: the machinery under
+      it shipped with 17a, so this is the prompt and nothing else. Not a flat refusal —
+      being blocked by unrelated dirt is the friction the area exists to remove. The
+      overlay names the actual plan before anything runs (which branch is being left, that
+      the work is stashed, that Drift comes back and pops), and the user confirms. Same
+      shape as the `y/n` delete confirm and the declare overlay, so an overlay is still an
+      overlay wherever the user meets one. A clean tree gets no overlay at all — there is
+      nothing to warn about
+      - **Until it lands, 17a refuses that one case** — at `stepReady`, where everything
+        is still read-only and a refusal costs nothing — and names the two ways to proceed.
+        Shipping the round trip without the prompt would have been the one thing the
+        overlay exists to prevent: being stashed without having agreed to it. Unlocking it
+        is a change to that gate and nothing else
     - ✅ **Settled: you end up where you started.** The list is a list, not a place you
       move to. Updating five branches must not silently relocate you, and each Update has
       to start from the same known place as the last. The return is part of the sequence,
-      not a courtesy: **every halt path unwinds it too**, so a conflict at step 4, 5 or 6
-      still puts you back and still pops. That is the "put me back where I was"
-      bookkeeping the spec named as the price of admission, and it is the bulk of the work
+      not a courtesy: **every halt path unwinds it too**, so a conflict at either merge or
+      a failure at the push still puts you back and still pops. That is the "put me back
+      where I was" bookkeeping the spec named as the price of admission, and it was the
+      bulk of the work — pinned end to end against a real repo, not only over synthetic
+      messages
     - ✅ **Settled: never force-push, and a rejected push is a handoff.** A rejection means
-      the branch moved on the remote after step 4 read it, which is someone else's commit
+      the branch moved on the remote after the fetch read it, which is someone else's commit
       — exactly the class of thing Drift stops and hands back rather than resolving. The
       branch is left updated and merged locally; only the publish did not happen, and the
       report says so
@@ -763,8 +802,11 @@ is; link its spec/ADR once one exists.
       someone has. The cost is real and accepted: two near-identical sequences are two
       entries in a help table generated per action, so their descriptions have to carry
       the distinction on their own — "merge the target in" versus "bring it up to date and
-      publish it". If that cannot be said in one line each, the split is wrong
-    - ✅ **Settled: the dashboard gains an ahead-of-`origin/<branch>` signal.** Without it
+      publish it". If that cannot be said in one line each, the split is wrong. Shipped as
+      "merge the target into this branch — nothing is published" against "bring the
+      selected branch up to date and publish it", and pinned by a test, so the two can
+      never drift into describing the same thing
+    - ⏳ **17b — the dashboard gains an ahead-of-`origin/<branch>` signal.** Without it
       `u`'s push is invisible: today's `↓behind ↑ahead` measures against the *target*, so a
       pushed branch and a locally-merged-but-unpushed one render identically, and the
       column would be silent about the only step that touches the remote. This is the

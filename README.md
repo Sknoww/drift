@@ -79,7 +79,8 @@ rebindable without a code change.
 | `enter` / `space` | expand a ticket · open a branch's diff |
 | `a` | add a ticket |
 | `d` | delete the selected ticket |
-| `s` | shelve — stash, pull the target, merge it in, put your work back |
+| `u` | update — bring the selected branch up to date and publish it |
+| `s` | shelve — merge the target into this branch, here; nothing is published |
 | `l` | manage local-only changes |
 | `f` | fetch, then refresh (`esc` aborts an in-flight fetch) |
 | `r` | refresh from git |
@@ -115,11 +116,26 @@ rebindable without a code change.
 
 ## What the features do
 
-**Shelve** (`s`) runs the whole sequence on the selected branch in one keystroke:
+**Shelve** (`s`) runs the whole sequence on the checked-out branch in one keystroke:
 stash → pull the target → merge it in → pop your work back on top. Unshelving *over*
 the merge is the point — it means conflict markers never get written into a file that
 can't be hand-edited. The report tells you where it stopped: `✓` done, `■` stopped and
 handed back because there's something to reconcile, `✗` refused or failed outright.
+
+**Update** (`u`) is the same merge, carried the whole way, on *any* paired branch —
+including one you don't have checked out. It stashes, checks the branch out, pulls the
+branch's own upstream, merges the target, pushes, then puts you back on the branch you
+were standing on and pops your work. Every halt unwinds the same way, so a conflict
+still leaves you where you started.
+
+The two differ by **commitment**. `s` merges the target in and publishes nothing, which
+leaves the branch ahead of its own remote — useful when you want to look at the merge
+before it goes anywhere. `u` finishes the job. Nothing is ever force-pushed: a rejected
+push means someone else's commit is in the way, so Drift leaves the branch merged
+locally and tells you.
+
+Today `u` declines to leave a branch that has uncommitted work on it — commit or stash
+it first, or press `u` while standing on the branch itself.
 
 **Unmergeable detection** is hybrid. Drift reads git's own declaration via
 `git check-attr merge` — `*.uwe -merge` in a `.gitattributes` — and adds the glob

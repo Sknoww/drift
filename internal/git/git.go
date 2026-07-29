@@ -1,12 +1,15 @@
 // Package git is a thin wrapper over the git binary. Every call here shells out
-// and parses machine-readable output; nothing checks anything out, and nothing
-// touches the files a branch is made of.
+// and parses machine-readable output; nothing here edits the files a branch is
+// made of.
 //
-// The one deliberate exception is attributes.go, which writes a `-merge`
-// declaration into an attributes file (roadmap area 5). That is Drift teaching
+// Two deliberate exceptions to "reads only". attributes.go writes a `-merge`
+// declaration into an attributes file (roadmap area 5) — that is Drift teaching
 // git a constraint, not Drift editing the user's work, and git offers no
-// plumbing to write it — but the file's location is still asked of git, never
-// assembled by hand.
+// plumbing to write it, though the file's location is still asked of git rather
+// than assembled by hand. And shelve.go plus update.go move the working tree:
+// stash, merge, checkout and push, the calls the one-key sequences are made of
+// (areas 7 and 17). Checkout in particular reverses this package's original
+// "nothing checks anything out" — see ADR 0002 and update.go's own note.
 package git
 
 import (
@@ -41,6 +44,20 @@ func New(dir string) *Repo {
 var noEditor = []string{"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"}
 
 func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
+	out, err := r.runKeepingOutput(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// runKeepingOutput is run with the output kept on failure. Almost every call
+// here wants run: a git command that failed has produced no answer, and handing
+// back a half-written one invites parsing it. The exception is a command whose
+// machine-readable output *is* how the failure is classified — `push
+// --porcelain` reports a rejected ref on stdout and then exits non-zero, and
+// telling a rejection from an unreachable remote is the whole job (update.go).
+func (r *Repo) runKeepingOutput(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
 	cmd.Env = append(os.Environ(), noEditor...)
@@ -49,9 +66,9 @@ func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
-			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+			return stdout.String(), fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 		}
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, msg)
+		return stdout.String(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, msg)
 	}
 	return stdout.String(), nil
 }

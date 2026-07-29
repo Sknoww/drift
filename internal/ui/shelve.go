@@ -12,43 +12,96 @@ import (
 	"github.com/Sknoww/drift/internal/store"
 )
 
-// The one-key shelve sequence (roadmap area 7, docs/specs/shelve-sequence.md):
-// pull the target, merge it into the checked-out branch, and put your work back,
-// as one keypress. It is the payoff for storing the ticket → (target, branch)
-// grouping in the first place — Drift already knows every argument the four
-// commands need.
+// The one-key sequences (roadmap areas 7 and 17, docs/specs/shelve-sequence.md).
+// They are the payoff for storing the ticket → (target, branch) grouping in the
+// first place — Drift already knows every argument the commands need.
+//
+// Two verbs share this state machine, differing by commitment. `s` shelves:
+// pull the target, merge it into the checked-out branch, put your work back, and
+// publish nothing. `u` updates: the same merge, but it checks the branch out,
+// pulls the branch's own upstream first, pushes the result, and returns you to
+// where you were standing. One machine rather than two, because the halts, the
+// stash identity rules and the report are the same in both — only the step list
+// and the commitment differ.
 //
 // It runs as a *chain* of Cmds rather than one long-running Cmd, for two reasons.
 // The user can see which step is happening, which matters because the back half
 // of the sequence mutates the working tree. And every decision about where to
 // stop lives in Update, over plain data, where it can be tested without a repo.
 
-// shelveStep is one step of the sequence, in run order.
+// shelveMode is which verb is running. The distinction is commitment, not
+// mechanism: modeShelve leaves the branch ahead of its own remote by design,
+// which is exactly what makes the two legible on the dashboard rather than only
+// in the help.
+type shelveMode int
+
+const (
+	modeShelve shelveMode = iota // s: merge the target in, here, and publish nothing
+	modeUpdate                   // u: carry the branch all the way, including the push
+)
+
+// shelveStep is one step of the sequence, in run order. Four of them belong to
+// modeUpdate alone; the constants are ordered so a single "how far have we got"
+// comparison works for either verb.
 type shelveStep int
 
 const (
-	stepReady   shelveStep = iota // preconditions that need to ask git
-	stepPull                      // fetch this target's ref, and only this one
-	stepHolds                     // recompute behind, then the local-only collision check
-	stepStash                     // the first step that touches the working tree
-	stepMerge                     // merge the target in
-	stepRestore                   // pop the stash back
+	stepReady    shelveStep = iota // preconditions that need to ask git
+	stepPull                       // fetch this target's ref, and only this one
+	stepHolds                      // recompute behind, then the local-only collision check
+	stepStash                      // the first step that touches the working tree
+	stepSwitch                     // update: check the branch out
+	stepUpstream                   // update: merge the branch's own upstream
+	stepMerge                      // merge the target in
+	stepPush                       // update: publish the branch
+	stepReturn                     // update: go back to where the user was standing
+	stepRestore                    // pop the stash back
 )
 
-// shelveSteps is the display order and wording. Everything up to stepStash is
-// read-only — see the "read-only until the last possible moment" rule in the
-// spec — so a sequence that refuses has nothing to undo.
-var shelveSteps = []struct {
+// shelveStepLabel is one row of the progress list: the step and how it is worded
+// on screen.
+type shelveStepLabel struct {
 	step shelveStep
 	what string
-}{
-	{stepReady, "check the repo is ready"},
-	{stepPull, "pull the target"},
-	{stepHolds, "check local-only holds"},
-	{stepStash, "stash your work"},
-	{stepMerge, "merge the target in"},
-	{stepRestore, "put your work back"},
 }
+
+// steps is the display order and wording for the verb that is running.
+// Everything up to stepStash is read-only — see the "read-only until the last
+// possible moment" rule in the spec — so a sequence that refuses has nothing to
+// undo. That the rule survives the extra update steps is the whole reason both
+// fetches are hoisted above the stash: `u` merges two refs, and both of them can
+// be brought up to date without touching the working tree.
+func (s shelveState) steps() []shelveStepLabel {
+	out := []shelveStepLabel{{stepReady, "check the repo is ready"}}
+	if s.mode == modeUpdate {
+		out = append(out, shelveStepLabel{stepPull, "fetch the target and " + s.branch})
+	} else {
+		out = append(out, shelveStepLabel{stepPull, "pull the target"})
+	}
+	out = append(out,
+		shelveStepLabel{stepHolds, "check local-only holds"},
+		shelveStepLabel{stepStash, "stash your work"},
+	)
+	if s.mode == modeUpdate {
+		if s.leaves() {
+			out = append(out, shelveStepLabel{stepSwitch, "check out " + s.branch})
+		}
+		out = append(out, shelveStepLabel{stepUpstream, "pull " + s.branch + "'s own upstream"})
+	}
+	out = append(out, shelveStepLabel{stepMerge, "merge the target in"})
+	if s.mode == modeUpdate {
+		out = append(out, shelveStepLabel{stepPush, "publish " + s.branch})
+		if s.leaves() {
+			out = append(out, shelveStepLabel{stepReturn, "return to " + s.from})
+		}
+	}
+	return append(out, shelveStepLabel{stepRestore, "put your work back"})
+}
+
+// leaves reports whether the sequence has to check out away from where the user
+// was standing — and therefore owes them a return. Known before anything runs,
+// so the step list never changes shape mid-sequence.
+func (s shelveState) leaves() bool { return s.mode == modeUpdate && s.branch != s.from }
 
 // shelveOutcome is where the sequence ended up. Every value but shelveRunning is
 // terminal, and every terminal value except shelveLanded is a *handoff*: Drift
@@ -58,10 +111,10 @@ type shelveOutcome int
 const (
 	shelveRunning  shelveOutcome = iota
 	shelveLanded                 // merged and restored, clean
-	shelveCurrent                // the target hadn't moved; nothing was touched
+	shelveCurrent                // nothing had moved; nothing was touched
 	shelveHeld                   // the target changed a path you hold locally
 	shelveReverted               // merge conflict: aborted and restored, no trace left
-	shelveHandoff                // pop conflict: the merge landed, the stash is retained
+	shelveHandoff                // the merge landed, but something still needs a human
 	shelveStopped                // refused by a precondition, or a git call failed
 )
 
@@ -80,20 +133,37 @@ type shelveFile struct {
 type shelveState struct {
 	active bool
 	seq    int // monotonic; a step landing under a stale id is discarded
+	mode   shelveMode
 
 	ticketID  string
 	branch    string
 	targetKey string
 	targetRef string
 
+	// The update sequence's bookkeeping. from is where the user was standing when
+	// they pressed the key, and getting them back there is part of the sequence
+	// rather than a courtesy — every halt path unwinds it too. switched records
+	// whether Drift has actually left yet, so an unwind knows whether it owes a
+	// return or only a pop.
+	from        string
+	upstreamRef string // the branch's own upstream, "" when it tracks nothing
+	pushRemote  string // remote owning that upstream
+	pushBranch  string // the branch's name on that remote, which need not match
+	switched    bool
+
 	step    shelveStep // the step running now, or the one that ended the sequence
 	outcome shelveOutcome
+	skipped map[shelveStep]bool // steps that had nothing to do, drawn as such
+	problem map[shelveStep]bool // steps that did not do their job, drawn as such
 
-	stashOID string
-	files    []shelveFile
-	reason   string // what happened, in the user's terms
-	next     string // the git command that resolves it
-	err      error
+	stashOID    string
+	pushed      git.PushOutcome
+	files       []shelveFile
+	reason      string // what happened, in the user's terms
+	publish     string // what became of the push, when it is not simply "done"
+	publishNext string // the command that publishes it by hand
+	next        string // the git command that resolves the halt
+	err         error
 
 	// ctx is the read-only head of the chain's context and cancel releases it;
 	// cancellable gates whether esc may. Only stepReady and stepPull are
@@ -114,42 +184,69 @@ type shelveMsg struct {
 	seq  int
 	step shelveStep
 	err  error
+	next string // the fix to name when err ends the sequence
 
-	skipped  bool         // stepPull: the target ref belongs to no remote
+	skipped  bool         // this step had nothing to do, and the report says so
+	dirty    bool         // stepReady: whether there is anything to stash
 	behind   int          // stepHolds: recomputed against the freshly pulled ref
-	files    []shelveFile // stepHolds: held collisions · stepMerge/stepRestore: conflicts
+	upBehind int          // stepHolds: how far behind its own upstream the branch is
+	upAhead  int          // stepHolds: and how far ahead — the half `u` publishes
+	files    []shelveFile // stepHolds: held collisions · merges: conflicts
 	stashOID string       // stepStash: "" when the tree was clean and nothing was stashed
-	restored error        // stepMerge: the abort-and-restore's own failure, if any
+	restored error        // the unwind's own failure, if putting the user back went wrong
+	pushed   git.PushOutcome
+	rejected bool // stepPush: the remote branch moved on; a handoff, never a force
+
+	upstreamRef, pushRemote, pushBranch string // stepPull: the branch's own upstream
 }
 
-// beginShelve starts the sequence on the selected branch row.
+// beginShelve starts `s` on the selected branch row: merge the target in, here,
+// and publish nothing.
+func (m Model) beginShelve() (tea.Model, tea.Cmd) {
+	return m.beginSequence(modeShelve)
+}
+
+// beginUpdate starts `u` on the selected branch row: the same merge, carried all
+// the way — the branch's own upstream pulled first, the result pushed, and the
+// user returned to the branch they were standing on.
+func (m Model) beginUpdate() (tea.Model, tea.Cmd) {
+	return m.beginSequence(modeUpdate)
+}
+
+// beginSequence starts whichever verb was pressed.
 //
 // Every precondition that can be answered from the model is answered here, so a
 // refusal is instant and the report screen never opens on a sequence that was
 // never going to run. The ones that need to ask git are stepReady.
-func (m Model) beginShelve() (tea.Model, tea.Cmd) {
+func (m Model) beginSequence(mode shelveMode) (tea.Model, tea.Cmd) {
+	verb := "shelve"
+	if mode == modeUpdate {
+		verb = "update"
+	}
 	if m.shelve.active {
-		m.notice = "a shelve is already running — one at a time"
+		m.notice = "a sequence is already running — one at a time"
 		return m, nil
 	}
 	row, ok := m.selectedRow()
 	if !ok || !row.isBranch() {
-		m.notice = "select a branch row to shelve — s works on a branch, not a ticket"
+		m.notice = "select a branch row — " + verb + " works on a branch, not a ticket"
 		return m, nil
 	}
 	t := m.store.Tickets[row.ticket]
 	br := t.Branches[row.branch]
 
+	// A detached HEAD has nothing to merge into, and for `u` it is also nowhere to
+	// come back to: the return is part of the sequence, so a starting point that
+	// is not a branch is refused rather than approximated.
 	if m.current == "" {
 		m.notice = "detached HEAD — check out " + br.Branch + " first"
 		return m, nil
 	}
-	// Drift never checks anything out, and that is correctness rather than
-	// squeamishness: a stash belongs to the branch it was taken on, so a
-	// cross-branch sequence would have to carry uncommitted work over a branch
-	// boundary to put it back (spec, "Scope").
-	if br.Branch != m.current {
-		m.notice = br.Branch + " isn't checked out — git switch " + br.Branch + " first"
+	// `s` stays exactly as it shipped: the checked-out branch only. That is not a
+	// leftover — it is what keeps the local-only path reachable for the case where
+	// you want to see the merge before it goes anywhere (roadmap area 17).
+	if mode == modeShelve && br.Branch != m.current {
+		m.notice = br.Branch + " isn't checked out — press u to update it, or git switch " + br.Branch
 		return m, nil
 	}
 	target, known := m.cfg.Target(br.TargetKey)
@@ -162,11 +259,15 @@ func (m Model) beginShelve() (tea.Model, tea.Cmd) {
 	m.shelve = shelveState{
 		active:      true,
 		seq:         m.shelve.seq + 1,
+		mode:        mode,
 		ticketID:    t.ID,
 		branch:      br.Branch,
 		targetKey:   target.Key,
 		targetRef:   target.Ref,
+		from:        m.current,
 		step:        stepReady,
+		skipped:     make(map[shelveStep]bool),
+		problem:     make(map[shelveStep]bool),
 		ctx:         ctx,
 		cancel:      cancel,
 		cancellable: true,
@@ -183,15 +284,45 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 	if !m.shelve.active || msg.seq != m.shelve.seq {
 		return m, nil
 	}
+	// A step past the stash rolls the sequence back before it reports, so what
+	// arrives here is already the state after the rollback — unless the rollback
+	// is what failed. That case outranks whatever prompted it: the work is still
+	// stashed and the user may be standing somewhere they did not choose, and
+	// nothing else in the report matters as much as saying so.
+	if msg.restored != nil {
+		reason := "putting you back failed: " + msg.restored.Error()
+		switch {
+		case msg.err != nil:
+			reason = msg.err.Error() + " — and " + reason
+		case len(msg.files) > 0:
+			m.shelve.files = msg.files
+			reason = "the merge conflicted, and " + reason
+		}
+		return m.endShelve(shelveStopped, reason, m.shelve.recoverHint()), nil
+	}
 	if msg.err != nil {
-		return m.endShelve(shelveStopped, msg.err.Error(), ""), nil
+		return m.endShelve(shelveStopped, msg.err.Error(), msg.next), nil
 	}
 
 	ctx := context.Background() // only the read-only head of the chain is cancellable
 	switch msg.step {
 	case stepReady:
+		// The one case 17a does not yet run: leaving a branch with uncommitted work
+		// on it. The machinery underneath handles it — Drift stashes on the branch
+		// it leaves and pops on that same branch when it returns — but being
+		// stashed without having agreed to it is a surprise, and the confirmation
+		// overlay that removes the surprise is roadmap 17b. Until then this is a
+		// refusal, taken while everything is still read-only.
+		if m.shelve.leaves() && msg.dirty {
+			return m.endShelve(shelveStopped,
+				"you have uncommitted work on "+m.shelve.from+", and "+m.shelve.branch+" isn't checked out",
+				"commit or stash it, or git switch "+m.shelve.branch+" and press u there"), nil
+		}
+		// msg.dirty settles the gate above and nothing else: whether there is
+		// anything to *put back* is stepStash's own answer, and marking the steps
+		// from here would be predicting a result git has not given yet.
 		m.shelve.step = stepPull
-		return m, shelvePullCmd(m.shelve.ctx, m.repo, m.shelve.seq, m.shelve.targetRef)
+		return m, shelvePullCmd(m.shelve.ctx, m.repo, m.shelve.seq, m.shelve.mode, m.shelve.branch, m.shelve.targetRef)
 
 	case stepPull:
 		if msg.skipped {
@@ -199,50 +330,98 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 			// beats silently pretending the merge is against fresh data.
 			m.notice = m.shelve.targetRef + " isn't a remote-tracking ref — merging it as it stands"
 		}
+		m.shelve.upstreamRef = msg.upstreamRef
+		m.shelve.pushRemote, m.shelve.pushBranch = msg.pushRemote, msg.pushBranch
 		m.shelve.cancellable = false // everything past here mutates or commits to mutating
 		m.shelve.step = stepHolds
-		return m, shelveHoldsCmd(ctx, m.repo, m.store, m.shelve.seq, m.shelve.branch, m.shelve.targetRef)
+		return m, shelveHoldsCmd(ctx, m.repo, m.store, m.shelve.seq, m.shelve.mode,
+			m.shelve.branch, m.shelve.targetRef, m.shelve.upstreamRef)
 
 	case stepHolds:
-		// Recomputed against the ref we just pulled: a sequence that stashed
+		// Recomputed against the refs we just fetched: a sequence that stashed
 		// first, then discovered there was nothing to merge, would have churned
 		// the working tree to accomplish nothing.
-		if msg.behind == 0 {
-			return m.endShelve(shelveCurrent, "", ""), nil
+		if done, model := m.nothingToDo(msg); done {
+			return model, nil
 		}
 		if len(msg.files) > 0 {
 			m.shelve.files = msg.files
 			return m.endShelve(shelveHeld,
-				"the target changed files you hold on this machine",
-				"release the hold (l) or reconcile by hand, then run s again"), nil
+				"the incoming changes touch files you hold on this machine",
+				"release the hold (l) or reconcile by hand, then run it again"), nil
 		}
 		m.shelve.step = stepStash
 		return m, shelveStashCmd(ctx, m.repo, m.shelve.seq, m.shelve.stashMessage())
 
 	case stepStash:
 		m.shelve.stashOID = msg.stashOID
+		if msg.stashOID == "" {
+			m.shelve.skipped[stepStash] = true
+			m.shelve.skipped[stepRestore] = true
+		}
+		if m.shelve.mode == modeShelve {
+			m.shelve.step = stepMerge
+			return m, shelveMergeCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.targetRef, m.shelve.unwind())
+		}
+		if m.shelve.leaves() {
+			m.shelve.step = stepSwitch
+			return m, shelveSwitchCmd(ctx, m.repo, m.shelve.seq, m.shelve.branch, m.shelve.unwind())
+		}
+		m.shelve.skipped[stepSwitch] = true
+		m.shelve.step = stepUpstream
+		return m, shelveUpstreamCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.upstreamRef, m.shelve.unwind())
+
+	case stepSwitch:
+		// Drift is now standing somewhere the user did not put it, and owes them
+		// the way back on every path from here.
+		m.shelve.switched = true
+		m.shelve.step = stepUpstream
+		return m, shelveUpstreamCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.upstreamRef, m.shelve.unwind())
+
+	case stepUpstream:
+		if msg.skipped {
+			m.shelve.skipped[stepUpstream] = true
+		}
+		if len(msg.files) > 0 {
+			// The branch diverged from itself: its upstream holds commits that
+			// conflict with the ones here. That is a genuine halt — it is not the
+			// target's doing, and no amount of merging the target will settle it.
+			m.shelve.files = msg.files
+			return m.endShelve(shelveReverted,
+				m.shelve.branch+" and its upstream have both moved, and they conflict",
+				"reconcile "+m.shelve.branch+" against "+m.shelve.upstreamRef+" by hand, then run u again"), nil
+		}
 		m.shelve.step = stepMerge
-		return m, shelveMergeCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.targetRef, msg.stashOID)
+		return m, shelveMergeCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.targetRef, m.shelve.unwind())
 
 	case stepMerge:
 		if len(msg.files) > 0 {
+			// Aborted, returned and restored: the sequence either lands whole or
+			// leaves no trace, so the user is byte-for-byte where they started.
 			m.shelve.files = msg.files
-			if msg.restored != nil {
-				return m.endShelve(shelveStopped,
-					"the merge conflicted, and putting your work back failed: "+msg.restored.Error(),
-					"git stash list — your work is still stashed"), nil
-			}
-			// Aborted and restored: the sequence either lands whole or leaves no
-			// trace, so the user is byte-for-byte where they started.
 			return m.endShelve(shelveReverted,
 				"both sides committed to these files, so the merge was rolled back",
-				"reconcile by hand, then run s again"), nil
+				"reconcile by hand, then run it again"), nil
 		}
-		if m.shelve.stashOID == "" {
-			return m.endShelve(shelveLanded, "", ""), nil // clean tree: nothing to put back
+		if m.shelve.mode == modeShelve {
+			return m.afterMutations(ctx)
 		}
-		m.shelve.step = stepRestore
-		return m, shelveRestoreCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.stashOID)
+		m.shelve.step = stepPush
+		return m, shelvePushCmd(ctx, m.repo, m.shelve.seq,
+			m.shelve.pushRemote, m.shelve.branch, m.shelve.pushBranch, m.shelve.unwind())
+
+	case stepPush:
+		m = m.applyPush(msg)
+		if m.shelve.leaves() {
+			m.shelve.step = stepReturn
+			return m, shelveReturnCmd(ctx, m.repo, m.shelve.seq, m.shelve.from)
+		}
+		m.shelve.skipped[stepReturn] = true
+		return m.afterMutations(ctx)
+
+	case stepReturn:
+		m.shelve.switched = false // back where the user left us; nothing further is owed
+		return m.afterMutations(ctx)
 
 	case stepRestore:
 		if len(msg.files) > 0 {
@@ -252,18 +431,96 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 			// would undo the one thing that went right.
 			m.shelve.files = msg.files
 			return m.endShelve(shelveHandoff,
-				"the target's version and your uncommitted work both changed these files",
+				"the merged content and your uncommitted work both changed these files",
 				"reconcile by hand — your work is still in the stash until you drop it"), nil
 		}
-		return m.endShelve(shelveLanded, "", ""), nil
+		return m.finish(), nil
 	}
 	return m, nil
 }
 
-// endShelve closes the sequence out, leaving the report on screen. A landed
-// sequence re-sweeps, so the dashboard behind it shows the new reality rather
-// than the numbers that prompted the shelve.
+// nothingToDo ends the sequence when the freshly-fetched refs say there is
+// nothing for it to do, before anything is stashed. What counts as nothing
+// differs by verb, and that difference *is* the difference between them: `s` is
+// done when the target has not moved, while `u` also owes the branch's own
+// upstream a pull and the remote a push.
+func (m Model) nothingToDo(msg shelveMsg) (bool, Model) {
+	s := m.shelve
+	if s.mode == modeShelve {
+		if msg.behind == 0 {
+			return true, m.endShelve(shelveCurrent, "", "")
+		}
+		return false, m
+	}
+	if msg.behind > 0 || msg.upBehind > 0 || msg.upAhead > 0 {
+		return false, m
+	}
+	// Nothing to merge and nothing ahead. If the branch has no upstream at all,
+	// that is not "up to date" — it is unpublished, and saying so is the whole
+	// point of a verb whose job is to publish.
+	if s.upstreamRef == "" {
+		return true, m.endShelve(shelveStopped,
+			s.branch+" has no upstream, so there is nothing to pull into it and nowhere to publish it",
+			"git push -u <remote> "+s.branch)
+	}
+	return true, m.endShelve(shelveCurrent, "", "")
+}
+
+// applyPush records what became of the publish. Neither problem it can report is
+// fatal to the sequence: the branch is updated and merged locally either way, and
+// only the publish did not happen — so the sequence still returns the user home
+// and still pops, and the report is what says the branch stayed on this machine.
+func (m Model) applyPush(msg shelveMsg) Model {
+	switch {
+	case msg.skipped:
+		m.shelve.problem[stepPush] = true
+		m.shelve.publish = m.shelve.branch + " has no upstream, so nothing was published"
+		m.shelve.publishNext = "git push -u <remote> " + m.shelve.branch
+	case msg.rejected:
+		m.shelve.problem[stepPush] = true
+		// Someone else's commit is in the way — exactly the class of thing Drift
+		// stops and hands back rather than resolving. Never a force.
+		m.shelve.publish = "the push was rejected: " + m.shelve.pushRemote + "/" +
+			m.shelve.pushBranch + " moved on while this ran"
+		m.shelve.publishNext = "git pull --rebase=false " + m.shelve.pushRemote + " " +
+			m.shelve.pushBranch + ", then push"
+	default:
+		m.shelve.pushed = msg.pushed
+	}
+	return m
+}
+
+// afterMutations runs the tail every successful path shares: put the work back
+// if there is any, otherwise finish here.
+func (m Model) afterMutations(ctx context.Context) (tea.Model, tea.Cmd) {
+	if m.shelve.stashOID == "" {
+		return m.finish(), nil // clean tree: nothing to put back
+	}
+	m.shelve.step = stepRestore
+	return m, shelveRestoreCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.stashOID)
+}
+
+// finish closes a sequence that reached the end. It landed unless the publish
+// half did not happen — a branch merged locally and left on this machine is not
+// the thing `u` promises, so it reports as a handoff rather than a tick.
+func (m Model) finish() Model {
+	if m.shelve.publish != "" {
+		return m.endShelve(shelveHandoff, "", m.shelve.publishNext)
+	}
+	return m.endShelve(shelveLanded, "", "")
+}
+
+// endShelve closes the sequence out, leaving the report on screen.
+//
+// A halt is flagged on the step it happened at, so the list points at the thing
+// that went wrong wherever it sits rather than assuming the last step reached is
+// it. A sequence that ran all the way to the end with only the publish
+// outstanding is exactly that case: applyPush already flagged the push, and
+// every step after it did its job and is entitled to say so.
 func (m Model) endShelve(outcome shelveOutcome, reason, next string) Model {
+	if reason != "" && outcome != shelveLanded && outcome != shelveCurrent {
+		m.shelve.problem[m.shelve.step] = true
+	}
 	if m.shelve.cancel != nil {
 		m.shelve.cancel()
 		m.shelve.cancel = nil
@@ -276,10 +533,35 @@ func (m Model) endShelve(outcome shelveOutcome, reason, next string) Model {
 	return m
 }
 
+// unwind is what this sequence owes the user if it stops here: the branch to
+// return to, and the stash to put back. Derived from the live state rather than
+// carried along, so it can never describe a rollback the sequence has outgrown.
+func (s shelveState) unwind() unwindPlan {
+	p := unwindPlan{stashOID: s.stashOID}
+	if s.switched {
+		p.back = s.from
+	}
+	return p
+}
+
+// recoverHint names the commands that finish an unwind Drift could not, so the
+// one path where the user is left somewhere they did not ask to be still hands
+// them the way back rather than a stack trace.
+func (s shelveState) recoverHint() string {
+	if s.switched {
+		return "git switch " + s.from + ", then git stash pop — your work is still stashed"
+	}
+	return "git stash list — your work is still stashed"
+}
+
 // stashMessage identifies Drift's stash in `git stash list`, so a user who lands
 // on a handoff can find their work by eye rather than by counting entries.
 func (s shelveState) stashMessage() string {
-	return fmt.Sprintf("drift: shelve %s ← %s", s.branch, s.targetKey)
+	verb := "shelve"
+	if s.mode == modeUpdate {
+		verb = "update"
+	}
+	return fmt.Sprintf("drift: %s %s ← %s", verb, s.branch, s.targetKey)
 }
 
 // dispatchShelve handles the report screen. Cancel is the only verb: while the
@@ -294,7 +576,7 @@ func (m Model) dispatchShelve(action Action) (tea.Model, tea.Cmd) {
 		m.shelve.seq++ // any in-flight step's result is now stale and will be dropped
 		m = m.endShelve(shelveStopped, "canceled", "")
 		m.screen = screenDashboard
-		m.notice = "shelve canceled — nothing was touched"
+		m.notice = "canceled — nothing was touched"
 		return m, nil
 	case m.shelve.active:
 		m.notice = "the sequence is mid-flight — it stops on its own"
@@ -302,7 +584,9 @@ func (m Model) dispatchShelve(action Action) (tea.Model, tea.Cmd) {
 	}
 	m.screen = screenDashboard
 	m.notice = ""
-	if m.shelve.outcome == shelveLanded {
+	// Re-sweep whenever history moved, so the dashboard behind the report shows
+	// the new reality rather than the numbers that prompted the sequence.
+	if m.shelve.outcome == shelveLanded || m.shelve.outcome == shelveHandoff {
 		return m.startSweep(false)
 	}
 	return m, nil
@@ -310,10 +594,56 @@ func (m Model) dispatchShelve(action Action) (tea.Model, tea.Cmd) {
 
 // --- commands -------------------------------------------------------------
 
+// unwindPlan is what a halted sequence owes the user: the branch to go back to
+// ("" when it never left) and the stash to put back ("" when the tree was
+// clean). A merge in flight is rolled back first, and unwind finds that out by
+// asking rather than being told.
+type unwindPlan struct {
+	back     string
+	stashOID string
+}
+
+// unwind puts the user back where they started, in the one order that works:
+// roll back the merge, return to the branch they were on, then pop. It is what
+// makes "every halt path unwinds too" true rather than aspirational.
+//
+// The merge is aborted only if one is actually in flight, and any operation
+// found there is necessarily Drift's own — stepReady refused to start on top of
+// somebody else's. That probe is what lets every post-stash halt share one
+// rollback, including the ones where the merge failed without conflicting and so
+// left nothing to abort.
+//
+// It stops at the first failure and reports it, never stacking the next step on
+// top: a rollback that is already not going to plan is exactly when carrying on
+// turns one problem into two.
+func unwind(ctx context.Context, repo *git.Repo, p unwindPlan) error {
+	op, err := repo.OperationInProgress(ctx)
+	if err != nil {
+		return err
+	}
+	if op != "" {
+		if err := repo.MergeAbort(ctx); err != nil {
+			return err
+		}
+	}
+	if p.back != "" {
+		if err := repo.Checkout(ctx, p.back); err != nil {
+			return err
+		}
+	}
+	if p.stashOID != "" {
+		if _, err := repo.StashPop(ctx, p.stashOID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // shelveReadyCmd is the half of the preconditions that has to ask git: whether
-// the repo is already in the middle of something. Drift will not stack a
-// sequence on top of a merge or a rebase — the repo is not in the state the
-// sequence assumes, and stacking on it turns one problem into two.
+// the repo is already in the middle of something, and whether there is anything
+// to stash. Drift will not stack a sequence on top of a merge or a rebase — the
+// repo is not in the state the sequence assumes, and stacking on it turns one
+// problem into two.
 func shelveReadyCmd(ctx context.Context, repo *git.Repo, seq int) tea.Cmd {
 	return func() tea.Msg {
 		op, err := repo.OperationInProgress(ctx)
@@ -324,72 +654,136 @@ func shelveReadyCmd(ctx context.Context, repo *git.Repo, seq int) tea.Cmd {
 			return shelveMsg{seq: seq, step: stepReady,
 				err: errors.New(op + " is already in progress — finish or abort it first")}
 		}
-		return shelveMsg{seq: seq, step: stepReady}
+		dirty, err := repo.IsDirty(ctx)
+		return shelveMsg{seq: seq, step: stepReady, dirty: dirty, err: err}
 	}
 }
 
-// shelvePullCmd updates the one target ref being merged. Drift never checks a
-// target out, so "pull the target" is: fetch its remote-tracking ref, then merge
-// that — the two halves of `git pull`, against a ref it never has to visit.
-func shelvePullCmd(ctx context.Context, repo *git.Repo, seq int, targetRef string) tea.Cmd {
+// shelvePullCmd updates the refs the sequence is about to merge. Drift never
+// checks a target out, so "pull the target" is: fetch its remote-tracking ref,
+// then merge that — the two halves of `git pull`, against a ref it never has to
+// visit. `u` adds the branch's own upstream, on the same split.
+//
+// Both fetches happen here, above the stash, which is what keeps the whole
+// read-only prefix intact: fetching is how the numbers the next step refuses on
+// become true, and none of it touches the working tree.
+func shelvePullCmd(ctx context.Context, repo *git.Repo, seq int, mode shelveMode, branch, targetRef string) tea.Cmd {
 	return func() tea.Msg {
-		remote, branch, ok, err := repo.RemoteRef(ctx, targetRef)
+		msg := shelveMsg{seq: seq, step: stepPull}
+		remote, rb, ok, err := repo.RemoteRef(ctx, targetRef)
 		if err != nil {
 			return shelveMsg{seq: seq, step: stepPull, err: err}
 		}
 		if !ok {
-			return shelveMsg{seq: seq, step: stepPull, skipped: true}
+			msg.skipped = true // not remote-tracking: merged as it stands, and said so
+		} else if err := repo.FetchRef(ctx, remote, rb); err != nil {
+			return shelveMsg{seq: seq, step: stepPull, err: err}
 		}
-		return shelveMsg{seq: seq, step: stepPull, err: repo.FetchRef(ctx, remote, branch)}
+		if mode != modeUpdate {
+			return msg
+		}
+
+		// A branch with no upstream is not an error here: it means there is nothing
+		// to pull into it, and stepPush is where that becomes a report.
+		msg.upstreamRef, err = repo.Upstream(ctx, branch)
+		if err != nil || msg.upstreamRef == "" {
+			msg.err = err
+			return msg
+		}
+		ur, ub, ok, err := repo.RemoteRef(ctx, msg.upstreamRef)
+		if err != nil {
+			return shelveMsg{seq: seq, step: stepPull, err: err}
+		}
+		if !ok {
+			return msg
+		}
+		msg.pushRemote, msg.pushBranch = ur, ub
+		if err := repo.FetchRef(ctx, ur, ub); err != nil {
+			return shelveMsg{seq: seq, step: stepPull, err: err}
+		}
+		return msg
 	}
 }
 
-// shelveHoldsCmd is the last read-only step: recompute how far behind the branch
-// is against the ref just pulled, then check the one hazard no mechanism can
-// avoid — the target changed a file you hold on this machine.
+// shelveHoldsCmd is the last read-only step: recompute how far the branch has
+// drifted from the refs just fetched, then check the one hazard no mechanism can
+// avoid — an incoming change to a file you hold on this machine.
 //
 // Drift does not rely on git's behavior for that case (it varies by version —
 // abort vs. clobber), it checks first, and it checks *before* the stash so a halt
-// leaves nothing to undo (docs/specs/local-only-changes.md).
-func shelveHoldsCmd(ctx context.Context, repo *git.Repo, st store.Store, seq int, branch, targetRef string) tea.Cmd {
+// leaves nothing to undo (docs/specs/local-only-changes.md). Both merges `u`
+// performs are checked, not just the target's: the branch's own upstream can
+// carry a change to a held file exactly as readily.
+func shelveHoldsCmd(ctx context.Context, repo *git.Repo, st store.Store, seq int, mode shelveMode, branch, targetRef, upstreamRef string) tea.Cmd {
 	return func() tea.Msg {
+		msg := shelveMsg{seq: seq, step: stepHolds}
 		ab, err := repo.AheadBehind(ctx, branch, targetRef)
 		if err != nil {
 			return shelveMsg{seq: seq, step: stepHolds, err: err}
 		}
-		if ab.Behind == 0 {
-			return shelveMsg{seq: seq, step: stepHolds}
-		}
+		msg.behind = ab.Behind
 
-		incoming, err := repo.ChangedFiles(ctx, branch, targetRef)
-		if err != nil {
-			return shelveMsg{seq: seq, step: stepHolds, err: err}
+		var incomingFrom []string
+		if ab.Behind > 0 {
+			incomingFrom = append(incomingFrom, targetRef)
 		}
-		// Git's own flags are the source of truth for what is held, exactly as on
-		// the local-only screen: the skip-worktree bit for tracked paths, Drift's
-		// fenced block in info/exclude for untracked ones. Read fresh, never
-		// assumed from the store, which holds only the notes.
-		skipped, err := repo.SkipWorktreeFiles(ctx)
-		if err != nil {
-			return shelveMsg{seq: seq, step: stepHolds, err: err}
-		}
-		excluded, err := repo.ExcludedPaths(ctx)
-		if err != nil {
-			return shelveMsg{seq: seq, step: stepHolds, err: err}
-		}
-		held := toSet(skipped)
-		for _, p := range excluded {
-			held[p] = true
-		}
-
-		var files []shelveFile // incoming order, so the report is deterministic
-		for _, p := range incoming {
-			if held[p] {
-				files = append(files, shelveFile{path: p, note: st.LocalOnlyNote(p)})
+		if mode == modeUpdate && upstreamRef != "" {
+			up, err := repo.AheadBehind(ctx, branch, upstreamRef)
+			if err != nil {
+				return shelveMsg{seq: seq, step: stepHolds, err: err}
+			}
+			msg.upBehind, msg.upAhead = up.Behind, up.Ahead
+			if up.Behind > 0 {
+				incomingFrom = append(incomingFrom, upstreamRef)
 			}
 		}
-		return shelveMsg{seq: seq, step: stepHolds, behind: ab.Behind, files: files}
+		if len(incomingFrom) == 0 {
+			return msg
+		}
+
+		held, err := heldSet(ctx, repo)
+		if err != nil {
+			return shelveMsg{seq: seq, step: stepHolds, err: err}
+		}
+		if len(held) == 0 {
+			return msg
+		}
+
+		seen := make(map[string]bool)
+		for _, ref := range incomingFrom {
+			incoming, err := repo.ChangedFiles(ctx, branch, ref)
+			if err != nil {
+				return shelveMsg{seq: seq, step: stepHolds, err: err}
+			}
+			for _, p := range incoming { // incoming order, so the report is deterministic
+				if held[p] && !seen[p] {
+					seen[p] = true
+					msg.files = append(msg.files, shelveFile{path: p, note: st.LocalOnlyNote(p)})
+				}
+			}
+		}
+		return msg
 	}
+}
+
+// heldSet is what this machine keeps back from commits. Git's own flags are the
+// source of truth, exactly as on the local-only screen: the skip-worktree bit
+// for tracked paths, Drift's fenced block in info/exclude for untracked ones.
+// Read fresh, never assumed from the store, which holds only the notes.
+func heldSet(ctx context.Context, repo *git.Repo) (map[string]bool, error) {
+	skipped, err := repo.SkipWorktreeFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	excluded, err := repo.ExcludedPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	held := toSet(skipped)
+	for _, p := range excluded {
+		held[p] = true
+	}
+	return held, nil
 }
 
 // shelveStashCmd takes the stash. Plain push, never -u or -a: untracked and
@@ -404,47 +798,103 @@ func shelveStashCmd(ctx context.Context, repo *git.Repo, seq int, message string
 	}
 }
 
-// shelveMergeCmd merges the target and, on a conflict, undoes the whole thing:
-// abort the merge, put the stash back, report what collided. The recovery lives
-// inside this one Cmd on purpose — it is a single atomic "never mind", not two
-// steps a user could be shown standing between.
-//
-// So the mutating half of the sequence either lands whole or leaves no trace.
-// The one thing Drift will not do is stack a pop on a failed abort: a failed
-// abort means the repo is not in the state Drift thought it was.
-func shelveMergeCmd(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, targetRef, stashOID string) tea.Cmd {
+// shelveSwitchCmd checks the branch out — the step ADR 0002 exists for. A
+// refusal here is git protecting something the stash could not see (a
+// skip-worktree file that differs between the branches), so the sequence rolls
+// back rather than forcing past it.
+func shelveSwitchCmd(ctx context.Context, repo *git.Repo, seq int, branch string, plan unwindPlan) tea.Cmd {
 	return func() tea.Msg {
-		conflicts, err := repo.Merge(ctx, targetRef)
-		if err != nil {
-			return shelveMsg{seq: seq, step: stepMerge, err: err}
+		if err := repo.Checkout(ctx, branch); err != nil {
+			return shelveMsg{seq: seq, step: stepSwitch, err: err, restored: unwind(ctx, repo, plan)}
 		}
-		if len(conflicts) == 0 {
-			return shelveMsg{seq: seq, step: stepMerge}
-		}
-
-		msg := shelveMsg{seq: seq, step: stepMerge, files: classify(ctx, repo, cfg, conflicts)}
-		if abortErr := repo.MergeAbort(ctx); abortErr != nil {
-			msg.restored = abortErr
-			return msg
-		}
-		if stashOID != "" {
-			if _, popErr := repo.StashPop(ctx, stashOID); popErr != nil {
-				msg.restored = popErr
-			}
-		}
-		return msg
+		return shelveMsg{seq: seq, step: stepSwitch}
 	}
 }
 
-// shelveRestoreCmd puts the stashed work back over the merged target. A conflict
-// here is the destination, not a failure: git retains the stash entry when a pop
-// conflicts, so the work is still safe and the user is standing exactly where the
-// hand reconciliation happens.
+// shelveUpstreamCmd pulls the branch's own upstream — the half that keeps `u`
+// honest on a second machine, where merging the target into a stale branch
+// produces something that cannot be pushed. Normally a fast-forward; a conflict
+// means the branch diverged from itself, which is a halt in its own right.
+func shelveUpstreamCmd(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, upstreamRef string, plan unwindPlan) tea.Cmd {
+	return func() tea.Msg {
+		if upstreamRef == "" {
+			return shelveMsg{seq: seq, step: stepUpstream, skipped: true}
+		}
+		return mergeStep(ctx, repo, cfg, seq, stepUpstream, upstreamRef, plan)
+	}
+}
+
+// shelveMergeCmd merges the target and, on a conflict, undoes the whole thing:
+// abort the merge, go back, put the stash back, report what collided. The
+// recovery lives inside this one Cmd on purpose — it is a single atomic "never
+// mind", not two steps a user could be shown standing between.
+func shelveMergeCmd(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, targetRef string, plan unwindPlan) tea.Cmd {
+	return func() tea.Msg {
+		return mergeStep(ctx, repo, cfg, seq, stepMerge, targetRef, plan)
+	}
+}
+
+// mergeStep is the shape both merges share: merge, and on anything other than
+// success roll the whole sequence back before reporting. So the mutating half
+// either lands whole or leaves no trace.
+func mergeStep(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, step shelveStep, ref string, plan unwindPlan) tea.Msg {
+	conflicts, err := repo.Merge(ctx, ref)
+	if err != nil {
+		return shelveMsg{seq: seq, step: step, err: err, restored: unwind(ctx, repo, plan)}
+	}
+	if len(conflicts) == 0 {
+		return shelveMsg{seq: seq, step: step}
+	}
+	return shelveMsg{seq: seq, step: step,
+		files:    classify(ctx, repo, cfg, conflicts),
+		restored: unwind(ctx, repo, plan),
+	}
+}
+
+// shelvePushCmd publishes the branch — the step that makes "this branch is up to
+// date" a claim about the remote and not just about this machine.
+//
+// A rejection is not an error and never a force: it means the branch moved on
+// the remote after the pull read it, which is someone else's commit. The
+// sequence carries on to put the user back, and the report says the publish is
+// the one thing that did not happen.
+func shelvePushCmd(ctx context.Context, repo *git.Repo, seq int, remote, local, remoteBranch string, plan unwindPlan) tea.Cmd {
+	return func() tea.Msg {
+		if remote == "" {
+			return shelveMsg{seq: seq, step: stepPush, skipped: true}
+		}
+		outcome, err := repo.Push(ctx, remote, local, remoteBranch)
+		if err != nil {
+			return shelveMsg{seq: seq, step: stepPush, err: err, restored: unwind(ctx, repo, plan)}
+		}
+		return shelveMsg{seq: seq, step: stepPush, pushed: outcome, rejected: outcome == git.PushRejected}
+	}
+}
+
+// shelveReturnCmd puts the user back on the branch they were standing on. It
+// deliberately does not pop on failure: a stash belongs to the branch it was
+// taken on, and popping it here — wherever "here" turned out to be — is the one
+// thing this whole arrangement exists to prevent.
+func shelveReturnCmd(ctx context.Context, repo *git.Repo, seq int, back string) tea.Cmd {
+	return func() tea.Msg {
+		if err := repo.Checkout(ctx, back); err != nil {
+			return shelveMsg{seq: seq, step: stepReturn, err: err,
+				next: "git switch " + back + ", then git stash pop"}
+		}
+		return shelveMsg{seq: seq, step: stepReturn}
+	}
+}
+
+// shelveRestoreCmd puts the stashed work back, on the branch it was taken from.
+// A conflict here is the destination, not a failure: git retains the stash entry
+// when a pop conflicts, so the work is still safe and the user is standing
+// exactly where the hand reconciliation happens.
 func shelveRestoreCmd(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, stashOID string) tea.Cmd {
 	return func() tea.Msg {
 		conflicts, err := repo.StashPop(ctx, stashOID)
 		if err != nil {
-			return shelveMsg{seq: seq, step: stepRestore, err: err}
+			return shelveMsg{seq: seq, step: stepRestore, err: err,
+				next: "git stash list — your work is still stashed"}
 		}
 		return shelveMsg{seq: seq, step: stepRestore, files: classify(ctx, repo, cfg, conflicts)}
 	}
@@ -472,12 +922,21 @@ func classify(ctx context.Context, repo *git.Repo, cfg store.Config, paths []str
 // user has to act on is not a notice line.
 func (m Model) shelveView() string {
 	s := m.shelve
+	title := "Shelve " + s.targetKey + " onto " + s.branch
+	sub := s.targetRef + " → " + s.branch + "   (" + s.ticketID + ")"
+	if s.mode == modeUpdate {
+		title = "Update " + s.branch + " from " + s.targetKey
+		if s.leaves() {
+			sub += "   · started on " + s.from
+		}
+	}
+
 	lines := []string{
-		m.styles.hint.Render(fmt.Sprintf("Shelve %s onto %s", s.targetKey, s.branch)),
-		m.styles.help.Render("  " + s.targetRef + " → " + s.branch + "   (" + s.ticketID + ")"),
+		m.styles.hint.Render(title),
+		m.styles.help.Render("  " + sub),
 		"",
 	}
-	for _, step := range shelveSteps {
+	for _, step := range s.steps() {
 		lines = append(lines, m.shelveStepRow(step.step, step.what))
 	}
 	if body := m.shelveOutcomeBody(); body != "" {
@@ -489,21 +948,34 @@ func (m Model) shelveView() string {
 // shelveStepRow draws one step with its state. The steps before the stash are
 // read-only, so a sequence that stops in that half has visibly touched nothing —
 // which is the reassurance the ordering was designed to give.
+//
+// Three states a step can be in that its *position* does not reveal, and each is
+// a claim the list would otherwise get wrong. A step with nothing to do says so
+// rather than sitting unticked forever, since "pending" and "not needed" are the
+// two things a stopped sequence must never conflate. A step that did not do its
+// job is flagged where it sits, because the sequence may well have carried on
+// past it — a rejected push is the case, and ticking it would be the report
+// contradicting its own headline. And everything else that was reached did work,
+// including the last one, so it gets its tick even when the run as a whole is a
+// handoff.
 func (m Model) shelveStepRow(step shelveStep, what string) string {
 	s := m.shelve
+	done := "  " + m.styles.sync.Render("✓") + "  " + m.styles.help.Render(what)
 	switch {
+	case s.skipped[step]:
+		return "  " + m.styles.help.Render("–  "+what+" (not needed)")
+	case s.problem[step] && s.outcome == shelveStopped:
+		return "  " + m.styles.errText.Render("✗") + "  " + what
+	case s.problem[step]:
+		return "  " + m.styles.unmerge.Render("■") + "  " + what
 	case step < s.step:
-		return "  " + m.styles.sync.Render("✓") + "  " + m.styles.help.Render(what)
+		return done
 	case step > s.step:
 		return "  " + m.styles.help.Render("·  "+what)
 	case s.active:
 		return "  " + m.spin.View() + " " + what
-	case s.outcome == shelveLanded || s.outcome == shelveCurrent:
-		return "  " + m.styles.sync.Render("✓") + "  " + m.styles.help.Render(what)
-	case s.outcome == shelveStopped:
-		return "  " + m.styles.errText.Render("✗") + "  " + what
 	default:
-		return "  " + m.styles.unmerge.Render("■") + "  " + what
+		return done
 	}
 }
 
@@ -516,25 +988,15 @@ func (m Model) shelveOutcomeBody() string {
 		return ""
 	}
 
-	var head string
-	switch s.outcome {
-	case shelveLanded:
-		head = m.styles.sync.Render("✓ " + s.targetKey + " merged in, your work is back")
-	case shelveCurrent:
-		head = m.styles.sync.Render("✓ already current — " + s.targetKey + " hasn't moved. Nothing was touched")
-	case shelveHeld:
-		head = m.styles.unmerge.Render("■ stopped before touching anything")
-	case shelveReverted:
-		head = m.styles.unmerge.Render("■ rolled back — you are exactly where you started")
-	case shelveHandoff:
-		head = m.styles.unmerge.Render("■ merged, but your work needs reconciling by hand")
-	case shelveStopped:
-		head = m.styles.errText.Render("✗ stopped")
-	}
-
-	lines := []string{head}
+	lines := []string{m.shelveHead()}
 	if s.reason != "" {
 		lines = append(lines, m.styles.help.Render("  "+s.reason))
+	}
+	// The publish note rides alongside whatever else happened rather than
+	// replacing it: a pop conflict is still the reconciliation point even when the
+	// branch also failed to reach the remote, and the user needs both facts.
+	if s.publish != "" && s.reason != "" {
+		lines = append(lines, m.styles.help.Render("  "+s.publish))
 	}
 	for _, f := range s.files {
 		lines = append(lines, "  "+m.shelveFileRow(f))
@@ -543,6 +1005,42 @@ func (m Model) shelveOutcomeBody() string {
 		lines = append(lines, "", m.styles.hint.Render("  next: "+s.next))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// shelveHead is the outcome's one-line headline, which is where the two verbs
+// read differently: `s` reports a merge, `u` reports a branch that is up to date
+// and published — or, when the push is the part that did not happen, one that is
+// not.
+func (m Model) shelveHead() string {
+	s := m.shelve
+	switch s.outcome {
+	case shelveLanded:
+		switch {
+		case s.mode == modeShelve:
+			return m.styles.sync.Render("✓ " + s.targetKey + " merged in, your work is back")
+		case s.pushed == git.PushUpToDate:
+			return m.styles.sync.Render("✓ " + s.branch + " is up to date — there was nothing new to publish")
+		default:
+			return m.styles.sync.Render("✓ " + s.branch + " is up to date and published")
+		}
+	case shelveCurrent:
+		if s.mode == modeUpdate {
+			return m.styles.sync.Render("✓ already up to date, here and on the remote. Nothing was touched")
+		}
+		return m.styles.sync.Render("✓ already current — " + s.targetKey + " hasn't moved. Nothing was touched")
+	case shelveHeld:
+		return m.styles.unmerge.Render("■ stopped before touching anything")
+	case shelveReverted:
+		return m.styles.unmerge.Render("■ rolled back — you are exactly where you started")
+	case shelveHandoff:
+		if s.reason == "" && s.publish != "" {
+			return m.styles.unmerge.Render("■ merged locally, but " + s.publish)
+		}
+		return m.styles.unmerge.Render("■ merged, but your work needs reconciling by hand")
+	case shelveStopped:
+		return m.styles.errText.Render("✗ stopped")
+	}
+	return ""
 }
 
 // shelveFileRow draws one reported path. The unmergeable flag leads, because it

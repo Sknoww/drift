@@ -343,7 +343,7 @@ func TestShelveViewShowsEveryStep(t *testing.T) {
 	m.width = 100
 	view := m.shelveView()
 
-	for _, s := range shelveSteps {
+	for _, s := range m.shelve.steps() {
 		if !strings.Contains(view, s.what) {
 			t.Errorf("view is missing the %q step", s.what)
 		}
@@ -385,10 +385,24 @@ var _ tea.Model = Model{}
 // proves over messages git actually produced.
 func runChain(t *testing.T, m Model) Model {
 	t.Helper()
-	next, cmd := m.beginShelve()
+	return runChainAs(t, m, modeShelve)
+}
+
+// runChainAs is runChain for either verb, so the update sequence gets the same
+// treatment: driven end to end against a real repo, not just over synthetic
+// messages.
+func runChainAs(t *testing.T, m Model, mode shelveMode) Model {
+	t.Helper()
+	var next tea.Model
+	var cmd tea.Cmd
+	if mode == modeUpdate {
+		next, cmd = m.beginUpdate()
+	} else {
+		next, cmd = m.beginShelve()
+	}
 	m = next.(Model)
 	for i := 0; m.shelve.active && cmd != nil; i++ {
-		if i > len(shelveSteps) {
+		if i > len(m.shelve.steps()) {
 			t.Fatal("the sequence did not terminate")
 		}
 		sm, ok := shelveResult(cmd)
@@ -606,6 +620,369 @@ func TestShelveEndToEndHandsOffAPopConflict(t *testing.T) {
 	}
 	if !strings.Contains(m.shelve.next, "stash") {
 		t.Errorf("next = %q, want it to tell the user the work is still stashed", m.shelve.next)
+	}
+}
+
+// --- area 17a: the update sequence ----------------------------------------
+
+// updateModel puts the cursor on ABC-1's branch row while a *different* branch
+// is checked out — the shape `s` refuses and `u` exists for.
+func updateModel() Model {
+	m := shelveModel()
+	m.current = "somewhere-else"
+	return m
+}
+
+func beginUpdateOn(m Model) Model {
+	next, _ := m.beginUpdate()
+	return next.(Model)
+}
+
+func TestUpdateRunsOnABranchThatIsNotCheckedOut(t *testing.T) {
+	// The finding that raised the area: going down the list pressing `s` refuses
+	// on every row but the one you happen to be standing on, so the "one keypress
+	// per branch" payoff only ever arrives for one branch.
+	m := beginUpdateOn(updateModel())
+
+	if !m.shelve.active {
+		t.Fatalf("u refused a branch that is not checked out: %q", m.notice)
+	}
+	if !m.shelve.leaves() {
+		t.Error("the sequence does not know it has to leave, so it owes no return")
+	}
+	if m.shelve.from != "somewhere-else" {
+		t.Errorf("from = %q, want the branch the user was standing on", m.shelve.from)
+	}
+}
+
+func TestShelveStillRefusesAnotherBranchAndPointsAtUpdate(t *testing.T) {
+	// `s` keeps its scope exactly as it shipped — a verb that has shipped is a
+	// verb someone has — but the refusal now names the verb that does the job.
+	next, _ := updateModel().beginShelve()
+	m := next.(Model)
+
+	if m.shelve.active {
+		t.Fatal("s ran on a branch that is not checked out")
+	}
+	if !strings.Contains(m.notice, "press u") {
+		t.Errorf("notice = %q, want it to point at the verb that handles this", m.notice)
+	}
+}
+
+func TestUpdateRefusesToLeaveABranchWithUncommittedWork(t *testing.T) {
+	// 17a's one deliberate gap. The machinery underneath handles it, but being
+	// stashed on a branch you are leaving is a surprise, and the confirmation
+	// overlay that removes it is 17b. The refusal is taken at stepReady, while
+	// everything is still read-only, so there is nothing to undo.
+	m := beginUpdateOn(updateModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	if m.shelve.outcome != shelveStopped {
+		t.Fatalf("outcome = %v, want shelveStopped", m.shelve.outcome)
+	}
+	if m.shelve.step != stepReady {
+		t.Errorf("stopped at %v, want stepReady — nothing may have been touched", m.shelve.step)
+	}
+	if !strings.Contains(m.shelve.next, "git switch") {
+		t.Errorf("next = %q, want the way to run it anyway named", m.shelve.next)
+	}
+}
+
+func TestUpdateOnTheCheckedOutBranchNeitherSwitchesNorReturns(t *testing.T) {
+	// Same branch, dirty, is exactly today's shelve — no boundary is crossed. It
+	// gains the upstream pull and the push and nothing else, which is why it needs
+	// no new argument and no new prompt.
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+
+	if m.shelve.leaves() {
+		t.Fatal("the sequence thinks it has to leave a branch it is already on")
+	}
+	var what []string
+	for _, s := range m.shelve.steps() {
+		what = append(what, s.what)
+	}
+	joined := strings.Join(what, " · ")
+	if strings.Contains(joined, "check out") || strings.Contains(joined, "return to") {
+		t.Errorf("steps = %q, want no switch and no return when there is no boundary to cross", joined)
+	}
+	if !strings.Contains(joined, "publish") {
+		t.Errorf("steps = %q, want the publish — it is what u adds over s", joined)
+	}
+}
+
+func TestUpdateIsOnlyDoneWhenTheRemoteAgreesToo(t *testing.T) {
+	// Half of "this branch is up to date" is a claim about the remote. A branch
+	// level with its target but ahead of its own upstream still has work to do.
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "origin/abc-1-perf", pushRemote: "origin", pushBranch: "abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 0, upBehind: 0, upAhead: 2})
+
+	if m.shelve.outcome == shelveCurrent {
+		t.Fatal("called an unpushed branch up to date — the push is the half that hadn't happened")
+	}
+	if m.shelve.step != stepStash {
+		t.Errorf("step = %v, want the sequence to carry on to the push", m.shelve.step)
+	}
+}
+
+func TestUpdateStopsWhenThereIsNothingLeftAnywhere(t *testing.T) {
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "origin/abc-1-perf", pushRemote: "origin", pushBranch: "abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 0, upBehind: 0, upAhead: 0})
+
+	if m.shelve.outcome != shelveCurrent {
+		t.Fatalf("outcome = %v, want shelveCurrent", m.shelve.outcome)
+	}
+}
+
+func TestUpdateNamesTheMissingUpstreamRatherThanClaimingSuccess(t *testing.T) {
+	// A branch that has never been published has nothing to pull and nowhere to
+	// push. Reporting it as up to date would be the one claim `u` must never make.
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady})
+	m = step(m, shelveMsg{step: stepPull}) // no upstream came back
+	m = step(m, shelveMsg{step: stepHolds, behind: 0})
+
+	if m.shelve.outcome != shelveStopped {
+		t.Fatalf("outcome = %v, want shelveStopped", m.shelve.outcome)
+	}
+	if !strings.Contains(m.shelve.next, "push -u") {
+		t.Errorf("next = %q, want the command that gives the branch an upstream", m.shelve.next)
+	}
+}
+
+func TestUpdateRejectedPushIsAHandoffNotAFailure(t *testing.T) {
+	// The rejection means someone else's commit is in the way — the class of thing
+	// Drift stops and hands back. The branch is left updated and merged locally;
+	// only the publish did not happen, and the report has to say exactly that.
+	// (That git reports a rejection at all, rather than a bare non-zero exit, is
+	// pinned against a real remote in internal/git.)
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "origin/abc-1-perf", pushRemote: "origin", pushBranch: "abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 2})
+	m = step(m, shelveMsg{step: stepStash, stashOID: "abc123"})
+	m = step(m, shelveMsg{step: stepUpstream})
+	m = step(m, shelveMsg{step: stepMerge})
+	m = step(m, shelveMsg{step: stepPush, rejected: true})
+	m = step(m, shelveMsg{step: stepRestore})
+
+	if m.shelve.outcome != shelveHandoff {
+		t.Fatalf("outcome = %v, want shelveHandoff — the merge landed, the publish didn't", m.shelve.outcome)
+	}
+	body := m.shelveOutcomeBody()
+	if !strings.Contains(body, "rejected") {
+		t.Errorf("report = %q, want the rejection named", body)
+	}
+	if !strings.Contains(body, "merged locally") {
+		t.Errorf("report = %q, want it to say the merge did land", body)
+	}
+
+	// Found by rendering it: the step list flagged nothing and ticked the publish,
+	// because it read the *last* step reached as the one that went wrong. Here the
+	// sequence carried on past the failure deliberately, so the flag has to sit
+	// where the failure was — and everything after it is entitled to its tick.
+	if !strings.Contains(m.shelveStepRow(stepPush, "publish"), "■") {
+		t.Error("the publish step is not flagged, so the list contradicts the headline")
+	}
+	if !strings.Contains(m.shelveStepRow(stepRestore, "put your work back"), "✓") {
+		t.Error("the restore is flagged, though it is the push that failed")
+	}
+}
+
+func TestUpdateIsReachableFromTheDashboardKeymap(t *testing.T) {
+	if got, ok := DefaultDashboardKeys().action("u"); !ok || got != ActionUpdate {
+		t.Errorf("dashboard key u -> %q, %v; want %q", got, ok, ActionUpdate)
+	}
+	// Two near-identical sequences are two entries in a generated help table, so
+	// each description has to carry the distinction on its own. If they cannot,
+	// the split is wrong.
+	shelve, update := actionText[ActionShelve], actionText[ActionUpdate]
+	if shelve == "" || update == "" {
+		t.Fatal("one of the two verbs has no wording, so the ? table would show its raw name")
+	}
+	if !strings.Contains(shelve, "nothing is published") || !strings.Contains(update, "publish") {
+		t.Errorf("shelve = %q, update = %q; want the commitment to be what tells them apart", shelve, update)
+	}
+}
+
+// --- area 17a end to end, against a real repo -----------------------------
+
+// updateOrigin builds a bare repo holding main and feature, the shape a clone
+// can actually pull from and push back to.
+func updateOrigin(t *testing.T) string {
+	t.Helper()
+	work := newTestRepo(t)
+	writeCommit(t, work, "app.conf", "level=info\n")
+	rungit(t, work, "branch", "feature")
+	bare := t.TempDir()
+	rungit(t, work, "init", "--quiet", "--bare", bare)
+	rungit(t, work, "push", "--quiet", bare, "main", "feature")
+	return bare
+}
+
+// updateClone checks main out with feature tracking origin/feature beside it —
+// the branch the user is standing on is not the branch they are updating.
+func updateClone(t *testing.T, origin string) string {
+	t.Helper()
+	dir := t.TempDir()
+	rungit(t, dir, "clone", "--quiet", origin, dir)
+	rungit(t, dir, "config", "user.email", "test@example.com")
+	rungit(t, dir, "config", "user.name", "Test")
+	rungit(t, dir, "branch", "--track", "feature", "origin/feature")
+	return dir
+}
+
+// pushToOrigin commits to a branch through a throwaway second clone, which is
+// how the remote moves under the repo being tested.
+func pushToOrigin(t *testing.T, origin, branch, name, content string) {
+	t.Helper()
+	other := t.TempDir()
+	rungit(t, other, "clone", "--quiet", "--branch", branch, origin, other)
+	rungit(t, other, "config", "user.email", "test@example.com")
+	rungit(t, other, "config", "user.name", "Test")
+	writeCommit(t, other, name, content)
+	rungit(t, other, "push", "--quiet", "origin", branch)
+}
+
+func updateRepoModel(t *testing.T, dir string) Model {
+	t.Helper()
+	cfg := store.Config{Targets: []store.Target{{Key: "main", Ref: "origin/main"}}}
+	st := store.Store{Tickets: []store.Ticket{{ID: "ABC-1", Branches: []store.TicketBranch{
+		{Branch: "feature", TargetKey: "main"},
+	}}}}
+	m := New(git.New(dir), cfg, st, store.Prefs{})
+	m.loading = false
+	m.current = "main"
+	m.expanded["ABC-1"] = true
+	m.cursor = 1
+	return m
+}
+
+func TestUpdateEndToEndCarriesAnotherBranchAllTheWay(t *testing.T) {
+	// The area in one run: standing on main, one keypress checks feature out,
+	// pulls its own upstream, merges the target, publishes the result, and puts
+	// you back on main — with a held local-only change carried across the branch
+	// boundary untouched.
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	r := git.New(dir)
+	ctx := context.Background()
+
+	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
+	pushToOrigin(t, origin, "feature", "theirs.txt", "from my other machine\n")
+
+	// A local-only edit, held on this machine. A plain stash cannot see it, so it
+	// has to ride the checkout as well as the merge.
+	if err := os.WriteFile(filepath.Join(dir, "app.conf"), []byte("level=debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetSkipWorktree(ctx, "app.conf"); err != nil {
+		t.Fatal(err)
+	}
+
+	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
+
+	if m.shelve.outcome != shelveLanded {
+		t.Fatalf("outcome = %v (%s / %s), want shelveLanded", m.shelve.outcome, m.shelve.reason, m.shelve.publish)
+	}
+	if got, _ := r.CurrentBranch(ctx); got != "main" {
+		t.Errorf("left the user on %q, want main — the list is a list, not a place you move to", got)
+	}
+	if got := readFile(t, dir, "app.conf"); got != "level=debug\n" {
+		t.Errorf("held edit = %q, want it carried across the checkout untouched", got)
+	}
+	if ab, err := r.AheadBehind(ctx, "feature", "origin/main"); err != nil || ab.Behind != 0 {
+		t.Errorf("feature vs origin/main = %+v, %v; want the target merged in", ab, err)
+	}
+	if ab, err := r.AheadBehind(ctx, "feature", "origin/feature"); err != nil || ab.Ahead != 0 || ab.Behind != 0 {
+		t.Errorf("feature vs origin/feature = %+v, %v; want it pulled and published", ab, err)
+	}
+}
+
+func TestUpdateEndToEndPutsYouBackWhenTheMergeConflicts(t *testing.T) {
+	// "Every halt path unwinds it too" is the bulk of the work, and this is the
+	// halt that proves it: the merge is rolled back, the checkout is undone, and
+	// the user is standing where they started with nothing left behind.
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	r := git.New(dir)
+	ctx := context.Background()
+
+	pushToOrigin(t, origin, "main", "app.conf", "level=warn\n")
+	pushToOrigin(t, origin, "feature", "app.conf", "level=trace\n")
+
+	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
+
+	if m.shelve.outcome != shelveReverted {
+		t.Fatalf("outcome = %v (%s), want shelveReverted", m.shelve.outcome, m.shelve.reason)
+	}
+	if got, _ := r.CurrentBranch(ctx); got != "main" {
+		t.Errorf("a conflict left the user on %q, want main", got)
+	}
+	if op, _ := r.OperationInProgress(ctx); op != "" {
+		t.Errorf("left the repo mid-%s; the rollback must leave no trace", op)
+	}
+	if ab, err := r.AheadBehind(ctx, "feature", "origin/main"); err != nil || ab.Behind == 0 {
+		t.Errorf("feature vs origin/main = %+v, %v; want the merge undone", ab, err)
+	}
+}
+
+func TestUpdateEndToEndRefusesADirtyTreeBeforeTouchingAnything(t *testing.T) {
+	// 17a's gate, driven for real: the refusal happens at stepReady, so the
+	// working tree is exactly as it was found and no stash exists to remember.
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
+
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("my work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
+
+	if m.shelve.outcome != shelveStopped {
+		t.Fatalf("outcome = %v (%s), want shelveStopped", m.shelve.outcome, m.shelve.reason)
+	}
+	if got := readFile(t, dir, "seed.txt"); got != "my work\n" {
+		t.Errorf("seed.txt = %q, want the refusal to have touched nothing", got)
+	}
+	oid, err := git.New(dir).StashRef(context.Background())
+	if err != nil || oid != "" {
+		t.Errorf("StashRef() = %q, %v; want no stash — a refusal has nothing to undo", oid, err)
+	}
+	if got, _ := git.New(dir).CurrentBranch(context.Background()); got != "main" {
+		t.Errorf("the refusal moved the user to %q", got)
+	}
+}
+
+func TestUpdateEndToEndPublishesFromTheBranchYouAreOn(t *testing.T) {
+	// The same-branch case: no boundary is crossed, so the sequence is today's
+	// shelve plus the two halves that make the result leave the machine.
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	r := git.New(dir)
+	ctx := context.Background()
+
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	writeCommit(t, dir, "mine.txt", "mine\n")
+	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
+
+	m := updateRepoModel(t, dir)
+	m.current = "feature"
+	m = runChainAs(t, m, modeUpdate)
+
+	if m.shelve.outcome != shelveLanded {
+		t.Fatalf("outcome = %v (%s / %s), want shelveLanded", m.shelve.outcome, m.shelve.reason, m.shelve.publish)
+	}
+	if ab, err := r.AheadBehind(ctx, "feature", "origin/feature"); err != nil || ab.Ahead != 0 {
+		t.Errorf("feature vs origin/feature = %+v, %v; want the commit published", ab, err)
+	}
+	if got, _ := r.CurrentBranch(ctx); got != "feature" {
+		t.Errorf("ended on %q, want feature — it is where the user started", got)
 	}
 }
 

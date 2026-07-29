@@ -378,7 +378,8 @@ Dashboard:
 | `r` | Refresh statuses |
 | `f` | Fetch, then refresh |
 | `esc` | Cancel an in-flight fetch (no-op when idle) |
-| `s` | Shelve: pull the selected branch's target and merge it in (area 7) |
+| `u` | Update: bring the selected branch up to date and publish it (area 17) |
+| `s` | Shelve: merge the target into the checked-out branch, publish nothing (area 7) |
 | `l` | Manage local-only changes (area 6) |
 | `?` | Keys and glyphs for the current screen |
 | `q` / `ctrl+c` | Quit |

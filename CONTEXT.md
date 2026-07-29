@@ -114,34 +114,55 @@ The design copies the unmergeable decision's shape exactly:
 - **Repo/worktree-global, not per-branch** — `skip-worktree` is an index flag, and one
   worktree has one index. That is the use case ("keep my log tweak on every branch"),
   not a limitation; the UI must not imply per-branch scope.
-- **Rides the shelve sequence untouched.** Plain `git stash` (no `-u`) ignores
+- **Rides both one-key sequences untouched.** Plain `git stash` (no `-u`) ignores
   skip-worktree and untracked files, so both survive stash → merge → pop with no
-  re-apply. The one hazard — the target main changed a file you hold locally — is caught
-  *before* the merge by intersecting the incoming changed-file set with the held set,
-  then surfaced like an unmergeable handoff. Drift never clobbers it silently.
+  re-apply — and the checkout `u` adds too, since a held file identical in both branches'
+  trees is not something the switch has to touch. The one hazard — something incoming
+  changed a file you hold locally — is caught *before* the merge by intersecting **every**
+  incoming changed-file set with the held set, then surfaced like an unmergeable handoff.
+  Drift never clobbers it silently, and it never forces the checkout past git's own
+  refusal, which is the same protection arriving from the other direction.
 
-## The shelve sequence (the one place Drift writes)
+## The one-key sequences (the one place Drift writes)
 
-Full rules: [`docs/specs/shelve-sequence.md`](./docs/specs/shelve-sequence.md). One
-keypress runs pull → merge the target main → put your work back, on the checked-out
-branch. Everywhere else Drift reads; this is where it writes to the working tree and to
-history, so the rules about *when* it may are the substance of the feature.
+Full rules: [`docs/specs/shelve-sequence.md`](./docs/specs/shelve-sequence.md). Two verbs
+share one state machine, differing by **commitment**. `s` shelves: pull → merge the target
+main → put your work back, on the checked-out branch, publishing nothing. `u` updates: the
+same merge on *any* paired branch, with the branch checked out, its own upstream pulled
+first, the result pushed, and the user returned to where they were standing. Everywhere
+else Drift reads; this is where it writes to the working tree and to history, so the rules
+about *when* it may are the substance of the feature.
 
-- **Drift never checks anything out.** This is a standing invariant, and here it is
-  correctness rather than style: a stash belongs to the branch it was taken on, so any
-  cross-branch arrangement of the sequence carries uncommitted work over a branch boundary
-  to put it back. `s` runs on the branch you are on; another branch's row names the fix.
-  Reversing this would earn an ADR.
+- **Drift checks branches out, and owns the return.** The original invariant ("Drift never
+  checks anything out") was reversed by area 17 under
+  [ADR 0002](./docs/adr/0002-update-checks-out.md), because keeping it meant the tool did
+  not do the thing it was built for: `s` refuses on every row but the one you are standing
+  on, so "one keypress per branch" only ever arrived for one branch. The invariant's
+  *reason* survives intact — **a stash belongs to the branch it was taken on** — because
+  Drift stashes on the branch it leaves and pops on that same branch once it has come
+  back. The guarantee is now enforced by the return rather than by never leaving. Targets
+  are still never checked out.
+- **You end up where you started, on every path.** The branch list is a list, not a place
+  you move to. Every halt unwinds — roll back the merge, return, pop — and the unwind stops
+  at its first failure rather than stacking the next step on a rollback already going
+  wrong. The one thing it will not do is pop when it could not get back.
 - **"Pull the target" is fetch-then-merge against a ref Drift never visits.** Targets are
   compared as `origin/<target>`, so the pull half is a fetch **scoped to that one ref** —
   a sequence started for one branch must not quietly move every other branch's numbers.
+  `u` applies the same split to the branch's own upstream, which is what keeps it correct
+  on a second machine.
 - **Read-only until the last possible moment.** Every check that can refuse the sequence
   runs before the stash, so a refusal has stashed nothing and has nothing to undo. There
-  is no partially-applied refusal.
+  is no partially-applied refusal. This is why *both* fetches are hoisted above the stash:
+  fetching is how the numbers a refusal rests on become true, and it touches no files.
 - **The mutating half is atomic, with one deliberate exception.** A merge conflict is
-  aborted *and* the stash restored: it either lands whole or leaves no trace. A stash-pop
-  conflict is **not** restored, because git retains the stash entry on conflict — nothing
-  is at risk, and that halt is the hand-reconciliation point the sequence exists to reach.
+  rolled back whole — aborted, returned, and the stash restored: it either lands or leaves
+  no trace. A stash-pop conflict is **not** restored, because git retains the stash entry
+  on conflict — nothing is at risk, and that halt is the hand-reconciliation point the
+  sequence exists to reach.
+- **Never force-push.** A rejection means the branch moved on the remote, which is someone
+  else's commit. The branch is left updated and merged locally; only the publish did not
+  happen, and the report says so.
 - **Every halt is a handoff**, the same permanent rule as an unmergeable file: Drift
   surfaces what it found, names the git command that resolves it, and stops.
 
