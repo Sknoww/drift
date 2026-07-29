@@ -867,3 +867,92 @@ is; link its spec/ADR once one exists.
       would just have moved the surprise earlier. Now that `TestMain` pins
       `GIT_CONFIG_NOSYSTEM` (see `CONTEXT.md`'s Testing row), local and CI answer the same
       question, so a push job that passes means something on every machine
+
+19. ⏳ **`u` published a merge nobody agreed to, onto a pairing nobody could fix.** Raised
+    by dogfooding v0.3.0 on a work repo, and it is the same kind of finding as area 17 —
+    the verb 17 shipped did its job and the job was wrong. One keypress put a merge into an
+    open merge request: the merged branch's commits showed up in the MR one at a time, the
+    MR went conflicted against its own target, and the way out was `reset --hard` to the
+    merge's first parent plus a force-push. **The merge mechanics are not at fault and are
+    not in scope.** `Merge` is `git merge --no-edit` (`internal/git/shelve.go:202`) — the
+    same command the IntelliJ flow this verb is modelled on runs — and nothing anywhere in
+    the sequence rebases, cherry-picks or squashes. Three other things were each true, and
+    each is a separate piece of work: nobody was asked before the push, the ref being
+    merged was never shown, and once it was wrong there was no way to correct it in the
+    tool
+    - **Open: which ref actually got merged, and the answer decides how 19b is
+      weighted.** The symptom points hard at the target ref not being the branch's MR
+      target: merging a branch into a source whose MR *targets* that branch cannot add
+      commits to the MR — the merge base moves forward and the commit list is unchanged,
+      which is exactly why the manual flow shows one merge commit and nothing else. For
+      the commits to appear individually, and for the MR to go conflicted afterwards, the
+      merged ref has to be one the MR does not target. Drift did not hit a conflict of its
+      own — `stepMerge` aborts and rolls the whole sequence back on conflict
+      (`internal/ui/shelve.go:409`), so a run that reached the push was clean on its own
+      terms. Confirmed by comparing the MR's target branch against the target key on the
+      dashboard row; until that is done this is a strong reading of the evidence and not a
+      diagnosis
+    - ⏳ **19a — the gate asks about the stash, and the step that needed gating is the
+      push.** `stepReady` opens the confirmation on `leaves() && dirty`
+      (`internal/ui/shelve.go:330`, predicate at `:104`), so it fires only when `u` has to
+      leave a branch with uncommitted work on it. That was 17b's question and 17b answered
+      it correctly — being stashed without having agreed to it is a surprise. But it means
+      a clean tree, or a branch you are already standing on, takes the entire sequence
+      *including the push* on one keypress with nothing shown first. The two are not
+      comparable risks: a stash is recoverable and local, while the push is the only step
+      in the sequence with no unwind and the only one other people can see. 17a already
+      settled that a rejected push is a handoff rather than a force; this is the same
+      argument one step earlier — the sequence should not reach the remote on a keypress
+      that was never told it would
+      - **The prompt has to name the refs, which is what also closes the hole above.**
+        17b's overlay states the plan in run order, and the same overlay carrying "merging
+        `<targetRef>` · publishing to `<remote>/<branch>`" makes a mispaired target visible
+        at the one moment it can still be stopped for free. That argues for widening the
+        existing prompt rather than adding a second one — one overlay, one place the plan
+        is stated, and the `?`-consumes-its-key rule keeps working
+      - **Open: does the widened gate fire on every `u`, or only when it will push?**
+        Every-time is the simpler rule and the easier one to trust. Only-when-publishing
+        is quieter but makes the prompt's absence carry meaning, which is a thing a user
+        has to learn rather than read. Placement is not open — 17b settled step 0, and the
+        reasoning (the answer cannot change once fetches land; a one-keypress verb must not
+        stop for input in the middle) holds for this question too
+    - ⏳ **19b — a pair's target cannot be changed once it is made.** The target picker
+      exists but is reachable only from the pairing checklist inside the add flow
+      (`ActionOpenPicker`, handled at `internal/ui/addflow.go:186`); the dashboard keymap
+      (`internal/ui/keys.go:210`) has no equivalent. `TargetKey` is written in exactly one
+      place — `savePairing` (`addflow.go:326`), which builds a fresh `store.Ticket` and
+      appends it — and `store` exposes no setter, only the read-only `Ticket` accessor
+      (`internal/store/store.go:487`). So a wrong pairing is visible on the dashboard and
+      correctable nowhere: `d` deletes the whole ticket (re-pairing every branch on it to
+      fix one), re-adding the same ID is refused as already tracked (`addflow.go:110`), and
+      the only other route is hand-editing `targetKey` in `<git-dir>/drift/state.json` with
+      Drift closed, since `SaveState` rewrites the file whole
+      - **This is what turns 19's incident from a mistake into a trap.** Prevention (19a)
+        and correction are different jobs, and shipping only the first would leave anyone
+        who already has a bad pairing editing JSON. It is also the cheapest of the three:
+        the picker screen, the accelerators and the store round-trip all exist, so the work
+        is a dashboard entry point, a `TargetKey` setter, and a save
+      - **Open: re-pair the selected branch row only, or reopen the ticket's whole
+        checklist?** The row-only version matches how `s` and `u` already read the
+        selection and is one keypress from the thing being fixed. Reopening the checklist
+        reuses a whole screen unchanged but asks the user to re-confirm rows that were
+        never wrong
+    - ⏳ **19c — `u` merges the branch's own upstream, and the flow it is modelled on does
+      not.** `shelveUpstreamCmd` (`internal/ui/shelve.go:849`) merges `origin/<branch>`
+      into the branch before the target is merged at all. The manual sequence this verb
+      reproduces — check out the target, pull it, check out your branch, merge, push — has
+      no counterpart step: if the branch and its remote had diverged, the manual flow finds
+      out at the push and hands it back. 17a added this deliberately and for a real reason,
+      recorded in area 17: on a second machine, merging the target into a stale branch
+      produces something that cannot be pushed. Both halves of that are true, which is why
+      this is a question and not a defect
+      - **Open: fast-forward only, or keep the merge?** Restricting it to a fast-forward
+        keeps 17a's reason intact — a stale-but-not-diverged branch still catches up — while
+        a genuine divergence becomes a halt with a named next step instead of a merge
+        commit of the branch with itself. That is closer to the manual flow and to Drift's
+        standing habit of handing back anything that needs a human. The cost is that a case
+        which currently resolves itself would start stopping, and 17a's halt for this case
+        (`shelve.go:397`) already exists but only fires on conflict
+      - **Not the cause of the incident**, and it should not be bundled with 19a/19b on that
+        pretext. It is a fidelity question about matching a documented flow, and it can be
+        settled on its own evidence
