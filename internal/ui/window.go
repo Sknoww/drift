@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -98,7 +99,7 @@ func rowWindow(n, selected, capacity int) (start, end int) {
 // active selection. The band is re-derived against the window, so it lands on
 // the right line however far down the list the cursor is.
 func listBody(s styles, width, height int, header, rows []string, selected int) string {
-	start, end := rowWindow(len(rows), selected, listCapacity(height, len(header)))
+	start, end := rowWindow(len(rows), selected, listCapacity(height, headerLines(s, width, header)))
 
 	lines := make([]string, 0, len(header)+(end-start)+2)
 	lines = append(lines, header...)
@@ -120,20 +121,51 @@ func listBody(s styles, width, height int, header, rows []string, selected int) 
 	return strings.Join(selectBand(s, width, lines, band), "\n")
 }
 
+// headerLines is what a list's fixed header really costs in terminal lines.
+//
+// listCapacity subtracts the header from the row budget, and every caller used
+// to pass len(header) — which is right only while every header line fits. A
+// header line wider than the panel wraps to two, so the list draws one row more
+// than the terminal can hold and the frame runs off the top: exactly the failure
+// windowing exists to prevent, reintroduced by prose rather than by rows. Found
+// by measuring the wizard at minTerminalWidth, where its two-line intro wraps to
+// three (roadmap area 15).
+//
+// The rows themselves need no such arithmetic — clipRow already caps each at one
+// line. Shortening the prose so it stops wrapping at all is a separate job; this
+// makes the budget honest either way.
+func headerLines(s styles, width int, header []string) int {
+	cw := contentWidth(s, width)
+	if cw <= 0 {
+		return len(header) // size unknown: nothing to measure against
+	}
+	n := 0
+	for _, h := range header {
+		w := lipgloss.Width(h)
+		if w <= cw {
+			n++
+			continue
+		}
+		n += (w + cw - 1) / cw // ceiling division: the lines it wraps to
+	}
+	return n
+}
+
 // clipRow caps a row at the panel's content width.
 //
 // Windowing bounds how many rows are drawn; this bounds how many *lines* each
-// one costs, and without it the budget is fiction. Nothing in the package
-// truncates — every "capped" column is only capped against over-padding, so a
-// long branch name renders in full, overflows the panel, and wraps. A window of
-// 19 rows that each wrap is 38 lines on a 24-line terminal: the frame runs off
-// the top and the cursor goes with it, which is the very failure windowing was
-// built to stop.
+// one costs, and without it the budget is fiction. A window of 19 rows that each
+// wrap is 38 lines on a 24-line terminal: the frame runs off the top and the
+// cursor goes with it, which is the very failure windowing was built to stop.
 //
 // The cut is ANSI-aware — a row is assembled from styled cells, and slicing one
 // by bytes would sever an escape sequence and bleed its color down the frame.
-// Sizing each column properly (rather than clipping whatever overflows) is the
-// area-15 pass; this is the floor that keeps the geometry honest until then.
+//
+// It is the **backstop**, not the mechanism. Area 15 gave every column its own
+// bound (columns.go), so a row that reaches here at all is one no column budget
+// anticipated — a trailing cell with nothing after it to align, or a screen
+// still to be converted. Clipping blind drops whatever overflows off the
+// right-hand end; a column that sizes itself ellipsises in place instead.
 func clipRow(s styles, width int, row string) string {
 	cw := contentWidth(s, width)
 	if cw <= 0 {

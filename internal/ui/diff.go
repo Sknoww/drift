@@ -475,16 +475,21 @@ func (m Model) declarePatternBody() string {
 		"",
 	}
 
-	width := 0
-	for _, p := range d.patterns {
-		if len(p.pattern) > width {
-			width = len(p.pattern)
+	// A pattern is a glob from config or a path from the repo — both unbounded, so
+	// the column is capped and the reason beside it ("config: workflows", "this
+	// file only") keeps its place.
+	width := widestCell(len(d.patterns), maxPatternCol, func(i int) string { return d.patterns[i].pattern })
+	if cw := contentWidth(m.styles, m.width); cw > 0 {
+		if avail := cw - 2 - minNameCol; width > avail {
+			if width = avail; width < minNameCol {
+				width = minNameCol
+			}
 		}
 	}
 	var rows []string
 	for _, p := range d.patterns {
 		rows = append(rows, fmt.Sprintf("%s  %s",
-			m.styles.target.Render(padRight(p.pattern, width)), m.styles.help.Render(p.why)))
+			m.styles.target.Render(fit(p.pattern, width)), m.styles.help.Render(p.why)))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
 }
@@ -500,16 +505,12 @@ func (m Model) declareDestBody() string {
 		"",
 	}
 
-	width := 0
-	for _, dest := range d.dests {
-		if len(dest.Label()) > width {
-			width = len(dest.Label())
-		}
-	}
+	// Unbounded: a destination label is one of two literals, not repo content.
+	width := widestCell(len(d.dests), 0, func(i int) string { return d.dests[i].Label() })
 	var rows []string
 	for _, dest := range d.dests {
 		rows = append(rows, fmt.Sprintf("%s  %s",
-			m.styles.branch.Render(padRight(dest.Label(), width)), m.styles.help.Render(dest.Detail())))
+			m.styles.branch.Render(fit(dest.Label(), width)), m.styles.help.Render(dest.Detail())))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
 }

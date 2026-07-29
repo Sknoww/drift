@@ -381,21 +381,26 @@ func (m Model) localOnlyBody() string {
 		), "\n")
 	}
 
-	pathWidth, mechWidth := 0, 0
-	for _, h := range m.local.entries {
-		if len(h.path) > pathWidth {
-			pathWidth = len(h.path)
-		}
-		if len(h.mechanism()) > mechWidth {
-			mechWidth = len(h.mechanism())
+	// The mechanism column is unbounded because its content is: two literals,
+	// neither of them user-supplied. The path column is the opposite — it is
+	// whatever the repo holds — so it is capped, and squeezed further to leave the
+	// note beside it something to occupy.
+	mechWidth := widestCell(len(m.local.entries), 0, func(i int) string { return m.local.entries[i].mechanism() })
+	pathWidth := widestCell(len(m.local.entries), maxPathCol, func(i int) string { return m.local.entries[i].path })
+	if cw := contentWidth(m.styles, m.width); cw > 0 {
+		const fixed = 1 + 1 + 2 + 2 // glyph and the three separators
+		if avail := cw - fixed - mechWidth - minNameCol; pathWidth > avail {
+			if pathWidth = avail; pathWidth < minNameCol {
+				pathWidth = minNameCol
+			}
 		}
 	}
 	var rows []string
 	for _, h := range m.local.entries {
 		rows = append(rows, fmt.Sprintf("%s %s  %s  %s",
 			m.heldGlyph(h),
-			m.styles.branch.Render(padRight(h.path, pathWidth)),
-			m.styles.help.Render(padRight(h.mechanism(), mechWidth)),
+			m.styles.branch.Render(fit(h.path, pathWidth)),
+			m.styles.help.Render(fit(h.mechanism(), mechWidth)),
 			m.styles.target.Render(h.note)))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, m.local.cursor)
@@ -431,16 +436,26 @@ func (m Model) localAddBody() string {
 		), "\n")
 	}
 
-	width := 0
-	for _, c := range m.local.add.candidates {
-		if len(c.path) > width {
-			width = len(c.path)
+	// The detail cell is what this screen is for — it names the primitive, or
+	// refuses a staged change — so it is costed first and the path takes what is
+	// left, the same ordering the pairing checklist uses.
+	details := make([]string, len(m.local.add.candidates))
+	for i, c := range m.local.add.candidates {
+		details[i] = m.candidateDetail(c)
+	}
+	width := widestCell(len(m.local.add.candidates), maxPathCol,
+		func(i int) string { return m.local.add.candidates[i].path })
+	if cw := contentWidth(m.styles, m.width); cw > 0 {
+		detailWidth := widestCell(len(details), 0, func(i int) string { return details[i] })
+		if avail := cw - 2 - detailWidth; width > avail {
+			if width = avail; width < minNameCol {
+				width = minNameCol
+			}
 		}
 	}
 	var rows []string
-	for _, c := range m.local.add.candidates {
-		rows = append(rows, fmt.Sprintf("%s  %s",
-			m.styles.branch.Render(padRight(c.path, width)), m.candidateDetail(c)))
+	for i, c := range m.local.add.candidates {
+		rows = append(rows, fmt.Sprintf("%s  %s", m.styles.branch.Render(fit(c.path, width)), details[i]))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, m.local.add.cursor)
 }

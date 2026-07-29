@@ -83,8 +83,11 @@ is; link its spec/ADR once one exists.
      the tip date it carries). Targets are compared against `origin/<target>`, so a wizard
      offering local branches would silently produce targets that compare against the wrong
      thing
-   - `Target.Key` defaults to the ref's short name (remote prefix stripped), editable
-     inline (`e`); `Ref` is the picked ref, so a target can never be a typo
+   - `Target.Key` is seeded from the ref and editable inline (`e`); `Ref` is the picked
+     ref, so a target can never be a typo. The seed drops the remote prefix and keeps the
+     rest of the path while it stays terse, falling back to the ref's last segment past
+     that (area 15 tightened this — the original rule kept the whole path, which seeded
+     keys nobody would type)
    - Any number of targets, including one. The wizard no more implies a count than the
      placeholder does; save blocks only on nothing-selected, an empty key, or a
      duplicate key — the guards `SaveConfig`'s `validate()` would reject anyway
@@ -380,38 +383,70 @@ is; link its spec/ADR once one exists.
       refactor is a long list, and finding one file in it is exactly the filter's job); the
       target picker and the declare overlays are bounded by config and by a file's matched
       globs, so they are unlikely ever to need it
-15. ⏳ **UI polish pass.** The accumulated nits, found by auditing the render layer after
+15. 🛠️ **UI polish pass.** The accumulated nits, found by auditing the render layer after
     area 14's measurements. Deliberately after 14: polish on a screen that can't be
     navigated is wasted work. Each item below was verified against the code, not guessed
-    — the file:line is the evidence.
-    - **Nothing truncates *per column*.** This is the systemic one, and the root of
-      several symptoms that look unrelated. `padRight` pads to a width but *returns long
-      input unchanged*, so every "capped" column is only capped against over-padding:
-      `branchNameWidth` caps at 32 (`view.go:244`) and a 60-character branch still
-      renders all 60, shoving the status cluster right — the branch name eats the row and
-      the signals it was meant to sit beside are the thing that gets cut.
-      - Area 14 added `clipRow` (`window.go`), which caps the *assembled row* at the
-        panel width, ANSI-aware. That stops the wrapping and bounds the frame, and it is
-        deliberately only a floor: it clips whatever overflows off the right-hand end,
-        which on a long branch name means silently dropping the status cluster
-      - What remains is making each **column** bound its own cells, so a long name is
-        ellipsised in place and the cluster keeps its columns. `clipRow` is the backstop
-        underneath that, not a replacement for it
-    - **Two padding implementations, and the one used most is wrong.** `padCell`
-      (`help.go:272`) measures with `lipgloss.Width` and carries a comment explaining why
-      byte length misaligns a column of glyphs. `padRight` measures with `len()` — as do
-      `branchNameWidth`, `widestTargetKey` (`model.go:178`), and the wizard's
-      `keyColWidth` (`wizard.go:291`). Any non-ASCII or wide rune in a branch name
-      misaligns every column on the dashboard. Consolidate on the correct one
-    - **Key derivation is too eager.** `deriveKey` (`wizard.go:83`) keeps the whole path
-      after the remote, so `origin/feature/TEAM-1234-some-long-name` seeds a *key* of
-      `feature/TEAM-1234-some-long-name`. Keys are terse UI labels (`main`, `r2perf`) —
-      nobody would type that one. It is also what makes the wizard's uncapped
-      `keyColWidth` pad every row past the panel width, which is the row-wrapping that
-      doubled the frame in area 14's measurements. Derive something short; leave `e` for
-      the rest
+    — the file:line is the evidence. **Slice A (geometry and truncation) has shipped**;
+    what remains is the fixed-text overflow items and the two color items, which are
+    independent of it and of each other.
+    - ✅ **Per-column truncation, and one way to measure.** The systemic item, and the
+      root of several symptoms that looked unrelated. `padRight` padded to a width but
+      *returned long input unchanged*, so every "capped" column was only capped against
+      over-padding: `branchNameWidth` capped at 32 and a 60-character branch rendered all
+      60, shoving the status cluster right — the branch name ate the row and the signals
+      it was meant to sit beside were what got cut. Alongside it the package had **two**
+      padding helpers that disagreed on how to measure: `padCell` used `lipgloss.Width`,
+      `padRight` used `len()`, as did `branchNameWidth`, `widestTargetKey` and the
+      wizard's `keyColWidth` — so any non-ASCII or wide rune in a branch name misaligned
+      every column beside it. Both are one helper now (`fit`, in the new
+      `internal/ui/columns.go`): display-width measured, ANSI-aware, truncating *and*
+      padding to exactly the width its column was given. Every column in the package
+      routes through it — dashboard, pairing checklist, target picker, wizard, local-only
+      list and hold picker, both declare overlays, and the `?` overlay's key table
+      - **The order of allocation is the actual fix**, not the truncation. A row's fixed
+        cost is paid first, then the cell carrying the row's *point* — the status cluster,
+        `⚠ pick a target`, the hold picker's primitive — and the name column absorbs what
+        is left. The name shortens itself; the signal never gives way. Asserted at the
+        width floor as well as at 100 columns, since "which one gives way" is only
+        visible once something has to
+      - **`↓behind ↑ahead` turned out to be a column too.** Unpadded, a `↓3 ↑1` row and a
+        `↓12 ↑345` row put the dirty dot and the checked-out marker in different places —
+        DESIGN.md §1 has always said the cluster is "aligned into columns so the eye scans
+        down", and for the two glyphs that most need it, it wasn't
+      - `clipRow` stays as the **backstop** and its doc now says so. It clips blind, off
+        the right-hand end; a column that sizes itself ellipsises in place instead
+    - ✅ **Key derivation is no longer too eager.** `deriveKey` kept the whole path after
+      the remote, so `origin/feature/TEAM-1234-some-long-name` seeded a *key* of
+      `feature/TEAM-1234-some-long-name` — and padded every wizard row to it, the
+      row-wrapping that doubled the frame in area 14's measurements. It now keeps the
+      path while it stays terse (≤16 cells) and falls back to the ref's **last segment**
+      past that. Cutting to the last segment unconditionally was the obvious rule and the
+      wrong one: it turns `release/2.0` and `hotfix/2.0` into two targets both called
+      `2.0`. The threshold keeps the short multi-segment refs whole and shortens only
+      what was the actual complaint. It stays a *seed* either way — the key is shown
+      beside the ref it came from, `e` renames it, and a duplicate blocks the save with
+      the row revealed
+    - ✅ **A minimum usable width, declared rather than clamped.** `contentWidth` clamped
+      to 1 and rendered into it, which produces garbage rather than a compressed view.
+      Below **60 columns** every screen — dashboard and wizard alike — now draws one
+      notice saying so and nothing else. Sized from the row it has to fit: at 60 the
+      content width is 54, leaving the name ~27 cells beside a full cluster, and it sits
+      well clear of the near-universal 80. Before the first `WindowSizeMsg` the size is
+      genuinely unknown, so the screen draws — refusing on a guess would blank a terminal
+      with room to spare
+      - **Declaring the floor found a live bug in area 14's invariant.** At 60 columns the
+        wizard frame was **25 lines on a 24-line terminal**: `listBody` costed its fixed
+        header as one line each, but the wizard's two-line intro wraps to three at that
+        width, so the window drew one row too many and the frame ran off the top — the
+        exact failure windowing exists to prevent, reintroduced by *prose* rather than by
+        rows. `headerLines` now costs a header line at the lines it really wraps to. The
+        row budget is honest at every width; shortening the prose so it stops wrapping at
+        all is the next item's job, not this one's
+      - `listCapacity`'s floor-at-one-row in the other axis is left as it was — it keeps a
+        short terminal correct rather than usable, which is the right trade until a
+        height floor has a reason to exist
     - **The dashboard help line overflows a standard terminal.** 108 columns of text
-      (`view.go:329`) plus the app's 2 columns of padding needs a 110-column window. It
+      (`view.go:385`) plus the app's 2 columns of padding needs a 110-column window. It
       wraps at the near-universal 80, and still wraps at 100. Either shorten it or elide
       it against the real width — it is the one line on screen that teaches the keys, so
       it wrapping into the panel border is the worst place to spend the overflow
@@ -430,7 +465,7 @@ is; link its spec/ADR once one exists.
         **no foreground**, which is the same defect as the light-terminal item below —
         one style, two symptoms. Whatever replaces it should pin both ends
       - *A marker-based selection would delete machinery.* The full-width background is
-        precisely what forces `reopenBand` (`view.go:193`) to re-arm the SGR after every
+        precisely what forces `reopenBand` (`view.go:201`) to re-arm the SGR after every
         inner cell reset — subtle, test-invisible, and the source of a real bug already
         (DESIGN.md §3). A left marker or a foreground treatment needs none of it. That is
         an argument worth weighing, not a decision
@@ -448,14 +483,8 @@ is; link its spec/ADR once one exists.
       fix. Worth confirming visually on a light theme before building — the mechanism is
       clear from the code but the severity isn't. Note the ANSI-256 choice itself stays
       right (DESIGN.md §1); this is about light vs dark, not color depth
-    - **Error text is unbounded.** `statusLine` (`view.go:316`) renders `err.Error()` raw,
+    - **Error text is unbounded.** `statusLine` (`view.go:370`) renders `err.Error()` raw,
       and git errors are not short. One long error wraps the frame under the panel
-    - **No minimum usable width.** `contentWidth` (`view.go:147`) clamps to 1 rather than
-      declaring a floor, so a very narrow terminal renders garbage instead of saying it
-      is too narrow. Decide the floor alongside the per-column truncation — the two
-      answer the same question. `listCapacity` (`window.go`) has the same shape in the
-      other axis: it floors at one row so the cursor is still drawn, which keeps a short
-      terminal correct rather than usable
     - **The `?` help overlay runs off the top of a standard terminal.** Found while
       measuring area 14: **27 lines on the dashboard** against a 24-line window, and
       exactly 24 on the diff screen — so the keys it exists to teach are the ones

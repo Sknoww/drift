@@ -67,6 +67,39 @@ the home row. "Looks like raw text output" is a bug.
     selection band, so the resets it introduces are re-armed by `reopenBand` (§3).
   - Windowing is a **render** concern only. A row selected and then scrolled out of view
     is still selected and still saved — the same "never guess" rule as pairing.
+- **Every column bounds its own cells** ✅ — one helper (`fit` in `internal/ui/columns.go`)
+  renders a cell in exactly the width its column was given: truncated with an ellipsis
+  when it is wider, padded when it is narrower, **measured in display cells and
+  ANSI-aware**. Before it the package had two padding helpers that disagreed on how to
+  measure (one `lipgloss.Width`, one `len()`) and *neither truncated*, so a column was
+  only ever capped against over-padding — a 60-character branch name in a column "capped"
+  at 32 rendered all 60 and shoved the status cluster off the right-hand end.
+  - **The order of allocation is the rule.** A row's fixed cost is paid first, then the
+    cell that carries the row's *point* — the status cluster on the dashboard, `⚠ pick a
+    target` on the pairing checklist, the primitive on the hold picker — and the
+    name/path column absorbs what is left. A long name shortens itself; the signal it
+    was meant to sit beside never gives way. Inverting that is what the pass fixed.
+  - **A cap is a ceiling, not a width.** A column shorter than its cap still shrinks to
+    its content, and one squeezed by a narrow terminal shrinks below the cap to a floor.
+    Caps exist only on columns whose content is user- or repo-supplied; a column of
+    literals (a destination label, a hold's mechanism) is unbounded because its content
+    is.
+  - `clipRow` (Windowing, above) stays underneath as the **backstop**. It clips blind —
+    whatever overflows off the right-hand end — so reaching it means dropping a trailing
+    cell rather than ellipsising in place. A column that sizes itself never does.
+  - **A header line costs the lines it wraps to.** `listBody` used to cost its fixed
+    header as one line each, which is right only while each one fits; the wizard's intro
+    wraps to three at the width floor, and the window then drew one row too many and ran
+    the frame off the terminal. Prose can break the row budget exactly as rows can
+    (`headerLines`).
+- **A minimum usable width, declared rather than clamped** ✅ — below **60 columns**
+  (`minTerminalWidth`) every screen draws one notice saying so and nothing else. The old
+  behaviour was to clamp the content width to 1 and render into it, which produces
+  garbage rather than a compressed view. Sized from the row it has to fit: at 60 the
+  panel's content width is 54, which leaves the branch name ~27 cells beside a full
+  cluster, and it sits well clear of the near-universal 80-column default. Before the
+  first `WindowSizeMsg` the size is genuinely unknown, so the screen draws — refusing on
+  a guess would blank a terminal with room to spare.
 - **Type-to-filter** ✅ — `/` opens an incremental, case-insensitive substring filter over
   a list (`filterState` in `internal/ui/filter.go`; live on the first-run wizard and the
   pairing checklist). Windowing made a long list *renderable*; it did nothing to make one
@@ -116,7 +149,11 @@ the home row. "Looks like raw text output" is a bug.
 - **Status cluster** — per branch: target label · `↓behind ↑ahead` · dirty dot ·
   checked-out marker. Fixed order, aligned into columns so the eye scans down. The
   target label is **variable width** — column widths are computed from the config's
-  longest `Target.Key`, never hardcoded.
+  longest `Target.Key`, never hardcoded, though bounded like every other column above
+  (a key is terse by intent and nothing in the config enforces it). **`↓behind ↑ahead`
+  is a column too**: unpadded, a `↓3 ↑1` row and a `↓12 ↑345` row put the dirty dot in
+  different places, and "aligned so the eye scans down" stops being true of the two
+  glyphs that most need it.
 
 **The Model holds:** loaded `Config` + `Store`; current screen; cursor position; which
 ticket is expanded; a computed status map keyed by `ticketID + branch`; a

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // The `?` overlay: what the keys do, and what the glyphs mean.
@@ -239,13 +237,11 @@ func (m Model) helpView() string {
 	legend := m.glyphLegend()
 
 	// Measured, not counted: the glyph column holds multi-byte runes, so byte
-	// length would misalign every row beneath it.
-	width := 0
-	for _, e := range append(append([]helpEntry{}, entries...), legend...) {
-		if w := lipgloss.Width(e.keys); w > width {
-			width = w
-		}
-	}
+	// length would misalign every row beneath it. Unbounded, because both halves
+	// are generated from the keymap and the glyph legend — this is the one column
+	// in the package whose content is not user- or repo-supplied.
+	all := append(append([]helpEntry{}, entries...), legend...)
+	width := widestCell(len(all), 0, func(i int) string { return all[i].keys })
 
 	lines := []string{
 		m.styles.hint.Render("Keys — " + m.screenName()),
@@ -253,7 +249,7 @@ func (m Model) helpView() string {
 	}
 	for _, e := range entries {
 		lines = append(lines, fmt.Sprintf("%s  %s",
-			m.styles.target.Render(padCell(e.keys, width)), m.styles.help.Render(e.what)))
+			m.styles.target.Render(fit(e.keys, width)), m.styles.help.Render(e.what)))
 	}
 
 	lines = append(lines, "", m.styles.hint.Render("Glyphs"), "")
@@ -262,17 +258,8 @@ func (m Model) helpView() string {
 		// role's color, and wrapping it again would repaint it as one flat color —
 		// the bug this replaced.
 		lines = append(lines, fmt.Sprintf("%s  %s",
-			padCell(e.keys, width), m.styles.help.Render(e.what)))
+			fit(e.keys, width), m.styles.help.Render(e.what)))
 	}
 
 	return m.screenView(strings.Join(lines, "\n"), m.styles.help.Render("any key closes"))
-}
-
-// padCell pads to a display width rather than a byte count, so a column of
-// glyphs lines up with a column of ASCII key names.
-func padCell(s string, w int) string {
-	if pad := w - lipgloss.Width(s); pad > 0 {
-		return s + strings.Repeat(" ", pad)
-	}
-	return s
 }

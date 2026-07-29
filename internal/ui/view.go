@@ -36,6 +36,9 @@ func (m Model) View() string {
 // spans the full terminal width so every screen (and the area-5 diff panel to
 // come) shares one full-width layout rather than a snug content-sized box.
 func (m Model) screenView(panel, help string) string {
+	if v, ok := tooNarrowView(m.styles, m.width); ok {
+		return m.styles.app.Render(v)
+	}
 	var b strings.Builder
 	b.WriteString(m.header())
 	b.WriteString("\n")
@@ -79,7 +82,7 @@ func (m Model) body() string {
 		return m.emptyState()
 	}
 
-	nameWidth := m.branchNameWidth()
+	cols := m.branchColumns()
 	sel, selOK := m.selectedRow() // the semantic cursor row
 
 	var rows []string
@@ -103,7 +106,7 @@ func (m Model) body() string {
 				if selOK && sel.isBranch() && sel.ticket == ti && sel.branch == bi {
 					selected = len(rows) // a branch row is selectable in its own right
 				}
-				rows = append(rows, m.branchRow(t.ID, br, nameWidth))
+				rows = append(rows, m.branchRow(t.ID, br, cols))
 			}
 			if len(t.Branches) == 0 {
 				rows = append(rows, m.styles.hint.Render("    no branches paired"))
@@ -139,6 +142,11 @@ func panelStyle(s styles, width int) lipgloss.Style {
 // It is a free function on (styles, width) rather than a method so the dashboard
 // and the first-run wizard (wizard.go) share one implementation of the
 // full-width frame.
+//
+// The clamp to 1 is a guard, not a policy: a terminal narrow enough to reach it
+// is under minTerminalWidth and is never drawn at all (tooNarrowView). Declaring
+// the floor is what the clamp used to be doing badly — rendering garbage into a
+// width it could not fill rather than saying so.
 func contentWidth(s styles, width int) int {
 	if width == 0 {
 		return 0
@@ -236,36 +244,84 @@ func (m Model) ticketRow(t store.Ticket) string {
 	return m.styles.ticket.Render(line)
 }
 
-// branchNameWidth is the widest branch name across every ticket, capped so a
-// single long name can't shove the status cluster off-screen. Computing it over
-// all tickets (not just expanded ones) keeps the status columns aligned down the
-// whole dashboard as tickets expand and collapse (DESIGN.md §1).
-func (m Model) branchNameWidth() int {
-	const cap = 32
-	w := 0
+// branchCols is the width budget for the dashboard's branch rows: the two
+// variable columns, plus the width the status pair is aligned to.
+type branchCols struct{ name, target, ab int }
+
+// branchRowFixed is what a branch row costs before its variable columns: the
+// 4-space indent, the three separators ("   ", "   ", "  ") between name,
+// target, the status pair and the dirty dot, and the two 2-cell cells that
+// close it (dirty, checked-out marker). It is the constant in the budget below.
+const branchRowFixed = 4 + 3 + 3 + 2 + 2 + 2
+
+// branchColumns sizes a branch row's variable columns against the panel the row
+// actually has to fit in, rather than against the longest string in the store.
+//
+// The order of allocation *is* the fix. The status cluster is what a branch row
+// exists to show — it is costed first and never squeezed. The target column
+// takes what it needs, up to its cap. The branch name absorbs whatever is left
+// and ellipsises in place, so a long name shortens itself instead of shoving
+// the signals off the right-hand end for clipRow to cut (roadmap area 15).
+//
+// Widths are measured over every ticket, not just the expanded ones, so the
+// columns stay aligned down the whole dashboard as tickets expand and collapse
+// (DESIGN.md §1).
+func (m Model) branchColumns() branchCols {
+	name, ab := 0, 0
 	for _, t := range m.store.Tickets {
 		for _, br := range t.Branches {
-			if len(br.Branch) > w {
-				w = len(br.Branch)
+			if w := lipgloss.Width(br.Branch); w > name {
+				name = w
+			}
+			if w := lipgloss.Width(m.renderAheadBehind(br, m.status[statusKey(t.ID, br.Branch)])); w > ab {
+				ab = w
 			}
 		}
 	}
-	if w > cap {
-		return cap
+	if name > maxNameCol {
+		name = maxNameCol
 	}
-	return w
+	target := m.targetKeyWidth
+
+	cw := contentWidth(m.styles, m.width)
+	if cw <= 0 {
+		return branchCols{name: name, target: target, ab: ab} // size unknown: natural sizing
+	}
+
+	// What the name and target columns have to share, once the cluster is paid
+	// for. The floor is a guard, not a mechanism — a terminal narrow enough to
+	// reach it is below minTerminalWidth and never drawn.
+	avail := cw - branchRowFixed - ab
+	if avail < minNameCol {
+		avail = minNameCol
+	}
+	if target > avail-minNameCol {
+		if target = avail - minNameCol; target < 0 {
+			target = 0
+		}
+	}
+	if name > avail-target {
+		name = avail - target
+	}
+	if name < 1 {
+		name = 1
+	}
+	return branchCols{name: name, target: target, ab: ab}
 }
 
 // branchRow renders one paired branch beneath its ticket, with the status
 // cluster in the fixed order from DESIGN.md §1: target · ↓behind ↑ahead ·
 // dirty · checked-out marker, then the area-5 unmergeable marker at the end so
 // it never disturbs the aligned columns.
-func (m Model) branchRow(ticketID string, br store.TicketBranch, nameWidth int) string {
+func (m Model) branchRow(ticketID string, br store.TicketBranch, cols branchCols) string {
 	st := m.status[statusKey(ticketID, br.Branch)]
 
-	name := m.styles.branch.Render("    " + padRight(br.Branch, nameWidth))
-	target := m.styles.target.Render(padRight(br.TargetKey, m.targetKeyWidth))
-	ab := m.renderAheadBehind(br, st)
+	name := m.styles.branch.Render("    " + fit(br.Branch, cols.name))
+	target := m.styles.target.Render(fit(br.TargetKey, cols.target))
+	// The status pair is padded to its column too: without it a ↓3 ↑1 row and a
+	// ↓12 ↑345 row put the dirty dot in different places, and the cluster stops
+	// being something the eye can scan down.
+	ab := fit(m.renderAheadBehind(br, st), cols.ab)
 
 	dirty := "  "
 	if br.Branch == m.current && m.dirty {
@@ -386,25 +442,29 @@ func (m Model) pairingBody() string {
 			m.styles.help.Render("No candidate matches "+quote(m.add.filter.query())+" — esc clears the filter.")), "\n")
 	}
 
-	nameWidth := m.candidateNameWidth(vis)
-	rows := make([]string, len(vis))
+	// The assignment cell is what the checklist is *for* — it is built first and
+	// costed first, and the name column takes what is left, the same ordering the
+	// dashboard's branch rows use.
+	assigns := make([]string, len(vis))
 	for i, ci := range vis {
 		c := m.add.candidates[ci]
+		switch {
+		case !c.included:
+		case c.targetKey == "":
+			assigns[i] = m.styles.errText.Render("⚠ pick a target")
+		default:
+			assigns[i] = m.styles.target.Render("→ " + c.targetKey)
+		}
+	}
+
+	nameWidth := m.candidateNameWidth(vis, widestCell(len(assigns), 0, func(i int) string { return assigns[i] }))
+	rows := make([]string, len(vis))
+	for i, ci := range vis {
 		box := "[ ]"
-		if c.included {
+		if m.add.candidates[ci].included {
 			box = "[x]"
 		}
-
-		assign := ""
-		if c.included {
-			if c.targetKey == "" {
-				assign = m.styles.errText.Render("⚠ pick a target")
-			} else {
-				assign = m.styles.target.Render("→ " + c.targetKey)
-			}
-		}
-
-		rows[i] = fmt.Sprintf("%s %s  %s", box, padRight(c.branch, nameWidth), assign)
+		rows[i] = fmt.Sprintf("%s %s  %s", box, fit(m.add.candidates[ci].branch, nameWidth), assigns[i])
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, m.add.cursor)
 }
@@ -426,34 +486,37 @@ func (m Model) pickerBody() string {
 			acc = fmt.Sprintf("%d ", i+1)
 		}
 		rows = append(rows, fmt.Sprintf("%s %s  %s",
-			m.styles.help.Render(acc), padRight(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref)))
+			m.styles.help.Render(acc), fit(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref)))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, m.add.pickerCur)
 }
 
-// candidateNameWidth is the widest candidate branch name, capped so a single
-// long name cannot shove the target column off-screen (mirrors branchNameWidth).
+// candidateNameWidth sizes the checklist's name column: the widest candidate,
+// bounded by its cap and by what the panel has left once the box, the
+// separators and the assignment cell are paid for. A long name ellipsises in
+// place rather than pushing "⚠ pick a target" — the one thing on the row that
+// blocks the save — off the end.
+//
 // Measured over the visible rows only: the column aligns what is on screen, so a
-// name the filter is hiding has no business padding the rows that are drawn.
-func (m Model) candidateNameWidth(visible []int) int {
-	const cap = 32
-	w := 0
-	for _, i := range visible {
-		if len(m.add.candidates[i].branch) > w {
-			w = len(m.add.candidates[i].branch)
+// name the filter is hiding has no business padding the rows that are drawn
+// (DESIGN.md §1).
+func (m Model) candidateNameWidth(visible []int, assignWidth int) int {
+	// box + the two separators around the name.
+	const fixed = 3 + 1 + 2
+
+	w := widestCell(len(visible), maxNameCol, func(i int) string {
+		return m.add.candidates[visible[i]].branch
+	})
+	cw := contentWidth(m.styles, m.width)
+	if cw <= 0 {
+		return w // size unknown: natural sizing
+	}
+	if avail := cw - fixed - assignWidth; w > avail {
+		if w = avail; w < minNameCol {
+			w = minNameCol
 		}
 	}
-	if w > cap {
-		return cap
-	}
 	return w
-}
-
-func padRight(s string, w int) string {
-	if len(s) >= w {
-		return s
-	}
-	return s + strings.Repeat(" ", w-len(s))
 }
 
 func quote(s string) string {

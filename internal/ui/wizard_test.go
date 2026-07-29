@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sknoww/drift/internal/git"
 )
@@ -29,17 +30,58 @@ func remoteBranches(refs ...string) []git.RemoteBranch {
 	return out
 }
 
-func TestDeriveKeyStripsRemote(t *testing.T) {
+// A key is a terse UI label. deriveKey used to keep the whole path after the
+// remote, so origin/feature/TEAM-1234-some-long-name seeded a key nobody would
+// type — and padded every wizard row to it. It now keeps the path while it stays
+// terse and falls back to the last segment past that, so the multi-segment refs
+// that carry meaning (release/2.0) survive and only the long ones are cut.
+func TestDeriveKeySeedsATerseKey(t *testing.T) {
 	cases := map[string]string{
 		"origin/main":         "main",
 		"origin/release-perf": "release-perf",
-		"origin/feature/x":    "feature/x", // only the remote is stripped, not the whole path
 		"upstream/main":       "main",
+
+		// Short enough to keep whole: release/2.0 says what hotfix/2.0 does not.
+		"origin/feature/x":   "feature/x",
+		"origin/release/2.0": "release/2.0",
+
+		// Past the threshold: the last segment is what is left worth naming.
+		"origin/feature/TEAM-1234-some-long-name": "TEAM-1234-some-long-name",
+
+		// One long segment and nothing shorter to take. Honest rather than
+		// invented — the column bounds it and e renames it.
+		"origin/a-very-long-single-segment-branch": "a-very-long-single-segment-branch",
+
+		// No remote prefix at all: nothing to strip.
+		"main": "main",
 	}
 	for ref, want := range cases {
 		if got := deriveKey(ref); got != want {
 			t.Errorf("deriveKey(%q) = %q, want %q", ref, got, want)
 		}
+	}
+}
+
+// The wizard's key column is the one that padded every row past the panel width
+// in area 14's measurements. deriveKey stopped seeding long keys; this stops a
+// hand-typed one (e accepts 64 characters) doing the same.
+func TestWizardKeyColumnIsBounded(t *testing.T) {
+	m := wizardWith("origin/main", "origin/develop")
+	m.width, m.height = 100, 24
+	m.targets[0].key = strings.Repeat("x", 60)
+
+	if got := m.keyColWidth(m.visible()); got > maxKeyCol {
+		t.Errorf("key column = %d, want at most %d", got, maxKeyCol)
+	}
+
+	view := m.View()
+	for _, line := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(line); w > 100 {
+			t.Fatalf("a %d-cell line on a 100-column terminal — the key column overflowed:\n%s", w, view)
+		}
+	}
+	if !strings.Contains(view, "origin/develop") {
+		t.Errorf("one long key pushed the other rows' refs off the panel:\n%s", view)
 	}
 }
 

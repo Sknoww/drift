@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sknoww/drift/internal/git"
 	"github.com/Sknoww/drift/internal/store"
@@ -143,14 +144,42 @@ func (m wizardModel) reveal(idx int) wizardModel {
 	return m
 }
 
-// deriveKey seeds a target's key from its ref by dropping the remote prefix:
-// origin/main -> main, origin/feature/x -> feature/x. It is only a default; the
-// user renames it with e.
+// keySeedWidth is how long a derived key may get before deriveKey stops keeping
+// the whole path. Sized so the multi-segment refs that carry real meaning —
+// release/2.0, hotfix/2.0 — survive intact, while the ones nobody would type do
+// not.
+const keySeedWidth = 16
+
+// deriveKey seeds a target's key from its ref by dropping the remote prefix,
+// keeping the rest of the path while it stays terse and falling back to the
+// ref's last segment when it does not:
+//
+//	origin/main                        -> main
+//	origin/release/2.0                 -> release/2.0
+//	origin/feature/TEAM-1234-long-name -> TEAM-1234-long-name
+//
+// A key is a terse UI label — main, r2perf — and the whole path after the remote
+// is not one: nobody would type feature/TEAM-1234-long-name to name a target,
+// and every dashboard row would carry it. But cutting to the last segment
+// unconditionally throws away the half that says what a ref *is*, turning
+// release/2.0 and hotfix/2.0 into two targets both called 2.0. The threshold
+// keeps the short ones whole and only shortens what was the actual complaint.
+//
+// It is a seed either way, never a decision: the wizard shows the key beside the
+// ref it came from, e renames it, and a duplicate blocks the save with the row
+// revealed. Nothing here is guessed on the user's behalf and left unseen.
 func deriveKey(ref string) string {
-	if _, rest, found := strings.Cut(ref, "/"); found {
+	_, rest, found := strings.Cut(ref, "/")
+	if !found {
+		return ref
+	}
+	if lipgloss.Width(rest) <= keySeedWidth {
 		return rest
 	}
-	return ref
+	if i := strings.LastIndex(rest, "/"); i >= 0 {
+		return rest[i+1:]
+	}
+	return rest // one long segment: there is nothing shorter to take, so e it is
 }
 
 func (m wizardModel) Init() tea.Cmd { return nil }
@@ -368,6 +397,9 @@ func (m wizardModel) save() (tea.Model, tea.Cmd) {
 }
 
 func (m wizardModel) View() string {
+	if v, ok := tooNarrowView(m.styles, m.width); ok {
+		return m.styles.app.Render(v)
+	}
 	var b strings.Builder
 	b.WriteString(m.styles.title.Render("drift") + "  " + m.styles.help.Render("first-run setup"))
 	b.WriteString("\n")
@@ -412,8 +444,10 @@ func (m wizardModel) body() string {
 			box = "[x]"
 		}
 
-		keyCell := padRight(t.key, keyWidth)
+		keyCell := fit(t.key, keyWidth)
 		if m.editing && i == m.cursor {
+			// The live field is never fitted: it owns its own width, and clipping
+			// what the user is typing would hide the tail of their own edit.
 			keyCell = m.input.View()
 		}
 
@@ -451,6 +485,10 @@ func (m wizardModel) help() string {
 // grew with its content would be one more thing pushing the ref name off a
 // panel, which is the failure area 14 spent itself fixing.
 const ageColWidth = 4
+
+// wizardRowFixed is what a wizard row costs before its key column: the age
+// column, the box, and the three separators around key and ← .
+const wizardRowFixed = ageColWidth + 1 + 3 + 1 + 1 + 1 + 1
 
 // relativeAge renders how long ago a ref's tip was committed, in the narrowest
 // form that still says it: now, 5m, 3h, 2d, 7mo, 2y.
@@ -490,29 +528,26 @@ func relativeAge(tip, now time.Time) string {
 	}
 }
 
-// padLeft right-aligns s in w columns, so a column of ages lines up on its unit
-// rather than on its first digit.
+// keyColWidth aligns the key column at the widest key, so the ← arrows line up —
+// bounded by its cap and by what the panel has left for the ref, since a key is
+// user-supplied (e renames it to anything) and one long one used to pad every
+// drawn row past the panel edge. That padding is what doubled the frame in area
+// 14's measurements; deriveKey stopped seeding the long ones, and this stops a
+// hand-typed one doing the same.
 //
-// len() is the correct measure here and only here: relativeAge emits ASCII by
-// construction — digits and a unit — so there is no wide rune to mismeasure.
-// The branch-name columns that pad with len() over arbitrary refs are area 15's
-// bug, not this one.
-func padLeft(s string, w int) string {
-	if n := w - len(s); n > 0 {
-		return strings.Repeat(" ", n) + s
-	}
-	return s
-}
-
-// keyColWidth aligns the key column at the widest key, so the ← arrows line up.
 // Measured over the visible rows only: the column exists to align what is on
 // screen, and widening it for a ref the filter is hiding would pad every drawn
-// row past a panel none of them need.
+// row past a panel none of them need (DESIGN.md §1).
 func (m wizardModel) keyColWidth(visible []int) int {
-	w := 0
-	for _, i := range visible {
-		if len(m.targets[i].key) > w {
-			w = len(m.targets[i].key)
+	w := widestCell(len(visible), maxKeyCol, func(i int) string { return m.targets[visible[i]].key })
+	cw := contentWidth(m.styles, m.width)
+	if cw <= 0 {
+		return w // size unknown: natural sizing
+	}
+	// Leave the ref — the load-bearing half of the row — a usable share.
+	if avail := cw - wizardRowFixed - minNameCol; w > avail {
+		if w = avail; w < 1 {
+			w = 1
 		}
 	}
 	return w
