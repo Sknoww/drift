@@ -136,7 +136,10 @@ reality. `◆` is tracked (git status won't show it), `◇` is untracked.
 
 ## Configuration
 
-Two files live side by side under `<git-dir>/drift/`:
+Two files live side by side under `<git-dir>/drift/`, and one — optional — lives with
+your other tools' config, in `~/.config/drift/`.
+
+### Per repo
 
 - **`config.json`** — yours to hand-edit. Targets, unmergeable classes, and where
   declarations may be written.
@@ -162,6 +165,36 @@ Two files live side by side under `<git-dir>/drift/`:
 where `w` may write; omit the key entirely and both destinations are offered. A team
 with no committed `.gitattributes` lists only `"local"`, and the shared destination
 stops being offered at all, so it can never be picked by accident.
+
+### Per user
+
+**`~/.config/drift/prefs.json`** — optional, and absent on most machines. Preferences
+belong to you rather than to a checkout, so they live here instead of being re-declared
+in every repo you clone. `$XDG_CONFIG_HOME` is honoured where it's set.
+
+```json
+{
+  "selection": "pair"
+}
+```
+
+`selection` is how the cursor's row is drawn:
+
+| value | |
+|---|---|
+| `pair` | a subtle band under a left-edge `▌` — the default |
+| `contrast` | a grey band that reads on its own, no marker |
+| `accent` | an accent hue rather than a lighter grey |
+| `marker` | the left-edge `▌` only, no background at all |
+
+An unrecognized value is an error naming the file, not a silent fall back to the
+default — a treatment that quietly didn't apply looks exactly like one that did.
+
+`DRIFT_BAND` overrides the file for a single run (`DRIFT_BAND=marker drift`), which is
+how to try one before saving it. `DRIFT_BG=light|dark` forces which end of the palette
+is used: drift picks it from the terminal's background, and this is how to check that
+detection got it right. While either is set the title says which treatment and which
+background are actually in force.
 
 ## Sandbox
 

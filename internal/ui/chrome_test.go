@@ -8,6 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // --- the frame, measured whole ---------------------------------------------
@@ -149,7 +151,7 @@ func TestWizardFrameFitsTheTerminal(t *testing.T) {
 		refs[i] = fmt.Sprintf("origin/feature/TEAM-%04d-a-rather-long-branch-name", i)
 	}
 	for _, width := range []int{minTerminalWidth, 80, 100} {
-		var m tea.Model = newWizard(remoteBranches(refs...))
+		var m tea.Model = newWizard(remoteBranches(refs...), store.Prefs{})
 		m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
 		w := m.(wizardModel)
 		w.notice = "pick at least one target — origin/feature/TEAM-0000-a-rather-long-branch-name was not selected"
@@ -220,7 +222,7 @@ func TestNoticeIsAlwaysOneLine(t *testing.T) {
 // clipped against a guess — the rule contentWidth already follows. The newline
 // collapse is not a width decision and applies regardless.
 func TestChromeDoesNotClipAgainstAnUnknownWidth(t *testing.T) {
-	s := newStyles()
+	s := newStyles(store.Prefs{})
 	long := strings.Repeat("x", 300)
 	if got := chromeText(s, 0, long); got != long {
 		t.Errorf("chromeText clipped against an unknown width: %d cells", lipgloss.Width(got))

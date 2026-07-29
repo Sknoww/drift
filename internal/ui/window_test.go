@@ -86,7 +86,7 @@ func TestListBodyMarksBothClippedEdges(t *testing.T) {
 		rows[i] = fmt.Sprintf("row-%03d", i)
 	}
 	// height 25 - 5 chrome - 1 header = 19 rows of budget.
-	body := listBody(newStyles(), 80, 25, []string{"header"}, rows, 50)
+	body := listBody(newStyles(store.Prefs{}), 80, 25, []string{"header"}, rows, 50)
 
 	if !strings.Contains(body, "↑ ") || !strings.Contains(body, "↓ ") {
 		t.Errorf("a list clipped at both ends must say so; got:\n%s", body)
@@ -106,7 +106,7 @@ func TestListBodyMarksBothClippedEdges(t *testing.T) {
 // band. Passing -1 must not be read as "row zero".
 func TestListBodyWithoutASelection(t *testing.T) {
 	rows := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
-	body := listBody(newStyles(), 80, 12, nil, rows, -1)
+	body := listBody(newStyles(store.Prefs{}), 80, 12, nil, rows, -1)
 
 	if !strings.Contains(body, "a") || strings.Contains(body, "h") {
 		t.Errorf("an unselected list should window from the top; got:\n%s", body)
@@ -130,7 +130,7 @@ func TestWizardBoundsTheFrameAtEveryCursorPosition(t *testing.T) {
 		remotes[i] = fmt.Sprintf("origin/b%04d", i) // fixed width: no wrapping, no prefix collisions
 	}
 
-	var m tea.Model = newWizard(remoteBranches(remotes...))
+	var m tea.Model = newWizard(remoteBranches(remotes...), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 
 	for cursor := 0; cursor < refs; cursor++ {
@@ -166,7 +166,7 @@ func TestWizardBoundsTheFrameWithLongRefNames(t *testing.T) {
 		remotes[i] = fmt.Sprintf("origin/feature/TEAM-%04d-a-rather-long-branch-name-of-the-kind-real-repos-have", i)
 	}
 
-	var m tea.Model = newWizard(remoteBranches(remotes...))
+	var m tea.Model = newWizard(remoteBranches(remotes...), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 
 	for cursor := 0; cursor < refs; cursor++ {
@@ -186,7 +186,7 @@ func TestWizardBoundsTheFrameWithLongRefNames(t *testing.T) {
 // draws a left-edge marker the gutter is not the row's to spend, and clipping to
 // the panel would let every row overflow by exactly the gutter (band.go).
 func TestClipRowCapsAtTheRowWidth(t *testing.T) {
-	s := newStyles()
+	s := newStyles(store.Prefs{})
 	for _, width := range []int{40, 80, 100} {
 		rw := rowWidth(s, width)
 		long := s.branch.Render(strings.Repeat("x", rw+50))
@@ -217,7 +217,7 @@ func TestWizardSavesSelectionsScrolledOutOfView(t *testing.T) {
 		remotes[i] = fmt.Sprintf("origin/b%04d", i)
 	}
 
-	var m tea.Model = newWizard(remoteBranches(remotes...))
+	var m tea.Model = newWizard(remoteBranches(remotes...), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace}) // select the first ref
 
@@ -248,7 +248,7 @@ func TestDashboardBoundsTheFrameAtEveryCursorPosition(t *testing.T) {
 		}
 	}
 
-	m := New(nil, sampleConfig(), store.Store{Tickets: tickets})
+	m := New(nil, sampleConfig(), store.Store{Tickets: tickets}, store.Prefs{})
 	m.loading = false
 	m.width, m.height = 100, height
 	for _, t := range tickets {

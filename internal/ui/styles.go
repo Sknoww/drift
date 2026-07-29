@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Sknoww/drift/internal/store"
+)
 
 // Color roles, pinned here on the first build per DESIGN.md §1. Meaning drives
 // the choice: behind>0 is the one alarm that matters and reads as a warning;
@@ -76,9 +80,16 @@ type styles struct {
 	band bandTreatment
 }
 
-func newStyles() styles {
+// newStyles builds the style set for one run, under the user's preferences.
+//
+// Prefs are taken as a whole rather than as the one string used today: theming
+// (roadmap area 16b) pours colours into these same roles, so it should add a
+// field to Prefs rather than a parameter to every caller. The zero value is the
+// default set, which is what a machine with no prefs.json has — and what the
+// tests want.
+func newStyles(prefs store.Prefs) styles {
 	applyBackgroundOverride()
-	band := activeBand()
+	band := activeBand(prefs.Selection)
 	return styles{
 		app: lipgloss.NewStyle().Padding(0, 1),
 		panel: lipgloss.NewStyle().
@@ -110,8 +121,8 @@ func newStyles() styles {
 	}
 }
 
-// titleText is the app title, carrying the active selection treatment while the
-// area-15 harness is being driven and nothing once DRIFT_BAND is unset. It is
+// titleText is the app title, carrying the active selection treatment while
+// DRIFT_BAND or DRIFT_BG is set and nothing on an ordinary run. It is
 // one helper so the dashboard header and the wizard's own title agree, and so
 // the label is measured by whatever truncation each of them already applies.
 func titleText(s styles) string {

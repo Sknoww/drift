@@ -428,7 +428,7 @@ func shelveRepoModel(t *testing.T, dir string) Model {
 	st := store.Store{Tickets: []store.Ticket{{ID: "ABC-1", Branches: []store.TicketBranch{
 		{Branch: "feature", TargetKey: "main"},
 	}}}}
-	m := New(git.New(dir), cfg, st)
+	m := New(git.New(dir), cfg, st, store.Prefs{})
 	m.loading = false
 	m.current = "feature"
 	m.expanded["ABC-1"] = true

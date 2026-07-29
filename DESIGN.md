@@ -44,6 +44,10 @@ the home row. "Looks like raw text output" is a bug.
     light value is inert and the result is indistinguishable from light values that
     were badly chosen. `DRIFT_BG` forces an end, and the title names the detected one
     while it or `DRIFT_BAND` is set, so the two can be told apart from the screen.
+    Both are documented overrides now (area 16a), not a temporary harness — a
+    treatment saved in `prefs.json` deliberately leaves the title alone, since the
+    label belongs to a run being experimented on rather than to a decision already
+    made.
 - **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
   title (`drift`) sits on its own line above the panel, with the checked-out branch or
   a refresh spinner to its right. The panel spans the **full terminal width** (computed
@@ -485,7 +489,15 @@ failure being fixed, while a glyph in an accent colour does not depend on the
 background at all. Neither half has to carry the signal alone. It reverses the
 band-only rule this section used to state, so it earns
 [ADR 0001](./docs/adr/0001-selection-band-and-marker.md); the alternatives that lost
-are still in `band.go`, and become a per-user setting in area 16.
+are still in `band.go`, and are now a per-user setting ✅ — `"selection"` in
+`~/.config/drift/prefs.json` (area 16a). Their names are `store`'s rather than the ui
+package's, because a name in a config file is persistent and public where the
+rendering behind it is not; a test asserts the two sets agree, so a treatment can
+never be added without becoming selectable, or a name shipped without a treatment
+behind it. Resolution is `DRIFT_BAND` → `prefs.json` → the default, and a bad value
+reads differently at each level on purpose: a typo in the file refuses to start (it
+would otherwise render the default and look like it worked), while a typo in the
+env var falls through to the file and is named in the title.
 - **The band pins both ends, background *and* foreground.** A background with no
   foreground was the same defect's other half: on a light terminal the default
   foreground is dark, so the band rendered dark-on-dark and the one thing that must

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // --- the matcher ------------------------------------------------------------
@@ -78,7 +80,7 @@ func wizardWithRefs(n int, format string) tea.Model {
 	for i := range refs {
 		refs[i] = fmt.Sprintf(format, i)
 	}
-	var m tea.Model = newWizard(remoteBranches(refs...))
+	var m tea.Model = newWizard(remoteBranches(refs...), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	return m
 }
@@ -125,7 +127,7 @@ func TestWizardFilterNarrowsAndCountsOnScreen(t *testing.T) {
 // Matching is case-insensitive, which is the whole reason it is a substring
 // filter and not a prefix one — nobody types a branch name's capitalisation.
 func TestWizardFilterIsCaseInsensitive(t *testing.T) {
-	var m tea.Model = newWizard(remoteBranches("origin/TEAM-1234-fix", "origin/main"))
+	var m tea.Model = newWizard(remoteBranches("origin/TEAM-1234-fix", "origin/main"), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = typeRunes(pressSlash(m), "team")
 
@@ -165,7 +167,7 @@ func TestWizardFilterSaysWhenNothingMatches(t *testing.T) {
 // While the field has focus, the screen's own verbs have to type. `e`, `j` and
 // `space` are all bound on this screen and all appear in real branch names.
 func TestWizardFilterSwallowsTheScreensVerbs(t *testing.T) {
-	var m tea.Model = newWizard(remoteBranches("origin/jekyll spaced", "origin/main"))
+	var m tea.Model = newWizard(remoteBranches("origin/jekyll spaced", "origin/main"), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = typeRunes(pressSlash(m), "je")
 
@@ -195,7 +197,7 @@ func TestWizardFilterSwallowsTheScreensVerbs(t *testing.T) {
 // field. Ref names are full of them, so this is the domain's normal case rather
 // than an edge one.
 func TestFilterQueryTakesSlashes(t *testing.T) {
-	var m tea.Model = newWizard(remoteBranches("origin/feature/TEAM-1", "origin/hotfix/TEAM-1"))
+	var m tea.Model = newWizard(remoteBranches("origin/feature/TEAM-1", "origin/hotfix/TEAM-1"), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = typeRunes(pressSlash(m), "feature/TEAM")
 
@@ -281,7 +283,7 @@ func TestWizardFilterNeverDropsASelection(t *testing.T) {
 // see. The screen reveals it instead of only reporting it.
 func TestWizardBlockedSaveRevealsTheHiddenRef(t *testing.T) {
 	// Two refs whose keys collide, so the save blocks on the duplicate.
-	var m tea.Model = newWizard(remoteBranches("origin/main", "upstream/main"))
+	var m tea.Model = newWizard(remoteBranches("origin/main", "upstream/main"), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 
 	w := m.(wizardModel)

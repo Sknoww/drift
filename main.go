@@ -81,12 +81,21 @@ func run() error {
 	ctx := context.Background()
 	repo := git.New(".")
 
+	// Preferences first, and outside the repo entirely: they are the user's,
+	// not this checkout's, and the wizard below renders with them too. Most
+	// machines have no prefs.json, which is not an error — a file that exists
+	// and is wrong is, and it should be reported before anything opens.
+	prefs, err := store.LoadPrefs()
+	if err != nil {
+		return err
+	}
+
 	cfg, paths, err := store.LoadConfig(ctx, repo)
 	if errors.Is(err, store.ErrPlaceholderConfig) {
 		// Unconfigured: the wizard is the front door, the placeholder file the
 		// fallback. A wizard that runs to completion leaves cfg configured and
 		// falls through to the dashboard; anything else prints where to edit.
-		configured, err := firstRun(ctx, repo, paths, &cfg)
+		configured, err := firstRun(ctx, repo, paths, &cfg, prefs)
 		if err != nil {
 			return err
 		}
@@ -107,7 +116,7 @@ func run() error {
 		return err
 	}
 
-	prog := tea.NewProgram(ui.New(repo, cfg, state), tea.WithAltScreen())
+	prog := tea.NewProgram(ui.New(repo, cfg, state, prefs), tea.WithAltScreen())
 	_, err = prog.Run()
 	return err
 }
@@ -117,7 +126,7 @@ func run() error {
 // so. It declines quietly — leaving *cfg untouched and the placeholder in place
 // — when the run is non-interactive or the repo has no remote refs to offer, so
 // the caller can fall back to the hand-edit path.
-func firstRun(ctx context.Context, repo *git.Repo, paths store.Paths, cfg *store.Config) (bool, error) {
+func firstRun(ctx context.Context, repo *git.Repo, paths store.Paths, cfg *store.Config, prefs store.Prefs) (bool, error) {
 	if !interactive() {
 		return false, nil
 	}
@@ -130,7 +139,7 @@ func firstRun(ctx context.Context, repo *git.Repo, paths store.Paths, cfg *store
 		return false, nil
 	}
 
-	targets, ok, err := ui.RunWizard(repo, branches)
+	targets, ok, err := ui.RunWizard(repo, branches, prefs)
 	if err != nil || !ok {
 		return false, err
 	}

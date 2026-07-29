@@ -161,7 +161,8 @@ an ADR in `docs/adr/`.
 | Git access | Shell out via `os/exec`, parse machine-readable output (`for-each-ref`, `status --porcelain`, `rev-list --count`). No Git library — this is how lazygit works and is the fastest path. Every call takes a `context.Context`, so a hung `fetch` is cancellable from the UI |
 | State | Elm-style `Model`/`Update`/`View`. Git calls run as async `Cmd`s so the UI never blocks; results return as messages |
 | Persistence | JSON under `<.git>/drift/` (found via `git rev-parse --absolute-git-dir`) — `config.json` (targets, unmergeable globs, allowed declare destinations) and `state.json` (tickets). Inside `.git` makes it per-repo and unversioned for free. `config.json` is always hand-editable and Drift never rewrites one that exists, but hand-editing is not the *only* way in: a first-run wizard seeds targets from real refs (roadmap area 4), and the placeholder is the fallback for when it's declined or unavailable |
-| Config resolution | A **search path** of locations Drift reads config from. Entry zero is `<.git>/drift/` — per-repo, local-only, because the author has no rights to commit repo-wide files. A **user-global** root (`~/.config/drift/`, XDG-respecting) is the next entry, holding per-user preferences — the **selection style** is its first inhabitant (area 16), with keymaps (area 12) riding on the root it builds rather than building it. A one-string setting is a better first load for a new config root than a whole keymap format. Defining a search path from the start makes each new root — user-global now, a committed team-wide config later — a purely additive change, no migration |
+| Config resolution | **Two roots, split by scope.** `<.git>/drift/` is per-repo, local-only, and holds `config.json` (found through a **search path**, entry zero today — a committed team-wide config later is a new entry, not a migration). `~/.config/drift/` is the **user-global** root, XDG-respecting, and holds `prefs.json` — the **selection style** is its first inhabitant (area 16a), theming its second (16b), and keymaps (area 12) ride on the root rather than building it. A one-string setting is a better first load for a new root than a whole keymap format |
+| Why prefs is its own file | The user-global root holds a **differently-named file**, not a second `config.json` on the search path. A user-global `config.json` would be a file that could plausibly hold `targets`, which is meaningless outside a repo; one file with one purpose cannot make that offer. For the same reason `prefs.json` has **no search path of its own**: a preference is a person's, so a second root would be a repo or a machine overriding a choice that was never theirs to make. Drift never *writes* it — `config.json` has a placeholder because a repo cannot work unconfigured, while a machine with no `prefs.json` simply has the defaults. A file that exists and names something Drift doesn't recognize is an **error naming the file**, the same rule as `declare.destinations`: a preference that quietly didn't apply is indistinguishable on screen from one that did. `DRIFT_BAND` and `DRIFT_BG` are documented single-run overrides above the file — "for this run" is a thing an edited file cannot say |
 | Keybindings | **Named actions are the contract; keys are a rebindable default.** Every screen dispatches on a named action, never a key literal, so a user-global `~/.config/drift/keymap.json` can override any binding as a pure additive layer. The named-action dispatch is adopted in the dashboard (area 3) from day one, so customization (area 12) is never a retrofit. Full keymap lives in `DESIGN.md` |
 | Grouping | **Manual pairing.** Ticket ID substring-matches candidate branches to pre-filter; the user confirms and assigns targets. Branch naming is inconsistent, so target is **never** parsed from the branch name. Optional pattern-based *pre-assignment* for teams with rigid conventions is deferred (roadmap area 10) and would still never be silent |
 | Invocation | Run from inside the repo, lazygit-style |
@@ -207,6 +208,13 @@ type LocalOnly struct {
 type Store struct {
     Tickets   []Ticket
     LocalOnly []LocalOnly // flat, repo-global — never tied to a ticket
+}
+
+// Prefs — the user-global half. ~/.config/drift/prefs.json, hand-edited, and
+// absent on most machines. Every field is optional and the zero value is the
+// default set, so a user who has never heard of the file loses nothing.
+type Prefs struct {
+    Selection string // "pair" | "contrast" | "accent" | "marker"; "" is unset
 }
 ```
 

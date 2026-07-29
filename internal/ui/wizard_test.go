@@ -9,13 +9,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sknoww/drift/internal/git"
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // The wizard's git (listing remote refs) and IO (writing config) live in the
 // caller; these tests drive the selection logic that decides what gets written.
 
 func wizardWith(refs ...string) wizardModel {
-	return newWizard(remoteBranches(refs...))
+	return newWizard(remoteBranches(refs...), store.Prefs{})
 }
 
 // remoteBranches wraps bare ref names as the branch list the wizard is built
@@ -314,7 +315,7 @@ func TestWizardPreservesTheOrderItIsGiven(t *testing.T) {
 		{Ref: "origin/release/r2-perf"},
 		{Ref: "origin/main"},
 		{Ref: "origin/abandoned"},
-	})
+	}, store.Prefs{})
 	want := []string{"origin/release/r2-perf", "origin/main", "origin/abandoned"}
 	for i, ref := range want {
 		if m.targets[i].ref != ref {
@@ -329,7 +330,7 @@ func TestWizardRendersTheAgeColumn(t *testing.T) {
 	m := newWizard([]git.RemoteBranch{
 		{Ref: "origin/main", Updated: now.Add(-2 * 24 * time.Hour)},
 		{Ref: "origin/dormant", Updated: now.Add(-400 * 24 * time.Hour)},
-	})
+	}, store.Prefs{})
 	m.now = now
 	m.width, m.height = 100, 24
 

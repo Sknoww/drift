@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Sknoww/drift/internal/store"
 )
 
 // Selection treatments — how the cursor's row is drawn (roadmap area 15).
@@ -34,10 +36,12 @@ import (
 // defect this pass exists to fix, and offering it as a choice would ship it as
 // a supported option.
 //
-// DRIFT_BAND selects between them, which is temporary: a selection style is a
-// per-user preference, and its home is the user-global config root (roadmap
-// area 16). Until that lands the environment is the only way in, and it is
-// deliberately undocumented in the README.
+// Which one is drawn is a per-user preference, so its home is the user-global
+// prefs.json (roadmap area 16a) and the names are store's — see
+// store.SelectionPair and friends. DRIFT_BAND overrides the file for one run
+// and is now documented rather than a temporary harness: trying a treatment
+// against your own repo is how the choice gets made in the first place, and an
+// env var says "for this run" in a way an edited file cannot.
 const bandMarkerGlyph = "▌"
 
 // bandTreatment is one candidate rendering of the selected row.
@@ -65,7 +69,7 @@ type bandTreatment struct {
 // light versus dark, not colour depth.
 var bandTreatments = []bandTreatment{
 	{
-		name:   "pair",
+		name:   store.SelectionPair,
 		desc:   "a subtle band under a left-edge marker (fzf, Telescope) — the default",
 		fill:   true,
 		marker: true,
@@ -75,7 +79,7 @@ var bandTreatments = []bandTreatment{
 		accent: lipgloss.AdaptiveColor{Light: "26", Dark: "39"},
 	},
 	{
-		name: "contrast",
+		name: store.SelectionContrast,
 		desc: "the same idea, raised: a grey that actually reads, both ends pinned",
 		fill: true,
 		bold: true,
@@ -83,7 +87,7 @@ var bandTreatments = []bandTreatment{
 		fg:   lipgloss.AdaptiveColor{Light: "232", Dark: "255"},
 	},
 	{
-		name: "accent",
+		name: store.SelectionAccent,
 		desc: "an accent hue rather than a lighter grey — the lazygit/k9s shape",
 		fill: true,
 		bold: true,
@@ -91,7 +95,7 @@ var bandTreatments = []bandTreatment{
 		fg:   lipgloss.AdaptiveColor{Light: "232", Dark: "255"},
 	},
 	{
-		name:   "marker",
+		name:   store.SelectionMarker,
 		desc:   "left-edge ▌ only, no background at all — deletes reopenBand",
 		marker: true,
 		accent: lipgloss.AdaptiveColor{Light: "26", Dark: "39"},
@@ -143,27 +147,54 @@ func (t bandTreatment) markerStyle() lipgloss.Style {
 	return st
 }
 
-// activeBand reads the treatment to render from DRIFT_BAND.
+// activeBand resolves the treatment to render: DRIFT_BAND, then the preference
+// read from prefs.json, then the default. The env var wins because it means
+// "for this run" — trying a treatment must not require editing the file you are
+// trying to decide the contents of.
 //
-// Unset — and unknown, which is a typo — is the default, so a run with nothing
-// set gets the treatment that was chosen rather than a failure. A typo is not
-// silent: while any override is set the title carries the treatment actually in
-// force (bandLabel), so what is on screen always names itself.
-func activeBand() bandTreatment {
-	want := strings.TrimSpace(os.Getenv("DRIFT_BAND"))
-	for _, t := range bandTreatments {
-		if t.name == want {
-			return t
-		}
+// An unrecognised name falls through to the next source rather than failing,
+// which reads differently at each level and is meant to. A bad *preference*
+// never reaches here at all: store.LoadPrefs validates the file and refuses to
+// start, since a typo silently rendering the default is indistinguishable from
+// the requested treatment working. A bad DRIFT_BAND is a shell typo in a
+// throwaway override, and it is not silent either — while any override is set
+// the title carries the treatment actually in force (bandLabel), so what is on
+// screen always names itself.
+func activeBand(pref string) bandTreatment {
+	if t, ok := bandNamed(os.Getenv("DRIFT_BAND")); ok {
+		return t
+	}
+	if t, ok := bandNamed(pref); ok {
+		return t
 	}
 	return bandTreatments[0]
 }
 
-// bandLabel is the suffix the title carries while either override is set, and
-// empty on an ordinary run — a default install must never carry diagnostics in
-// its title. It names the treatment actually resolved, not the string asked
-// for, so a typo reads as the default rather than as the treatment the user
-// thought they had selected.
+// bandNamed looks a treatment up by name, reporting whether it exists. An empty
+// name is simply an unset source, not a miss worth distinguishing.
+func bandNamed(name string) (bandTreatment, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return bandTreatment{}, false
+	}
+	for _, t := range bandTreatments {
+		if t.name == name {
+			return t, true
+		}
+	}
+	return bandTreatment{}, false
+}
+
+// bandLabel is the suffix the title carries while either environment override
+// is set, and empty on an ordinary run — a default install must never carry
+// diagnostics in its title. It names the treatment actually resolved, not the
+// string asked for, so a typo reads as the default rather than as the treatment
+// the user thought they had selected.
+//
+// A treatment chosen in prefs.json deliberately does *not* light it up. The
+// label is for a run being experimented on; a saved preference is a decision
+// already made, and stamping it on the title of every run afterwards would be
+// noise about something the user is no longer asking.
 //
 // It carries the detected background alongside it, because that is the half of
 // the palette work with a silent failure mode: every Light value is inert if

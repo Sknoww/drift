@@ -234,7 +234,7 @@ func TestUnknownWidthStillDraws(t *testing.T) {
 // The wizard is its own Bubble Tea program with its own View, so it needs the
 // same guard — a squeezed pane must say the same thing wherever the user is.
 func TestWizardRefusesToDrawIntoANarrowTerminal(t *testing.T) {
-	var m tea.Model = newWizard(remoteBranches("origin/main", "origin/develop"))
+	var m tea.Model = newWizard(remoteBranches("origin/main", "origin/develop"), store.Prefs{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
 
 	if view := m.(wizardModel).View(); !strings.Contains(view, "too narrow") {
@@ -256,7 +256,7 @@ func TestFrameStaysInsideTheTerminalAtTheWidthFloor(t *testing.T) {
 	}
 
 	for _, width := range []int{minTerminalWidth, 70, 80, 100} {
-		var m tea.Model = newWizard(remoteBranches(refs...))
+		var m tea.Model = newWizard(remoteBranches(refs...), store.Prefs{})
 		m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 
 		for cursor := 0; cursor < len(refs); cursor++ {
@@ -272,7 +272,7 @@ func TestFrameStaysInsideTheTerminalAtTheWidthFloor(t *testing.T) {
 // The unit underneath it: a header line wider than the panel costs the lines it
 // actually wraps to, not one.
 func TestHeaderLinesCountsWrapping(t *testing.T) {
-	s := newStyles()
+	s := newStyles(store.Prefs{})
 	cw := contentWidth(s, 60)
 
 	cases := []struct {

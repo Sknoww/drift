@@ -66,9 +66,9 @@ type wizardTarget struct {
 // the caller gates on it and falls back before ever reaching here. Their order
 // is preserved as given: git sorted them by recency (git.RemoteBranches), and
 // re-sorting here would throw that away.
-func RunWizard(repo *git.Repo, branches []git.RemoteBranch) (targets []store.Target, ok bool, err error) {
+func RunWizard(repo *git.Repo, branches []git.RemoteBranch, prefs store.Prefs) (targets []store.Target, ok bool, err error) {
 	_ = repo // the wizard does no git of its own; refs are gathered by the caller
-	out, err := tea.NewProgram(newWizard(branches), tea.WithAltScreen()).Run()
+	out, err := tea.NewProgram(newWizard(branches, prefs), tea.WithAltScreen()).Run()
 	if err != nil {
 		return nil, false, err
 	}
@@ -79,13 +79,13 @@ func RunWizard(repo *git.Repo, branches []git.RemoteBranch) (targets []store.Tar
 	return m.result, true, nil
 }
 
-func newWizard(branches []git.RemoteBranch) wizardModel {
+func newWizard(branches []git.RemoteBranch, prefs store.Prefs) wizardModel {
 	targets := make([]wizardTarget, len(branches))
 	for i, b := range branches {
 		targets[i] = wizardTarget{ref: b.Ref, key: deriveKey(b.Ref), updated: b.Updated}
 	}
 	return wizardModel{
-		styles:     newStyles(),
+		styles:     newStyles(prefs),
 		keys:       DefaultWizardKeys(),
 		filterKeys: DefaultFilterKeys(),
 		targets:    targets,

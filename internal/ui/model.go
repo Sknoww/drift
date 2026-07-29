@@ -157,9 +157,14 @@ type Model struct {
 	targetKeyWidth int // widest configured Target.Key, for column alignment
 }
 
-// New builds the dashboard model over an already-loaded config and store. Git
-// signals are not computed here — Init kicks off the first async sweep.
-func New(repo *git.Repo, cfg store.Config, st store.Store) Model {
+// New builds the dashboard model over an already-loaded config, store and
+// preferences. Git signals are not computed here — Init kicks off the first
+// async sweep.
+//
+// Prefs are per-user where cfg is per-repo, and they are read once here rather
+// than consulted at each use: one run renders one selection treatment on every
+// screen it draws.
+func New(repo *git.Repo, cfg store.Config, st store.Store, prefs store.Prefs) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
@@ -168,7 +173,7 @@ func New(repo *git.Repo, cfg store.Config, st store.Store) Model {
 		cfg:            cfg,
 		store:          st,
 		keys:           defaultKeymaps(),
-		styles:         newStyles(),
+		styles:         newStyles(prefs),
 		expanded:       make(map[string]bool),
 		status:         make(map[string]branchStatus),
 		loading:        true,

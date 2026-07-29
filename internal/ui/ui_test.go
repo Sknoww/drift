@@ -41,7 +41,7 @@ func sampleStore() store.Store {
 // newModel builds a dashboard over a repo that is never dialed — the view and
 // dispatch paths under test never shell out.
 func newModel() Model {
-	m := New(git.New(t_nowhere), sampleConfig(), sampleStore())
+	m := New(git.New(t_nowhere), sampleConfig(), sampleStore(), store.Prefs{})
 	m.loading = false // pretend the first sweep already landed
 	return m
 }
@@ -530,7 +530,7 @@ func TestSelectBandFillsPanelWidth(t *testing.T) {
 }
 
 func TestViewEmptyStateTeaches(t *testing.T) {
-	m := New(git.New(t_nowhere), sampleConfig(), store.Store{})
+	m := New(git.New(t_nowhere), sampleConfig(), store.Store{}, store.Prefs{})
 	m.loading = false
 	out := m.View()
 	if !strings.Contains(out, "No tickets tracked") {
@@ -560,7 +560,7 @@ func TestViewRendersUnknownTarget(t *testing.T) {
 	st := store.Store{Tickets: []store.Ticket{
 		{ID: "X", Branches: []store.TicketBranch{{Branch: "b", TargetKey: "gone"}}},
 	}}
-	m := New(git.New(t_nowhere), sampleConfig(), st)
+	m := New(git.New(t_nowhere), sampleConfig(), st, store.Prefs{})
 	m.loading = false
 	m.expanded["X"] = true
 	m.status = map[string]branchStatus{statusKey("X", "b"): {known: false}}
@@ -1218,7 +1218,7 @@ func TestDeclareViewShowsBothQuestions(t *testing.T) {
 // trim the band's trailing spaces; asserting on the geometry catches it whatever
 // the profile.
 func TestPanelTextAreaMatchesTheBandWidth(t *testing.T) {
-	s := newStyles()
+	s := newStyles(store.Prefs{})
 	for _, width := range []int{40, 80, 100, 137, 200} {
 		panel := panelStyle(s, width)
 		textArea := panel.GetWidth() - panel.GetHorizontalPadding()
@@ -1238,7 +1238,7 @@ func TestPanelTextAreaMatchesTheBandWidth(t *testing.T) {
 
 func TestSelectedRowFitsThePanelWithoutWrapping(t *testing.T) {
 	const width = 100
-	s := newStyles()
+	s := newStyles(store.Prefs{})
 	rows := selectBand(s, width, []string{"a branch row", "another"}, 0)
 
 	panel := panelStyle(s, width)
@@ -1249,7 +1249,7 @@ func TestSelectedRowFitsThePanelWithoutWrapping(t *testing.T) {
 }
 
 func TestPanelFallsBackBeforeTheFirstWindowSize(t *testing.T) {
-	s := newStyles()
+	s := newStyles(store.Prefs{})
 	if w := panelStyle(s, 0).GetWidth(); w != 0 {
 		t.Errorf("unknown terminal size: panel width = %d, want natural content sizing", w)
 	}
@@ -1282,7 +1282,7 @@ func TestDiffLineRoles(t *testing.T) {
 
 func TestColorizeDiffKeepsEveryLine(t *testing.T) {
 	raw := "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-old\n+new\n context\n"
-	got := colorizeDiff(newStyles(), raw)
+	got := colorizeDiff(newStyles(store.Prefs{}), raw)
 	if lines := strings.Split(got, "\n"); len(lines) != 6 {
 		t.Errorf("colorizeDiff() produced %d lines, want 6:\n%q", len(lines), got)
 	}
@@ -1817,7 +1817,7 @@ func TestLocalOnlyLoopAgainstARealRepo(t *testing.T) {
 	}
 
 	repo := git.New(dir)
-	m := New(repo, sampleConfig(), store.Store{})
+	m := New(repo, sampleConfig(), store.Store{}, store.Prefs{})
 	m.loading = false
 
 	next, cmd := m.dispatch(ActionLocalOnly)

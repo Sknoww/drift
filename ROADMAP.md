@@ -225,10 +225,10 @@ is; link its spec/ADR once one exists.
     "stop, find the right tool, hunt for what changed" into one keypress that shows the
     diff and launches the tool. Extends areas 5/7; never a prerequisite for them.
 12. ⏸️ **Custom keymaps** — deferred. Rebind any action via a user-global
-    `~/.config/drift/keymap.json` (XDG), added as a user-global entry on the config
-    search path — the additive move the search path was designed for. Defaults are a
-    considered starting point, not sacred; an override rebinds any action, and an action
-    left unbound keeps its default.
+    `~/.config/drift/keymap.json` (XDG) — a sibling of `prefs.json` under the root area
+    16a built and proved, on the same argument that kept prefs out of `config.json`: one
+    file, one purpose. Defaults are a considered starting point, not sacred; an override
+    rebinds any action, and an action left unbound keeps its default.
     - **The structural half is not deferred:** every screen dispatches on a *named
       action*, never a key literal, starting with the dashboard (area 3). That makes
       customization a pure override layer instead of a retrofit — see `DESIGN.md` §3
@@ -236,8 +236,10 @@ is; link its spec/ADR once one exists.
       the same "never guess" rule as pairing
     - **The `?` overlay already rides the keymap** (area 3): its key table is generated
       from whatever bindings are live, so a rebind documents itself with no code change
-    - Drift's first config outside `<.git>/drift/`; keymaps are per-user, so a per-repo
-      home would be the wrong scope
+    - Keymaps are per-user, so a per-repo home would be the wrong scope. Area 16a is
+      what makes that a settled point rather than an open one: the root, the XDG rule,
+      the never-write rule and the reject-a-typo rule all exist now, so this area is a
+      file format and nothing else
 13. ⏸️ **Side-by-side diff** — deferred. A second rendering of the area-5 diff, as a
     **toggle** on the panel (never a mode, and never a replacement — the unified view
     stays the default). Deferred on three counts, all worth re-testing before building:
@@ -568,30 +570,65 @@ is; link its spec/ADR once one exists.
           whole and never scrolls — clipping against a guessed height would make a short
           overlay claim a scroll it doesn't have
     - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list
-16. ⏳ **User-global preferences: selection style, then theming** — the second entry on
-    the config search path
-    (`~/.config/drift/`, XDG-respecting), which `CONTEXT.md` has declared from the start
-    and area 2 built the path for. Purely additive: a new root, no migration, and the
-    per-repo `<.git>/drift/config.json` is untouched.
-    - **Selection style is its first inhabitant**, ahead of keymaps. Area 15 built four
-      treatments, all four read well, and picking one for everybody is the wrong shape of
-      answer — but the choice is a *person's*, not a repo's, so it must not live in the
-      per-repo config where it would be re-declared in every repo. That is precisely the
-      scope the user-global root exists for
-    - **Area 12 (custom keymaps) then rides on this** rather than building it. Keymaps
-      were always going to need this root; a one-string setting is a far better first
-      load for it than a whole keymap format, so the layer gets built once and proved on
-      something small
-    - `DRIFT_BAND` and `DRIFT_BG` are the interim way in, and are deliberately
-      undocumented. They go away — or become documented overrides of the config value —
-      when this lands; an env var is a weak home for a setting in a tool that has a
-      config file
-    - **Theming — pick the accent, not just the shape.** Raised by dogfooding area 15's
+16. 🛠️ **User-global preferences** — the second config root (`~/.config/drift/`,
+    XDG-respecting), which `CONTEXT.md` has declared from the start. Purely additive: a
+    new root, no migration, and the per-repo `<.git>/drift/config.json` is untouched.
+    Split in two: **16a** shipped the layer on the smallest real setting, **16b** is
+    theming — the half with a wrong answer.
+    - ✅ **16a — Selection style, and the root it lives in.** `~/.config/drift/prefs.json`,
+      hand-edited, optional, and absent on most machines. Area 15 built four treatments,
+      all four read well, and picking one for everybody is the wrong shape of answer — but
+      the choice is a *person's*, not a repo's, so it must not live in the per-repo config
+      where it would be re-declared in every repo. That is precisely the scope this root
+      exists for.
+      - **A differently-named file, not a second `config.json` on the search path.** The
+        open question the area carried, settled before building: a user-global
+        `config.json` would be a file that could plausibly hold `targets`, which is
+        meaningless outside a repo, and one file with one purpose cannot make that offer.
+        For the same reason `prefs.json` has **no search path of its own** — a preference
+        is a person's, so a second root would be a repo or a machine overriding a choice
+        that was never theirs to make
+      - **Drift never writes it.** `config.json` has a placeholder because a repo cannot
+        work unconfigured; a machine with no `prefs.json` simply has the defaults, and
+        seeding one on first run would leave a file behind for a user who wanted nothing
+      - **A wrong value is an error naming the file**, the same rule as
+        `declare.destinations` and for a sharper reason: a bad selection falling back
+        silently renders the *default treatment*, which on screen is indistinguishable from
+        the requested one working. The message quotes what was written and offers the four
+        valid names back, so the fix never needs the README
+      - **The names are `store`'s, the treatments are `ui`'s.** A name in a config file is
+        persistent and public where the rendering behind it is not, so `store.SelectionPair`
+        and friends are the vocabulary and `band.go` implements them. They are two halves of
+        one thing in two packages, so a test pins them together: a treatment added without a
+        name is unselectable, and a name shipped without a treatment is a promise the file
+        cannot keep
+      - **`DRIFT_BAND` and `DRIFT_BG` stayed, and are now documented.** The roadmap offered
+        "go away *or* become documented overrides", and the override reading won: an env var
+        says **"for this run"**, which is exactly what trying a treatment needs and exactly
+        what an edited file cannot say — you would be editing the file whose contents you are
+        trying to decide. Resolution is `DRIFT_BAND` → `prefs.json` → default. `DRIFT_BG` had
+        to survive regardless: it instruments the adaptive palette's silent failure mode and
+        has no prefs equivalent until 16b, so keeping both is one story rather than two
+      - A bad value reads differently at each level, on purpose. In the file it refuses to
+        start; in the env var it falls through to the file, because a shell typo in a
+        throwaway override is not a reason to refuse — and it is not silent either, since the
+        title names the treatment actually in force whenever an override is set. A treatment
+        chosen in `prefs.json` deliberately does **not** light that label up: it is a decision
+        already made, and stamping it on every run afterwards is noise
+      - **Area 12 (custom keymaps) now rides on this** rather than building it. Keymaps were
+        always going to need this root; a one-string setting was a far better first load for
+        it than a whole keymap format, so the layer got built once and proved on something
+        small. `keymap.json` is a sibling file under the same root, on the same argument that
+        kept `prefs.json` out of `config.json`
+    - ⏳ **16b — Theming: pick the accent, not just the shape.** Raised by dogfooding area 15's
       result: the marker reads well and the *blue* is not to taste. That is a second axis
       and the pair decomposes cleanly along it — a treatment is a **shape** (does it
       fill, does it mark) and a **palette** is the colours poured into it. Area 15 shipped
       four shapes with their colours baked in; splitting the two is what lets `pair` in
-      someone's own accent exist without a fifth hardcoded treatment
+      someone's own accent exist without a fifth hardcoded treatment. 16a built the root,
+      the file, the load path and the validation rule, so this adds fields to `Prefs`
+      beside `selection` rather than a second file — which is why `newStyles` takes the
+      whole `store.Prefs` and not the one string it uses today.
       - **Colour is the signal, so theming cannot be a free-for-all** (DESIGN.md §1). The
         alarm roles carry meaning — `behind` shouts, `unmergeable` is a *distinct* alarm
         from it, neutral recedes — and a theme that let two of them collide would not be
@@ -609,9 +646,7 @@ is; link its spec/ADR once one exists.
         the config takes a pair, or Drift takes one value and uses it for both — which is
         the dark-terminal assumption walking back in through the front door, on exactly
         the surface area 15 spent itself fixing
-    - **Open, and worth deciding before building:** whether this file is `config.json`
-      under a second root (one shape, two locations, merged by the search path) or a
-      differently-named `prefs.json` (one file, one purpose). The first is what "search
-      path" implies; the second avoids a user-global file that could plausibly hold
-      `targets`, which would be meaningless outside a repo. Not a detail to settle in the
-      middle of writing it
+      - **`DRIFT_BG` is the one to fold in.** It exists because the adaptive palette has a
+        silent failure mode (16a kept it documented for exactly that reason), and a
+        themable palette either gives it a `prefs.json` home or keeps it as the override
+        it is. Decide alongside the palette, not after
