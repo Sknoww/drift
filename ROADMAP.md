@@ -691,3 +691,78 @@ is; link its spec/ADR once one exists.
         the accent **only when it was overridden**: an accent is literally the colour the
         label is drawn beside, so naming it otherwise is noise, where `pair` and
         `contrast` differ subtly enough that the screen does not tell you which you got
+17. ⏳ **`u` update — carry a branch all the way, including the checkout and the push.**
+    Raised by dogfooding v0.2.0, and it is the sharpest kind of finding: the tool does not
+    do the thing it was built to do. Going down the branch list and pressing `s` refuses on
+    every row but the one you happen to be standing on, so the "one keypress per branch"
+    payoff only ever arrives for one branch. Three pieces are missing, and only the first
+    is a design question — the other two are simply absent:
+    - **No checkout.** `beginShelve` refuses when the row is not `m.current`
+      (`internal/ui/shelve.go`), and `internal/git`'s package doc opens with "nothing
+      checks anything out"
+    - **No push.** The sequence ends at pop, so a landed merge never leaves the machine.
+      Half of "this branch is up to date" is a claim about the *remote*
+    - **The branch's own upstream is never pulled.** `shelvePullCmd` fetches the target
+      ref only. On a second machine that merges the target into a stale branch and then
+      cannot push — which is the exact failure the area exists to prevent
+    - **This reverses a documented invariant, so it earns ADR 0002.** The shelve spec's
+      *Scope* section defers auto-checkout "with its questions open", and this area's job
+      is to answer them rather than to quietly delete the section. `docs/specs/shelve-
+      sequence.md` gets rewritten in the same commit — a spec that still says "checked-out
+      branch only" while the code checks out is worse than no spec
+    - **The sequence**, in run order. Everything before the stash stays read-only, which is
+      area 7's central mechanic and is not up for renegotiation: a refusal must still have
+      nothing to undo:
+      1. Preconditions — no operation in progress, the row has a paired target, the target
+         resolves to a real ref. All as today
+      2. Stash, if the tree is dirty — the confirmation below decides whether this happens
+      3. Check out the branch, if it is not already current
+      4. Pull the branch's own upstream — fetch `origin/<branch>`, then merge it. Normally
+         a fast-forward; a *conflict* here is a genuine halt, since it means the branch
+         diverged from itself
+      5. Fetch the target ref and merge it in — today's steps, held-set collision check
+         and all
+      6. Push
+      7. Return to the branch you started on, and pop the stash
+    - ✅ **Settled: the dirty tree splits in two, and only one half is new.** Conflating
+      them is what made this look harder than it is:
+      - **Same branch, dirty** — exactly today's shelve. Stash and pop happen on one
+        branch, no boundary is crossed, and it is already atomic. It needs no new prompt
+        and no new argument; it only gains the pull and the push
+      - **Different branch, dirty** — the new case, and the one the spec was worried
+        about. Drift stashes on the branch you are leaving and pops on that same branch
+        when it returns, so the work still never lands on a tree it was not taken from.
+        That is a narrower claim than the spec's blanket refusal, and it is the reason
+        this is now buildable
+    - ✅ **Settled: a confirmation overlay, then the full automated round trip.** Not a
+      flat refusal — being blocked by unrelated dirt is the friction the area exists to
+      remove. The overlay names the actual plan before anything runs (which branch is
+      being left, that the work is stashed, that Drift comes back and pops), and the user
+      confirms. Same shape as the `y/n` delete confirm and the declare overlay, so an
+      overlay is still an overlay wherever the user meets one. A clean tree gets no
+      overlay at all — there is nothing to warn about
+    - ✅ **Settled: you end up where you started.** The list is a list, not a place you
+      move to. Updating five branches must not silently relocate you, and each Update has
+      to start from the same known place as the last. The return is part of the sequence,
+      not a courtesy: **every halt path unwinds it too**, so a conflict at step 4, 5 or 6
+      still puts you back and still pops. That is the "put me back where I was"
+      bookkeeping the spec named as the price of admission, and it is the bulk of the work
+    - ✅ **Settled: never force-push, and a rejected push is a handoff.** A rejection means
+      the branch moved on the remote after step 4 read it, which is someone else's commit
+      — exactly the class of thing Drift stops and hands back rather than resolving. The
+      branch is left updated and merged locally; only the publish did not happen, and the
+      report says so
+    - ✅ **Settled: per-branch only.** A batch "update every paired branch" is where this
+      is heading and is deliberately not here. One conflict mid-sweep raises questions
+      about the other branches that the per-branch path does not have to answer yet, and
+      the ADR should cover one reversal rather than two
+    - **Open: `u` alongside `s`, or does `u` replace it?** The proposal is both — `u`
+      updates and publishes, `s` stays local-only (merge the target, push nothing), so the
+      two verbs differ by commitment rather than by mechanism. The case against is that
+      two near-identical sequences is two things to explain in a help table that is
+      generated per action. Settle it before building
+    - **Open: what "up to date" means on the dashboard afterwards.** A pushed branch and a
+      locally-merged-but-unpushed branch are different states and today's `↓behind ↑ahead`
+      pair against the target does not distinguish them. If `u` lands, the dashboard
+      probably owes the user an ahead-of-`origin/<branch>` signal too, or the push it just
+      did is invisible
