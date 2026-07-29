@@ -32,6 +32,7 @@ const (
 	screenDiff                 // area 5: the unmergeable diff panel for one branch
 	screenLocalOnly            // area 6: the manager for changes held on this machine
 	screenShelve               // area 7: the shelve sequence's live progress, then its report
+	screenTargets              // 19e: the configured targets and the refs behind them
 )
 
 // rowRef names one selectable row on the dashboard. The cursor addresses a flat
@@ -109,6 +110,7 @@ type diffEntry struct {
 // model never computes git signals inline.
 type Model struct {
 	repo  *git.Repo
+	paths store.Paths // where the config and state were resolved from
 	cfg   store.Config
 	store store.Store
 
@@ -151,6 +153,11 @@ type Model struct {
 	showHelp   bool
 	helpOffset int
 
+	// The targets screen's cursor (19e). A bare int rather than a state struct,
+	// the same as helpOffset above: the screen reads the config it was opened
+	// over and keeps nothing else.
+	targetsCur int
+
 	notice string // transient one-line hint or error under the panel
 	err    error  // last status-sweep error, shown until the next good sweep
 
@@ -164,12 +171,18 @@ type Model struct {
 // Prefs are per-user where cfg is per-repo, and they are read once here rather
 // than consulted at each use: one run renders one selection treatment on every
 // screen it draws.
-func New(repo *git.Repo, cfg store.Config, st store.Store, prefs store.Prefs) Model {
+//
+// paths is carried for the same reason the caller already had it: the targets
+// screen names the file a wrong target is corrected in (19e), and asking git
+// for the git-dir again from inside the UI would be a shell-out for something
+// resolved before the program opened.
+func New(repo *git.Repo, paths store.Paths, cfg store.Config, st store.Store, prefs store.Prefs) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
 	return Model{
 		repo:           repo,
+		paths:          paths,
 		cfg:            cfg,
 		store:          st,
 		keys:           defaultKeymaps(),

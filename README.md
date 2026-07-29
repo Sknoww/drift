@@ -90,6 +90,7 @@ rebindable without a code change.
 | `u` | update — bring the selected branch up to date and publish it |
 | `s` | shelve — merge the target into this branch, here; nothing is published |
 | `l` | manage local-only changes |
+| `t` | show the configured targets and the refs they point at |
 | `f` | fetch, then refresh (`esc` aborts an in-flight fetch) |
 | `r` | refresh from git |
 | `?` | help |

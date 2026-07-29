@@ -116,7 +116,7 @@ func run() error {
 		return err
 	}
 
-	prog := tea.NewProgram(ui.New(repo, cfg, state, prefs), tea.WithAltScreen())
+	prog := tea.NewProgram(ui.New(repo, paths, cfg, state, prefs), tea.WithAltScreen())
 	_, err = prog.Run()
 	return err
 }

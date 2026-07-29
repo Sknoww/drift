@@ -34,6 +34,16 @@ func sampleConfig() store.Config {
 	}}
 }
 
+// samplePaths stands in for what store.LoadConfig resolved. Only the targets
+// screen reads it, and only to say where a wrong target is corrected.
+func samplePaths() store.Paths {
+	return store.Paths{
+		Dir:    "/repo/.git/drift",
+		Config: "/repo/.git/drift/config.json",
+		State:  "/repo/.git/drift/state.json",
+	}
+}
+
 func sampleStore() store.Store {
 	return store.Store{Tickets: []store.Ticket{
 		{ID: "ABC-1", Title: "first", Branches: []store.TicketBranch{
@@ -50,7 +60,7 @@ func sampleStore() store.Store {
 // newModel builds a dashboard over a repo that is never dialed — the view and
 // dispatch paths under test never shell out.
 func newModel() Model {
-	m := New(git.New(t_nowhere), sampleConfig(), sampleStore(), store.Prefs{})
+	m := New(git.New(t_nowhere), samplePaths(), sampleConfig(), sampleStore(), store.Prefs{})
 	m.loading = false // pretend the first sweep already landed
 	return m
 }
@@ -539,7 +549,7 @@ func TestSelectBandFillsPanelWidth(t *testing.T) {
 }
 
 func TestViewEmptyStateTeaches(t *testing.T) {
-	m := New(git.New(t_nowhere), sampleConfig(), store.Store{}, store.Prefs{})
+	m := New(git.New(t_nowhere), samplePaths(), sampleConfig(), store.Store{}, store.Prefs{})
 	m.loading = false
 	out := m.View()
 	if !strings.Contains(out, "No tickets tracked") {
@@ -644,7 +654,7 @@ func TestViewRendersUnknownTarget(t *testing.T) {
 	st := store.Store{Tickets: []store.Ticket{
 		{ID: "X", Branches: []store.TicketBranch{{Branch: "b", TargetKey: "gone"}}},
 	}}
-	m := New(git.New(t_nowhere), sampleConfig(), st, store.Prefs{})
+	m := New(git.New(t_nowhere), samplePaths(), sampleConfig(), st, store.Prefs{})
 	m.loading = false
 	m.expanded["X"] = true
 	m.status = map[string]branchStatus{statusKey("X", "b"): {known: false}}
@@ -1941,7 +1951,7 @@ func TestLocalOnlyLoopAgainstARealRepo(t *testing.T) {
 	}
 
 	repo := git.New(dir)
-	m := New(repo, sampleConfig(), store.Store{}, store.Prefs{})
+	m := New(repo, samplePaths(), sampleConfig(), store.Store{}, store.Prefs{})
 	m.loading = false
 
 	next, cmd := m.dispatch(ActionLocalOnly)

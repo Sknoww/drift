@@ -47,6 +47,7 @@ var actionText = map[Action]string{
 	ActionRefresh:         "refresh from git",
 	ActionFetch:           "fetch, then refresh",
 	ActionLocalOnly:       "manage local-only changes",
+	ActionTargets:         "show the targets and the refs they point at",
 	ActionHoldLocal:       "hold a working-tree change on this machine",
 	ActionRelease:         "stop holding the selected path",
 	ActionEditNote:        "note why it's held",
@@ -67,7 +68,7 @@ var actionOrder = []Action{
 	ActionHoldLocal, ActionRelease, ActionEditNote,
 	ActionConfirm, ActionCancel,
 	ActionUpdate, ActionShelve,
-	ActionAdd, ActionDelete, ActionRefresh, ActionFetch, ActionLocalOnly,
+	ActionAdd, ActionDelete, ActionRefresh, ActionFetch, ActionLocalOnly, ActionTargets,
 	ActionHelp, ActionQuit,
 }
 
@@ -191,6 +192,13 @@ func (m Model) glyphLegend() []helpEntry {
 			{s.unmerge.Render("⚠ unmergeable"), "git can never merge this file — reconcile it in its own tool"},
 		}
 	}
+	if m.screen == screenTargets {
+		// Two plain columns and nothing else. A screen that draws no glyphs gets
+		// no legend rather than the dashboard's — explaining signals that are not
+		// on the screen you are on teaches the wrong thing, which is the same rule
+		// that has each glyph drawn in its own role's colour.
+		return nil
+	}
 	return []helpEntry{
 		{s.ticket.Render("▸ / ▾"), "ticket collapsed / expanded"},
 		{s.behind.Render("↓N"), "commits the target has that you don't — it moved"},
@@ -239,6 +247,8 @@ func (m Model) screenName() string {
 			return "update"
 		}
 		return "shelve"
+	case screenTargets:
+		return "targets"
 	default:
 		return "dashboard"
 	}
@@ -366,13 +376,17 @@ func (m Model) helpBody() string {
 			m.styles.target.Render(fit(e.keys, width)), m.styles.help.Render(e.what)))
 	}
 
-	lines = append(lines, "", m.styles.hint.Render("Glyphs"), "")
-	for _, e := range legend {
-		// Padded, not re-styled: the glyph arrives already rendered in its own
-		// role's color, and wrapping it again would repaint it as one flat color —
-		// the bug this replaced.
-		lines = append(lines, fmt.Sprintf("%s  %s",
-			fit(e.keys, width), m.styles.help.Render(e.what)))
+	// A screen with no glyphs gets no heading either: an empty "Glyphs" section
+	// would be a promise of an explanation with nothing under it.
+	if len(legend) > 0 {
+		lines = append(lines, "", m.styles.hint.Render("Glyphs"), "")
+		for _, e := range legend {
+			// Padded, not re-styled: the glyph arrives already rendered in its own
+			// role's color, and wrapping it again would repaint it as one flat color —
+			// the bug this replaced.
+			lines = append(lines, fmt.Sprintf("%s  %s",
+				fit(e.keys, width), m.styles.help.Render(e.what)))
+		}
 	}
 
 	// Clipped for the same reason every windowed row is: a line wider than the

@@ -248,7 +248,7 @@ func TestDashboardBoundsTheFrameAtEveryCursorPosition(t *testing.T) {
 		}
 	}
 
-	m := New(nil, sampleConfig(), store.Store{Tickets: tickets}, store.Prefs{})
+	m := New(nil, samplePaths(), sampleConfig(), store.Store{Tickets: tickets}, store.Prefs{})
 	m.loading = false
 	m.width, m.height = 100, height
 	for _, t := range tickets {

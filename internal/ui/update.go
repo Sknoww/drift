@@ -195,6 +195,8 @@ func (m Model) activeKeys() Keymap {
 			return m.keys.confirmStash
 		}
 		return m.keys.shelve
+	case screenTargets:
+		return m.keys.targets
 	default:
 		return m.keys.dashboard
 	}
@@ -256,6 +258,8 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 		return m.dispatchLocalOnly(action)
 	case screenShelve:
 		return m.dispatchShelve(action)
+	case screenTargets:
+		return m.dispatchTargets(action)
 	default:
 		return m.dispatchDashboard(action)
 	}
@@ -316,6 +320,9 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 
 	case ActionUpdate:
 		return m.beginUpdate()
+
+	case ActionTargets:
+		return m.openTargets()
 	}
 	return m, nil
 }

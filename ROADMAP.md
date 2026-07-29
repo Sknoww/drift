@@ -892,7 +892,9 @@ is; link its spec/ADR once one exists.
     - **Build order, after the diagnosis below.** 19d and 19e are what *caused* the
       incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
       unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
-      visible at rest and at the one moment it can still be stopped for free
+      visible at rest and at the one moment it can still be stopped for free.
+      **19e's showing half has shipped; 19a is next**, and it is the one that would have
+      stopped the incident outright
     - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
       the work repo's reflog and its `config.json`. The roadmap's reading was right in every
       part — merging a branch into a source whose MR *targets* that branch cannot add commits
@@ -988,7 +990,9 @@ is; link its spec/ADR once one exists.
     - ⏳ **19b — a pair's target cannot be changed once it is made.** The target picker
       exists but is reachable only from the pairing checklist inside the add flow
       (`ActionOpenPicker`, handled at `internal/ui/addflow.go:186`); the dashboard keymap
-      (`internal/ui/keys.go:210`) has no equivalent. `TargetKey` is written in exactly one
+      (`internal/ui/keys.go:235`) has no equivalent — 19e's `t` opens the read-only targets
+      screen, which is a different question (what a target points at, not which target a
+      branch is paired to). `TargetKey` is written in exactly one
       place — `savePairing` (`addflow.go:326`), which builds a fresh `store.Ticket` and
       appends it — and `store` exposes no setter, only the read-only `Ticket` accessor
       (`internal/store/store.go:487`). So a wrong pairing is visible on the dashboard and
@@ -1066,24 +1070,62 @@ is; link its spec/ADR once one exists.
         accent cannot widen its surface by accident; the equivalent here is a case asserting
         that a seeded key round-trips to a ref a reader would recognise. Worth writing
         whichever way the two questions above land
-    - ⏳ **19e — a target's ref is write-once and invisible, so a wrong one cannot be seen or
+    - 🛠️ **19e — a target's ref is write-once and invisible, so a wrong one cannot be seen or
       fixed.** The second cause, and the cheaper half. `Target.Ref` is written in exactly one
-      place — the first-run wizard — and rendered in exactly one place, the wizard's own
-      picker row (`internal/ui/view.go:580`). The dashboard shows `br.TargetKey`
-      (`view.go:364`) and never the ref behind it, so a target pointing at the wrong branch
-      looks *correct* on the screen the user lives in: the key said `mvp-3`, and `mvp-3` was
+      place — the first-run wizard — and *was* rendered in exactly one, the wizard's own
+      picker row (`internal/ui/view.go:587`). The dashboard shows `br.TargetKey`
+      (`view.go:366`) and never the ref behind it, so a target pointing at the wrong branch
+      looked *correct* on the screen the user lives in: the key said `mvp-3`, and `mvp-3` was
       what they wanted. The only route to a fix was hand-editing `config.json` with Drift
       closed — which is what the incident actually required, and it is a route nobody finds
-      without reading the source
+      without reading the source. **The showing half has shipped; editing is what is left.**
       - **This is the correction path 19b was miscast as.** Same argument, different field:
         prevention and correction are separate jobs, and 19a alone would have left a user who
         already has a bad target editing JSON. Unlike 19b it is load-bearing on real evidence
-      - **Open: show the ref, let it be edited, or both?** Showing is nearly free and fixes
-        the invisibility outright — a target's ref could sit in the `?` overlay, on a header
-        line, or under a keypress on the row. Editing is the larger piece and overlaps the
-        wizard: re-running target selection against the current repo is a screen that already
-        exists, and reaching it from the dashboard may be the whole feature. Showing without
-        editing is a coherent ship on its own and probably the first slice
+      - ✅ **Settled: showing first, and as its own screen rather than in the `?` overlay.**
+        The area offered three homes — the overlay, a header line, or a keypress on the row —
+        and the overlay lost on what the incident actually was. It is the reference card you
+        open when you are *already* suspicious, and the whole finding is that nobody was
+        suspicious: the key read correctly, which is exactly why it was never questioned.
+        `t` on the dashboard opens a screen instead — one keypress from the list the user
+        lives in, and somewhere a later message can send them. `internal/ui/targets.go`
+      - ✅ **The ref is the subject, so it is weighted as one.** The row inverts the target
+        picker's: there the key is what you are choosing and the ref is the disambiguator in
+        the hint style; here the key takes its own bounded column first and the ref absorbs
+        everything after it, in the ordinary foreground. A ref too long for what is left
+        ellipsises **at its tail**, which 19a had already settled as the right end to lose —
+        `origin/fix/PSOT-22114-…` is what gives a wrong target away, `/mvp-3` is what made it
+        look right. Pinned by a test, since 19a's bullet exists precisely because someone
+        could later "improve" it into a middle-elide
+      - ✅ **A cursor from day one, though nothing is selectable yet.** Re-pointing a target
+        is an action that hangs off a selected row, so a cursor-less screen would make the
+        editing half a retrofit rather than an addition — the argument area 3 made for named
+        actions, applied one screen later
+      - ✅ **It names `config.json`, because editing is not built.** Hand-editing with Drift
+        closed is the correction path today, so the header carries the resolved path and it
+        stops being a route that needs the source. The path is left to **wrap** rather than
+        clipped — half a path is a path you cannot act on, and `headerLines` already costs a
+        wrapping header line at the lines it really takes. `New` takes `store.Paths` for it,
+        which `main.go` had already resolved before the program opened
+      - ✅ **It asks git nothing, and that is a finding rather than a shortcut.** The obvious
+        addition — flag a target whose ref no longer resolves — would not have caught this:
+        the wrong ref was a real branch that resolved perfectly. The screen's subject is what
+        the *config* says, and a probe would have added a shell-out that answers a question
+        nobody was asking
+      - ✅ **A screen with no glyphs gets no legend.** The `?` overlay drew its "Glyphs"
+        heading unconditionally, and this is the first screen with nothing to put under it.
+        Guarded, with the screens that do have glyphs pinned so the carve-out cannot widen
+        (DESIGN.md §3)
+      - **`t targets` costs `l local` its slot at 120 columns**, and that is area 15's
+        elision mechanism working rather than a regression. The lead is spent from the front,
+        so the newest and least urgent segment sits last and is the first to go; every
+        *doing* verb still survives to the 60-column floor, and `? help` — where everything
+        elided lives — names both in full
+      - ⏳ **What is left: editing.** Re-running target selection against the current repo is
+        a screen that already exists, and reaching it from the targets row may be the whole
+        feature. It needs a `Target.Ref` setter in `store`, a `SaveConfig` round-trip, and
+        the rule below. A user who can now *see* a wrong ref still has to leave Drift to fix
+        one
       - **Whatever is built must re-read, never assume.** The rule areas 5 and 6 both landed
         on: after a write, ask git what is true rather than trusting what Drift just did. A
         re-pointed target changes every row's `↓behind` at once, and a stale sweep would

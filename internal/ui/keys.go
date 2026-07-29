@@ -76,6 +76,12 @@ const (
 	// is that their help entries have to carry the distinction on their own, since
 	// the table is generated per action.
 	ActionUpdate Action = "update" // u: bring the selected branch up to date and publish it
+
+	// The targets screen (19e): every configured target and the ref behind it.
+	// Its own verb rather than ActionLocalOnly's shape reused, for the reason
+	// every other screen-opening action has one — the help table is generated
+	// per action, so a name has to describe exactly one thing.
+	ActionTargets Action = "targets" // t: show the targets and the refs they point at
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -126,6 +132,7 @@ type keymaps struct {
 	shelve        Keymap
 	confirmStash  Keymap
 	filter        Keymap
+	targets       Keymap
 }
 
 func defaultKeymaps() keymaps {
@@ -144,6 +151,25 @@ func defaultKeymaps() keymaps {
 		shelve:        DefaultShelveKeys(),
 		confirmStash:  DefaultConfirmStashKeys(),
 		filter:        DefaultFilterKeys(),
+		targets:       DefaultTargetsKeys(),
+	}
+}
+
+// DefaultTargetsKeys binds the targets screen (19e). It is a list you read, not
+// one you choose from, so it binds movement and the ways out and nothing else —
+// enter is deliberately absent rather than made a synonym for esc, since a key
+// that means "commit this screen" everywhere else must not quietly mean
+// something different here.
+func DefaultTargetsKeys() Keymap {
+	return Keymap{
+		"j":      ActionMoveDown,
+		"down":   ActionMoveDown,
+		"k":      ActionMoveUp,
+		"up":     ActionMoveUp,
+		"esc":    ActionCancel,
+		"?":      ActionHelp,
+		"q":      ActionQuit,
+		"ctrl+c": ActionQuit,
 	}
 }
 
@@ -208,20 +234,22 @@ func DefaultShelveKeys() Keymap {
 // to no action; an override that leaves an action unbound keeps this default.
 func DefaultDashboardKeys() Keymap {
 	return Keymap{
-		"j":      ActionMoveDown,
-		"down":   ActionMoveDown,
-		"k":      ActionMoveUp,
-		"up":     ActionMoveUp,
-		"enter":  ActionToggleExpand,
-		" ":      ActionToggleExpand,
-		"a":      ActionAdd,
-		"d":      ActionDelete,
-		"r":      ActionRefresh,
-		"f":      ActionFetch,
-		"esc":    ActionCancel, // aborts an in-flight fetch; a no-op otherwise
-		"l":      ActionLocalOnly,
-		"s":      ActionShelve,
-		"u":      ActionUpdate,
+		"j":     ActionMoveDown,
+		"down":  ActionMoveDown,
+		"k":     ActionMoveUp,
+		"up":    ActionMoveUp,
+		"enter": ActionToggleExpand,
+		" ":     ActionToggleExpand,
+		"a":     ActionAdd,
+		"d":     ActionDelete,
+		"r":     ActionRefresh,
+		"f":     ActionFetch,
+		"esc":   ActionCancel, // aborts an in-flight fetch; a no-op otherwise
+		"l":     ActionLocalOnly,
+		"s":     ActionShelve,
+		"u":     ActionUpdate,
+		"t":     ActionTargets, // the pairing checklist's own t opens a target picker
+
 		"?":      ActionHelp,
 		"q":      ActionQuit,
 		"ctrl+c": ActionQuit,

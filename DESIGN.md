@@ -349,7 +349,10 @@ repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not 
     flat color: color *is* the signal in the status cluster, so a glyph explained in
     the wrong color explains the wrong glyph. `↓N` appears in its warning style even
     though zero-behind renders faint, because the case worth teaching is the one where
-    the target moved.
+    the target moved. **A screen that draws no glyphs gets no legend and no heading** —
+    the targets screen is two plain columns, and an empty "Glyphs" section would promise
+    an explanation with nothing under it while the dashboard's would explain signals
+    that are not on the screen you are on.
   - Not offered on the ID-entry screen (every key there is text) or inside the target
     picker / declare overlays (momentary choice steps with their own one-line help).
 - **Local-only list** (area 6) ✅ — a first-class screen (`l`), not a footnote, because
@@ -422,6 +425,7 @@ Dashboard:
 | `u` | Update: bring the selected branch up to date and publish it (area 17) |
 | `s` | Shelve: merge the target into the checked-out branch, publish nothing (area 7) |
 | `l` | Manage local-only changes (area 6) |
+| `t` | Show the configured targets and the refs they point at (19e) |
 | `?` | Keys and glyphs for the current screen |
 | `q` / `ctrl+c` | Quit |
 

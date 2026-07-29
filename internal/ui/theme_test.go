@@ -123,7 +123,7 @@ func TestASavedAccentReachesTheScreen(t *testing.T) {
 	t.Setenv("DRIFT_BAND", "")
 	want := lipgloss.Color("208")
 
-	m := New(git.New(t_nowhere), sampleConfig(), sampleStore(), store.Prefs{Accent: "208"})
+	m := New(git.New(t_nowhere), samplePaths(), sampleConfig(), sampleStore(), store.Prefs{Accent: "208"})
 	if got := m.styles.title.GetForeground(); got != want {
 		t.Errorf("the dashboard rendered %v, want the preference", got)
 	}

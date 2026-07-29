@@ -464,7 +464,7 @@ func shelveRepoModel(t *testing.T, dir string) Model {
 	st := store.Store{Tickets: []store.Ticket{{ID: "ABC-1", Branches: []store.TicketBranch{
 		{Branch: "feature", TargetKey: "main"},
 	}}}}
-	m := New(git.New(dir), cfg, st, store.Prefs{})
+	m := New(git.New(dir), samplePaths(), cfg, st, store.Prefs{})
 	m.loading = false
 	m.current = "feature"
 	m.expanded["ABC-1"] = true
@@ -1051,7 +1051,7 @@ func updateRepoModel(t *testing.T, dir string) Model {
 	st := store.Store{Tickets: []store.Ticket{{ID: "ABC-1", Branches: []store.TicketBranch{
 		{Branch: "feature", TargetKey: "main"},
 	}}}}
-	m := New(git.New(dir), cfg, st, store.Prefs{})
+	m := New(git.New(dir), samplePaths(), cfg, st, store.Prefs{})
 	m.loading = false
 	m.current = "main"
 	m.expanded["ABC-1"] = true

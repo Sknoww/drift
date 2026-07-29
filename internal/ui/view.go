@@ -27,6 +27,8 @@ func (m Model) View() string {
 		return m.localOnlyView()
 	case screenShelve:
 		return m.shelveView()
+	case screenTargets:
+		return m.targetsView()
 	default: // dashboard, and the delete confirmation drawn over it
 		return m.dashboardView()
 	}
@@ -460,14 +462,19 @@ func (m Model) statusLine() string {
 // load-bearing: a narrow terminal keeps the front of the line and marks the
 // rest. Move and open come first, then the two verbs that build the list at
 // all — a new user on an 80-column terminal must still be told how to add a
-// ticket — then the sweep and the two screens. `? help` anchors the line
+// ticket — then the sweep and the three screens. `? help` anchors the line
 // because it is where everything elided still lives.
+//
+// `t targets` is last in the lead, and so the first thing a narrow terminal
+// drops. It is the one segment here that opens something you *read* rather than
+// something you do, so it is what the line can most afford to lose — and the
+// overlay it is elided into names it in full.
 func (m Model) help() string {
 	if m.screen == screenConfirmDelete {
 		return helpLine(m.styles, m.width, nil, []string{"y confirm", "n cancel"})
 	}
 	return helpLine(m.styles, m.width,
-		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "u update", "s shelve", "r refresh", "f fetch", "l local"},
+		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "u update", "s shelve", "r refresh", "f fetch", "l local", "t targets"},
 		[]string{"? help", "q quit"})
 }
 

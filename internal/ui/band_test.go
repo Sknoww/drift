@@ -96,14 +96,14 @@ func TestASavedSelectionReachesTheScreen(t *testing.T) {
 
 	// The default pairs a band with a marker, so the marker's *absence* is what
 	// distinguishes a fill-only preference from it.
-	plain := New(git.New(t_nowhere), sampleConfig(), sampleStore(), store.Prefs{})
+	plain := New(git.New(t_nowhere), samplePaths(), sampleConfig(), sampleStore(), store.Prefs{})
 	plain.loading = false
 	plain.width, plain.height = 100, 24
 	if !strings.Contains(plain.View(), bandMarkerGlyph) {
 		t.Fatal("precondition: the default treatment draws a marker")
 	}
 
-	marked := New(git.New(t_nowhere), sampleConfig(), sampleStore(), store.Prefs{Selection: store.SelectionContrast})
+	marked := New(git.New(t_nowhere), samplePaths(), sampleConfig(), sampleStore(), store.Prefs{Selection: store.SelectionContrast})
 	marked.loading = false
 	marked.width, marked.height = 100, 24
 	if marked.styles.band.name != store.SelectionContrast {

@@ -90,6 +90,14 @@ const (
 // minTerminalWidth allows anyway — this is the guard, not the mechanism.
 const minNameCol = 8
 
+// minRefCol is the floor the targets screen's ref column is never squeezed
+// below. A ref is longer than a branch name by construction — it carries a
+// remote prefix before anything identifying — and the head is the half that
+// gives a wrong target away (roadmap 19e), so the column needs room for more
+// than `origin/`. Like minNameCol it is the guard, not the mechanism: a key is
+// capped at maxTargetCol, so at minTerminalWidth the ref still has 30 cells.
+const minRefCol = 16
+
 // minTerminalWidth is the narrowest terminal Drift will draw into. Below it a
 // dashboard row cannot hold a branch name beside its status cluster, and
 // rendering one anyway produces garbage rather than a compressed view — so the
