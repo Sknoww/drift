@@ -122,15 +122,15 @@ func firstRun(ctx context.Context, repo *git.Repo, paths store.Paths, cfg *store
 		return false, nil
 	}
 
-	refs, err := repo.RemoteBranches(ctx)
+	branches, err := repo.RemoteBranches(ctx)
 	if err != nil {
 		return false, err
 	}
-	if len(refs) == 0 {
+	if len(branches) == 0 {
 		return false, nil
 	}
 
-	targets, ok, err := ui.RunWizard(repo, refs)
+	targets, ok, err := ui.RunWizard(repo, branches)
 	if err != nil || !ok {
 		return false, err
 	}

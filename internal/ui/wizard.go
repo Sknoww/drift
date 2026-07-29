@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,6 +33,12 @@ type wizardModel struct {
 	editing bool            // an inline key rename is open over the checklist
 	input   textinput.Model // the key editor, live only while editing
 
+	// now is the clock the age column is rendered against, captured once at
+	// construction. The wizard is a screen you are on for seconds, so an age
+	// that ticks would be motion with nothing to say — and a fixed clock keeps
+	// the column assertable in a test.
+	now time.Time
+
 	width, height int
 
 	notice   string
@@ -42,21 +49,25 @@ type wizardModel struct {
 
 // wizardTarget is one remote ref offered as a target. key seeds Target.Key and
 // is editable; ref is the picked remote ref and becomes Target.Ref verbatim, so
-// a target can never compare against a typo.
+// a target can never compare against a typo. updated is the ref's tip date,
+// carried only to render the age column — it is never written to the config.
 type wizardTarget struct {
 	ref      string
 	key      string
+	updated  time.Time
 	included bool
 }
 
-// RunWizard runs the first-run wizard over the given remote refs and reports the
-// targets the user chose. ok is false when the user declined (esc/ctrl+c) or
+// RunWizard runs the first-run wizard over the given remote branches and reports
+// the targets the user chose. ok is false when the user declined (esc/ctrl+c) or
 // selected nothing, in which case the caller falls back to the placeholder
-// config. remoteRefs must be non-empty — an empty offer has nothing to pick, so
-// the caller gates on it and falls back before ever reaching here.
-func RunWizard(repo *git.Repo, remoteRefs []string) (targets []store.Target, ok bool, err error) {
+// config. branches must be non-empty — an empty offer has nothing to pick, so
+// the caller gates on it and falls back before ever reaching here. Their order
+// is preserved as given: git sorted them by recency (git.RemoteBranches), and
+// re-sorting here would throw that away.
+func RunWizard(repo *git.Repo, branches []git.RemoteBranch) (targets []store.Target, ok bool, err error) {
 	_ = repo // the wizard does no git of its own; refs are gathered by the caller
-	out, err := tea.NewProgram(newWizard(remoteRefs), tea.WithAltScreen()).Run()
+	out, err := tea.NewProgram(newWizard(branches), tea.WithAltScreen()).Run()
 	if err != nil {
 		return nil, false, err
 	}
@@ -67,16 +78,17 @@ func RunWizard(repo *git.Repo, remoteRefs []string) (targets []store.Target, ok 
 	return m.result, true, nil
 }
 
-func newWizard(remoteRefs []string) wizardModel {
-	targets := make([]wizardTarget, len(remoteRefs))
-	for i, ref := range remoteRefs {
-		targets[i] = wizardTarget{ref: ref, key: deriveKey(ref)}
+func newWizard(branches []git.RemoteBranch) wizardModel {
+	targets := make([]wizardTarget, len(branches))
+	for i, b := range branches {
+		targets[i] = wizardTarget{ref: b.Ref, key: deriveKey(b.Ref), updated: b.Updated}
 	}
 	return wizardModel{
 		styles:     newStyles(),
 		keys:       DefaultWizardKeys(),
 		filterKeys: DefaultFilterKeys(),
 		targets:    targets,
+		now:        time.Now(),
 	}
 }
 
@@ -376,7 +388,7 @@ func (m wizardModel) View() string {
 // area-3 target picker.
 func (m wizardModel) body() string {
 	header := []string{
-		m.styles.hint.Render("Pick the target branches Drift tracks against."),
+		m.styles.hint.Render("Pick the target branches Drift tracks against. Newest first."),
 		m.styles.help.Render("Your long-lived mains — one per version of the code in flight. Any number."),
 		"",
 	}
@@ -405,7 +417,12 @@ func (m wizardModel) body() string {
 			keyCell = m.input.View()
 		}
 
-		rows[i] = fmt.Sprintf("%s %s  %s %s",
+		// The age leads the row rather than trailing it. It is the one column
+		// here with a fixed width, so at the left edge it always aligns and
+		// clipRow can never eat it — and read top to bottom it *is* the sort
+		// order, which is what keeps that order from looking arbitrary.
+		rows[i] = fmt.Sprintf("%s %s %s  %s %s",
+			m.styles.help.Render(padLeft(relativeAge(t.updated, m.now), ageColWidth)),
 			box,
 			m.styles.target.Render(keyCell),
 			m.styles.help.Render("←"),
@@ -427,6 +444,64 @@ func (m wizardModel) help() string {
 		return m.styles.help.Render("j/k move · / refine · space select · e rename key · enter save · esc clear filter")
 	}
 	return m.styles.help.Render("j/k move · / filter · space select · e rename key · enter save · esc skip")
+}
+
+// ageColWidth is the fixed width of the age column, sized to the longest value
+// relativeAge can produce ("12mo"). Fixed rather than measured: a column that
+// grew with its content would be one more thing pushing the ref name off a
+// panel, which is the failure area 14 spent itself fixing.
+const ageColWidth = 4
+
+// relativeAge renders how long ago a ref's tip was committed, in the narrowest
+// form that still says it: now, 5m, 3h, 2d, 7mo, 2y.
+//
+// It exists to make the sort order legible. An unexplained ordering reads as
+// arbitrary, or as a bug; a column of ages descending down the left edge says
+// what the list is doing without spending a line of prose to explain it. And it
+// answers the wizard's own question directly — a ref touched two days ago reads
+// as a main, one untouched for fourteen months does not.
+//
+// A zero time means git reported no usable date (RemoteBranches). That renders
+// empty rather than as an age: guessing one would be the column lying about the
+// single thing it is here to say.
+func relativeAge(tip, now time.Time) string {
+	if tip.IsZero() {
+		return ""
+	}
+	// A tip dated in the future — clock skew, or a rewritten date — falls out as
+	// "now" rather than as a negative age.
+	switch d := now.Sub(tip); {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		days := int(d.Hours() / 24)
+		switch {
+		case days < 30:
+			return fmt.Sprintf("%dd", days)
+		case days < 365:
+			return fmt.Sprintf("%dmo", days/30)
+		default:
+			return fmt.Sprintf("%dy", days/365)
+		}
+	}
+}
+
+// padLeft right-aligns s in w columns, so a column of ages lines up on its unit
+// rather than on its first digit.
+//
+// len() is the correct measure here and only here: relativeAge emits ASCII by
+// construction — digits and a unit — so there is no wide rune to mismeasure.
+// The branch-name columns that pad with len() over arbitrary refs are area 15's
+// bug, not this one.
+func padLeft(s string, w int) string {
+	if n := w - len(s); n > 0 {
+		return strings.Repeat(" ", n) + s
+	}
+	return s
 }
 
 // keyColWidth aligns the key column at the widest key, so the ← arrows line up.

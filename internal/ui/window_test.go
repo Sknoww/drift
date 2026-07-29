@@ -130,7 +130,7 @@ func TestWizardBoundsTheFrameAtEveryCursorPosition(t *testing.T) {
 		remotes[i] = fmt.Sprintf("origin/b%04d", i) // fixed width: no wrapping, no prefix collisions
 	}
 
-	var m tea.Model = newWizard(remotes)
+	var m tea.Model = newWizard(remoteBranches(remotes...))
 	m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 
 	for cursor := 0; cursor < refs; cursor++ {
@@ -166,7 +166,7 @@ func TestWizardBoundsTheFrameWithLongRefNames(t *testing.T) {
 		remotes[i] = fmt.Sprintf("origin/feature/TEAM-%04d-a-rather-long-branch-name-of-the-kind-real-repos-have", i)
 	}
 
-	var m tea.Model = newWizard(remotes)
+	var m tea.Model = newWizard(remoteBranches(remotes...))
 	m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 
 	for cursor := 0; cursor < refs; cursor++ {
@@ -207,7 +207,7 @@ func TestWizardSavesSelectionsScrolledOutOfView(t *testing.T) {
 		remotes[i] = fmt.Sprintf("origin/b%04d", i)
 	}
 
-	var m tea.Model = newWizard(remotes)
+	var m tea.Model = newWizard(remoteBranches(remotes...))
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace}) // select the first ref
 

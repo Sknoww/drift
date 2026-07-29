@@ -90,6 +90,29 @@ the home row. "Looks like raw text output" is a bug.
     what is on screen; padding every drawn row to fit a name the filter is hiding is the
     row-wrapping that doubled the frame before windowing.
   - Interaction and the two-meanings-of-`esc` rule are in §3.
+- **Order a long list, never narrow it by heuristic** ✅ — the first-run wizard offers the
+  repo's refs most-recently-committed first (`--sort=-committerdate`). The question it
+  asks is "which of these 418 refs are your long-lived mains?", and a main is the ref
+  everything gets merged into, so recency answers it. The rule is the boundary, not the
+  sort: **ordering moves the likely answer up and removes nothing**, so a repo whose main
+  is a dormant maintenance branch still lists it. A default *narrowing* was declined on
+  the never-guess rule — it would be a filter the user never typed, the counts line could
+  not distinguish "this repo has 20 refs" from "Drift chose 20 for you", and it inverts
+  the model by making `/` the key that *broadens*. Alphabetical order only ever bought
+  predictability when you already knew the name you wanted, and type-to-filter does that
+  strictly better; that leaves the list order one job — discovery.
+  - **An unexplained order reads as a bug**, so the ordering is on screen: each row leads
+    with a fixed-width relative age (`20m`, `2d`, `1mo`, `2y`). Read top to bottom the
+    column *is* the sort order, and it answers the wizard's question directly — a ref
+    touched two days ago reads as a main, one untouched for fourteen months does not.
+  - **Leading and fixed-width, both for the same reason.** It is the only column on that
+    screen with a bounded width, so at the left edge it always aligns and `clipRow` can
+    never eat it; trailing it would put the explanation behind the one column (the ref)
+    that overflows. Sized to the longest value it can emit — a column that grew with its
+    content would be one more thing pushing the ref off the panel, which is what
+    windowing exists to prevent.
+  - A ref whose date git could not report renders an **empty** cell, never a guessed age.
+    The column states the one thing it exists to state, or nothing.
 - **Status cluster** — per branch: target label · `↓behind ↑ahead` · dirty dot ·
   checked-out marker. Fixed order, aligned into columns so the eye scans down. The
   target label is **variable width** — column widths are computed from the config's
@@ -102,9 +125,9 @@ ticket is expanded; a computed status map keyed by `ticketID + branch`; a
 **Screens:** Dashboard (tickets, selected one expanded to its branches) · Add ticket
 (ID entry) · Add ticket (pairing checklist, with the target picker as an overlay on
 top of it) · Unmergeable diff panel (with the declare overlay on top) · Local-only
-changes (with the hold picker and the note editor as overlays) · First-run wizard (a checklist of the repo's remote refs, each an editable
-`Key`←`Ref` row; own Bubble Tea program, runs before the dashboard when the repo is
-unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dashboard Model).
+changes (with the hold picker and the note editor as overlays) · First-run wizard (a checklist of the repo's remote refs, newest first, each an
+editable `age  Key`←`Ref` row; own Bubble Tea program, runs before the dashboard when the
+repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not the dashboard Model).
 
 ## 2. Components 📝
 

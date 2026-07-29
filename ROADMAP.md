@@ -79,9 +79,10 @@ is; link its spec/ADR once one exists.
    `store.SaveConfig` writes the chosen targets. Same rule as pairing — show real
    things, let the user choose, never guess.
    - Offers **remote** refs (`RemoteBranches` — `git for-each-ref refs/remotes`, the new
-     area-1 call, `<remote>/HEAD` filtered out). Targets are compared against
-     `origin/<target>`, so a wizard offering local branches would silently produce
-     targets that compare against the wrong thing
+     area-1 call, `<remote>/HEAD` filtered out; area 14 later added the recency sort and
+     the tip date it carries). Targets are compared against `origin/<target>`, so a wizard
+     offering local branches would silently produce targets that compare against the wrong
+     thing
    - `Target.Key` defaults to the ref's short name (remote prefix stripped), editable
      inline (`e`); `Ref` is the picked ref, so a target can never be a typo
    - Any number of targets, including one. The wizard no more implies a count than the
@@ -254,14 +255,15 @@ is; link its spec/ADR once one exists.
       (what changed) or of the *versions* (your file left, the target's right). Those
       are different tools, and the second may be the more useful one for hand
       reconciliation. Not a detail to settle in advance
-14. 🛠️ **Large lists — windowing, then filtering.** Found by dogfooding v0.1.x on a real
+14. ✅ **Large lists — windowing, then filtering.** Found by dogfooding v0.1.x on a real
     work repo with hundreds of remote refs: the first-run wizard rendered every ref,
     ran off the top of the terminal, and appeared to **freeze hard enough to force-quit
     the window**. Not cosmetic — the tool is unusable on exactly the repo shape it was
     built for. Every list screen has the flaw; the diff panel is the only one that
     doesn't, because it already windows through a `viewport` (`diff.go:528`).
-    Windowing, row clipping and type-to-filter have all shipped; the area stays open on
-    one deliberately-unsettled question (recency sort — last bullet).
+    Windowing, row clipping, type-to-filter and the recency sort have all shipped. The
+    one open question is settled (second-to-last bullet); what remains is deferred, not
+    unresolved.
     - **What was measured**, so the fix targets the real cause rather than the symptom:
       - *Not git.* `RemoteBranches` is a local `for-each-ref refs/remotes` — no network,
         fast at any ref count. Nothing hangs before the wizard opens
@@ -336,13 +338,42 @@ is; link its spec/ADR once one exists.
       the query is hiding — the screen clears the filter and puts the cursor on that row
       rather than naming something the user cannot see. Revealing a choice the user already
       made is not guessing on their behalf
-    - ⏳ **Open question, still open — decide before calling area 14 done:** whether the
-      wizard should also sort by most-recent commit and default to a narrowed view. Asking
-      "which of these 418 refs are your long-lived mains?" may be the wrong question shape
-      even with search available — but recency is a heuristic, and a heuristic that hides
-      the right answer is worse than a long list. Not settled in advance, and deliberately
-      left open *after* the filter rather than before: with `/` in hand the long list is
-      navigable, which lowers what a default narrowing has to buy to be worth its risk
+    - ✅ **Settled: sort by recency, never narrow by it.** The open question turned out to
+      be two questions with opposite risk, and separating them decided it. *Ordering* is
+      free of the stated hazard — it moves the likely mains to the top and removes nothing,
+      so a repo whose main is a dormant maintenance branch still lists it. *Narrowing* is
+      where "a heuristic that hides the right answer is worse than a long list" actually
+      bites, and the roadmap's own argument settled it against: with `/` in hand the long
+      list is navigable, which lowers what a default narrowing has to buy below what its
+      risk costs. It would also be a filter the user never typed — the counts line could
+      not distinguish "this repo has 20 refs" from "Drift chose 20 for you" — and it
+      inverts the model by making `/` the key that *broadens*. Declined on the never-guess
+      rule; building it later would earn an ADR, since it reverses that
+      - `RemoteBranches` sorts `--sort=-committerdate` and returns `(Ref, Updated)` pairs.
+        The date is `%(committerdate:unix)`, **not** `%(committerdate:relative)`: the
+        relative form is English ("3 months ago") and nothing in the git layer parses git's
+        English (area 7). An unparseable date leaves `Updated` zero rather than failing —
+        the ref is the load-bearing half, and one odd date must not take first-run setup
+        down with it
+      - Alphabetical order only ever bought predictability when you already knew the name
+        you wanted, and type-to-filter now does that strictly better. That leaves the list
+        order one job — *discovery* — which is the one recency answers
+    - ✅ **The age column, because an unexplained order reads as a bug.** A sort with
+      nothing on screen accounting for it looks arbitrary. Each row leads with a
+      fixed-width relative age (`20m`, `2d`, `1mo`, `2y`), so read top to bottom the column
+      *is* the sort order, and it answers the wizard's own question directly: a ref touched
+      two days ago reads as a main, one untouched for fourteen months does not
+      - **Leading, not trailing, and fixed-width.** It is the only column here with a
+        bounded width, so at the left edge it always aligns and `clipRow` can never eat it
+        — trailing it would put the explanation behind the one column (the ref) that
+        overflows. Sized to the longest value `relativeAge` emits (`12mo`); a column that
+        grew with its content would be one more thing pushing the ref off the panel, which
+        is the failure this area spent itself fixing
+      - A zero date renders an **empty** cell, never a guessed age — the column stating the
+        one thing it exists to state, or nothing
+      - `padLeft` measures with `len()`, and that is correct *here and only here*:
+        `relativeAge` emits ASCII by construction. The columns that pad arbitrary refs with
+        `len()` are area 15's bug, not this one
     - ⏸️ **Other list screens** — the local-only manager, its hold picker, the target
       picker, and the declare overlays all window but do not filter. The shared piece makes
       each a few lines. The hold picker is the next real candidate (a working tree mid-

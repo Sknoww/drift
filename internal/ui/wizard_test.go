@@ -3,15 +3,30 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Sknoww/drift/internal/git"
 )
 
 // The wizard's git (listing remote refs) and IO (writing config) live in the
 // caller; these tests drive the selection logic that decides what gets written.
 
 func wizardWith(refs ...string) wizardModel {
-	return newWizard(refs)
+	return newWizard(remoteBranches(refs...))
+}
+
+// remoteBranches wraps bare ref names as the branch list the wizard is built
+// over. The dates are left zero: they drive only the age column, so every test
+// that is about selection, filtering or windowing wants them out of the way.
+// The ones that are about the column set them explicitly.
+func remoteBranches(refs ...string) []git.RemoteBranch {
+	out := make([]git.RemoteBranch, len(refs))
+	for i, ref := range refs {
+		out[i] = git.RemoteBranch{Ref: ref}
+	}
+	return out
 }
 
 func TestDeriveKeyStripsRemote(t *testing.T) {
@@ -204,4 +219,113 @@ func yieldsQuit(cmd tea.Cmd) bool {
 	}
 	_, ok := cmd().(tea.QuitMsg)
 	return ok
+}
+
+// Recency ordering and the age column (roadmap area 14's last open question).
+//
+// The decision the area closes on is that recency is an *ordering* and never a
+// narrowing: it moves the likely mains up and removes nothing, so a repo whose
+// main is dormant still lists it. These pin both halves — the order the wizard
+// preserves, and the column that keeps that order from reading as arbitrary.
+
+func TestRelativeAge(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		ago  time.Duration
+		want string
+	}{
+		{30 * time.Second, "now"},
+		{-time.Hour, "now"}, // a tip dated in the future: clock skew, not a negative age
+		{5 * time.Minute, "5m"},
+		{3 * time.Hour, "3h"},
+		{25 * time.Hour, "1d"},
+		{29 * 24 * time.Hour, "29d"},
+		{30 * 24 * time.Hour, "1mo"},
+		{364 * 24 * time.Hour, "12mo"},
+		{2 * 365 * 24 * time.Hour, "2y"},
+	}
+	for _, c := range cases {
+		got := relativeAge(now.Add(-c.ago), now)
+		if got != c.want {
+			t.Errorf("relativeAge(-%s) = %q, want %q", c.ago, got, c.want)
+		}
+		// The column is fixed-width by construction; a value that outgrew it
+		// would push the ref name off the panel on every row.
+		if len(got) > ageColWidth {
+			t.Errorf("relativeAge(-%s) = %q, wider than the %d-column cell", c.ago, got, ageColWidth)
+		}
+	}
+}
+
+func TestRelativeAgeUnknownDateRendersEmpty(t *testing.T) {
+	// git reported no usable committerdate. The column says nothing rather than
+	// inventing an age — the one thing it exists to state.
+	if got := relativeAge(time.Time{}, time.Now()); got != "" {
+		t.Errorf("relativeAge(zero) = %q, want empty", got)
+	}
+}
+
+func TestWizardPreservesTheOrderItIsGiven(t *testing.T) {
+	// git sorts by recency (git.RemoteBranches); the wizard must not re-sort.
+	// Alphabetically this list is exactly backwards, so any tidying shows up.
+	m := newWizard([]git.RemoteBranch{
+		{Ref: "origin/release/r2-perf"},
+		{Ref: "origin/main"},
+		{Ref: "origin/abandoned"},
+	})
+	want := []string{"origin/release/r2-perf", "origin/main", "origin/abandoned"}
+	for i, ref := range want {
+		if m.targets[i].ref != ref {
+			t.Fatalf("target[%d] = %q, want %q — the wizard re-sorted a list git had already ordered",
+				i, m.targets[i].ref, ref)
+		}
+	}
+}
+
+func TestWizardRendersTheAgeColumn(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	m := newWizard([]git.RemoteBranch{
+		{Ref: "origin/main", Updated: now.Add(-2 * 24 * time.Hour)},
+		{Ref: "origin/dormant", Updated: now.Add(-400 * 24 * time.Hour)},
+	})
+	m.now = now
+	m.width, m.height = 100, 24
+
+	view := m.View()
+	for _, want := range []string{"2d", "1y"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view is missing the age %q:\n%s", want, view)
+		}
+	}
+	// The age leads its row, so clipping can never eat it and the column always
+	// aligns. Checking the ordering within the line rather than exact spacing:
+	// the styles wrap each cell in escapes.
+	line := lineContaining(t, view, "origin/main")
+	if strings.Index(line, "2d") > strings.Index(line, "main") {
+		t.Errorf("age must lead the row, not trail it: %q", line)
+	}
+}
+
+func TestWizardUnknownAgeStillRendersTheRow(t *testing.T) {
+	// A ref with no usable date loses its age cell, never its row — the ref is
+	// the load-bearing half and first-run setup must still offer it.
+	m := wizardWith("origin/main", "origin/release-perf")
+	m.width, m.height = 100, 24
+	view := m.View()
+	for _, ref := range []string{"origin/main", "origin/release-perf"} {
+		if !strings.Contains(view, ref) {
+			t.Errorf("view is missing %q:\n%s", ref, view)
+		}
+	}
+}
+
+func lineContaining(t *testing.T, view, want string) string {
+	t.Helper()
+	for _, l := range strings.Split(view, "\n") {
+		if strings.Contains(l, want) {
+			return l
+		}
+	}
+	t.Fatalf("no line containing %q in:\n%s", want, view)
+	return ""
 }

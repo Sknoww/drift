@@ -3,9 +3,11 @@ package git
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These tests drive the real git binary against throwaway repos. Mocking git
@@ -39,6 +41,24 @@ func commit(t *testing.T, dir, name, content string) {
 	}
 	git(t, dir, "add", name)
 	git(t, dir, "commit", "--quiet", "-m", "add "+name)
+}
+
+// commitAt commits with a fixed committer date, so a test can assert an order
+// that depends on it. It shells out directly rather than through git(): the
+// date is set by environment variable and run() owns the environment.
+func commitAt(t *testing.T, dir, name, content, when string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", name)
+
+	cmd := exec.Command("git", "commit", "--quiet", "-m", "add "+name)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE="+when, "GIT_AUTHOR_DATE="+when)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("setup: commit at %s: %v: %s", when, err, out)
+	}
 }
 
 func TestLocalBranches(t *testing.T) {
@@ -263,9 +283,20 @@ func TestRemoteBranches(t *testing.T) {
 	// The wizard offers these as targets, so the real shape is what matters:
 	// a clone with several branches pushed to origin, listed by their
 	// origin/<name> short form — which is exactly a Target.Ref.
+	//
+	// Each branch gets its own committer date, and the dates run *against*
+	// alphabetical order, so the recency sort cannot be mistaken for git's
+	// default ordering having happened to agree.
 	origin := newRepo(t)
-	git(t, origin, "branch", "release-perf")
-	git(t, origin, "branch", "release-to-store")
+	for _, b := range []struct{ name, when string }{
+		{"aaa-stale", "2021-01-01T00:00:00Z"},
+		{"release-perf", "2024-06-01T00:00:00Z"},
+		{"zzz-fresh", "2026-05-01T00:00:00Z"},
+	} {
+		git(t, origin, "checkout", "--quiet", "-b", b.name, "main")
+		commitAt(t, origin, b.name+".txt", "x", b.when)
+	}
+	git(t, origin, "checkout", "--quiet", "main")
 
 	clone := t.TempDir()
 	git(t, clone, "clone", "--quiet", origin, clone)
@@ -275,11 +306,32 @@ func TestRemoteBranches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// origin/HEAD is a symref to the default branch, not a branch to pick — it
-	// must be filtered out.
-	want := []string{"origin/main", "origin/release-perf", "origin/release-to-store"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("RemoteBranches() = %v, want %v", got, want)
+
+	// Most recently updated first — the ordering that answers the wizard's
+	// question, "which of these are your long-lived mains?" (roadmap area 14).
+	// origin/HEAD is a symref to the default branch, not a branch to pick, so it
+	// must be filtered out; origin/main carries the seed commit's date, which is
+	// now and therefore sorts to the top.
+	var refs []string
+	for _, b := range got {
+		refs = append(refs, b.Ref)
+	}
+	want := []string{"origin/main", "origin/zzz-fresh", "origin/release-perf", "origin/aaa-stale"}
+	if strings.Join(refs, ",") != strings.Join(want, ",") {
+		t.Fatalf("RemoteBranches() = %v, want %v", refs, want)
+	}
+
+	// The tip date comes back as a real time, not as git's English relative
+	// form — the wizard formats its own age column from it.
+	byRef := make(map[string]time.Time, len(got))
+	for _, b := range got {
+		if b.Updated.IsZero() {
+			t.Errorf("%s came back with no tip date", b.Ref)
+		}
+		byRef[b.Ref] = b.Updated
+	}
+	if y := byRef["origin/aaa-stale"].UTC().Year(); y != 2021 {
+		t.Errorf("origin/aaa-stale tip year = %d, want 2021", y)
 	}
 }
 

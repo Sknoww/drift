@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Repo runs git commands against one working directory.
@@ -75,25 +76,57 @@ func (r *Repo) LocalBranches(ctx context.Context) ([]string, error) {
 	return lines(out), nil
 }
 
+// RemoteBranch is one remote-tracking branch offered as a first-run wizard
+// target: its short name, and when its tip last moved.
+type RemoteBranch struct {
+	Ref     string    // "origin/main" — becomes Target.Ref verbatim
+	Updated time.Time // committer date of the tip; zero when git reported none
+}
+
 // RemoteBranches lists every remote-tracking branch by its short name
-// (e.g. "origin/main"), in git's own sort order. These are the refs the
+// (e.g. "origin/main"), most recently updated first. These are the refs the
 // first-run wizard offers as targets: a target is compared against its
 // origin/<name> ref, so offering local branches would produce targets that
 // silently compare against the wrong thing (roadmap area 4).
+//
+// The order is the answer to the question the wizard actually asks — "which of
+// these are your long-lived mains?" A main is the ref everything gets merged
+// into, so it sorts to the top by committer date, while a feature branch
+// abandoned eight months ago sinks. Ordering is deliberately as far as this
+// goes (roadmap area 14): it moves the likely answer up, and it never removes a
+// wrong-looking one, so a repo whose main is a dormant maintenance branch still
+// lists it. Alphabetical order bought predictability when you already knew the
+// name you wanted, and type-to-filter now does that better.
+//
+// The date comes back as a unix timestamp rather than git's
+// %(committerdate:relative), because that field is English ("3 months ago") and
+// nothing here parses git's English. An unparseable one leaves Updated zero
+// rather than failing: the ref is what the wizard needs and the age only aids
+// reading it, so one odd date must not take first-run setup down with it.
 //
 // The "<remote>/HEAD" symref — which %(refname:short) shortens to the bare
 // remote name, e.g. "origin" — is dropped: it is a pointer to a remote's
 // default branch, not a branch to pick. Every real remote-tracking branch
 // shortens to "<remote>/<branch>", so requiring a slash filters it out.
-func (r *Repo) RemoteBranches(ctx context.Context) ([]string, error) {
-	out, err := r.run(ctx, "for-each-ref", "--format=%(refname:short)", "refs/remotes")
+func (r *Repo) RemoteBranches(ctx context.Context) ([]RemoteBranch, error) {
+	out, err := r.run(ctx, "for-each-ref",
+		"--sort=-committerdate",
+		"--format=%(refname:short)\t%(committerdate:unix)",
+		"refs/remotes")
 	if err != nil {
 		return nil, err
 	}
-	var got []string
-	for _, b := range lines(out) {
-		if !strings.Contains(b, "/") {
+	var got []RemoteBranch
+	for _, l := range lines(out) {
+		// A ref name can contain neither a tab nor a space, so the separator is
+		// unambiguous however the branch is named.
+		ref, ts, _ := strings.Cut(l, "\t")
+		if !strings.Contains(ref, "/") {
 			continue
+		}
+		b := RemoteBranch{Ref: ref}
+		if secs, err := strconv.ParseInt(strings.TrimSpace(ts), 10, 64); err == nil {
+			b.Updated = time.Unix(secs, 0)
 		}
 		got = append(got, b)
 	}
