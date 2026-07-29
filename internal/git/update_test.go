@@ -19,8 +19,9 @@ import (
 //
 // --initial-branch is not optional: it sets the bare repo's HEAD, and a HEAD
 // naming a branch we never push leaves `git clone` with nothing to check out.
-// Without it the name comes from the ambient init.defaultBranch, which is main
-// on a Mac (Xcode ships a system gitconfig setting it) and master on CI.
+// Without it the name is whatever init.defaultBranch happens to say. TestMain
+// takes the system config out of that answer, but a global config still has a
+// vote, so the branch is named here rather than assumed.
 func bareOrigin(t *testing.T) string {
 	t.Helper()
 	work := newRepo(t)

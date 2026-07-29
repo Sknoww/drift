@@ -13,6 +13,22 @@ import (
 // These tests drive the real git binary against throwaway repos. Mocking git
 // would only prove our parser matches our idea of git's output.
 
+// TestMain drops git's system config, because driving the real binary means
+// inheriting whatever that binary is configured to do — and that differs by
+// machine. Apple ships a system gitconfig setting init.defaultBranch=main; CI's
+// git has no such file. That one difference was enough to make seven tests pass
+// on a Mac and fail on CI, for a reason that had nothing to do with the code
+// under test. GIT_CONFIG_NOSYSTEM removes the file from git's search, so both
+// see the same git.
+//
+// Only undeclared settings go away. Everything these tests actually rely on —
+// user.name, user.email, the initial branch — is written per repo by the
+// helpers below, which is where a test's dependencies belong.
+func TestMain(m *testing.M) {
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	os.Exit(m.Run())
+}
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	r := New(dir)

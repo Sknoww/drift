@@ -15,6 +15,13 @@ import (
 // because "which directory does Drift write to" is the one thing a fake cannot
 // answer honestly.
 
+// TestMain drops git's system config so the real-git tests below see the same
+// git on every machine. See internal/git's TestMain for why.
+func TestMain(m *testing.M) {
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	os.Exit(m.Run())
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 	// git reports real paths, and on macOS t.TempDir() hands back one behind

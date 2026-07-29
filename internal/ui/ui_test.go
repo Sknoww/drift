@@ -16,6 +16,15 @@ import (
 	"github.com/Sknoww/drift/internal/store"
 )
 
+// TestMain drops git's system config so this package's real-repo tests see the
+// same git on every machine. The full reasoning is in internal/git's TestMain;
+// the short version is that a system gitconfig nobody in this repo wrote was
+// deciding what branch `git init` created.
+func TestMain(m *testing.M) {
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	os.Exit(m.Run())
+}
+
 // --- model fixtures -------------------------------------------------------
 
 func sampleConfig() store.Config {
