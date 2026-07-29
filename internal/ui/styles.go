@@ -28,12 +28,19 @@ var (
 	colWarning = lipgloss.AdaptiveColor{Light: "166", Dark: "214"} // behind > 0 — the target moved under me
 	colNeutral = lipgloss.AdaptiveColor{Light: "240", Dark: "245"} // ahead, and in-sync clusters — quiet
 	colDirty   = lipgloss.AdaptiveColor{Light: "172", Dark: "220"} // the dirty dot
-	colMarker  = lipgloss.AdaptiveColor{Light: "26", Dark: "39"}   // checked-out branch marker
-	colTitle   = lipgloss.AdaptiveColor{Light: "26", Dark: "39"}
 	colBorder  = lipgloss.AdaptiveColor{Light: "247", Dark: "240"}
 	colFaint   = lipgloss.AdaptiveColor{Light: "244", Dark: "240"} // hints, help line
 	colErr     = lipgloss.AdaptiveColor{Light: "160", Dark: "203"} // error text
 	colUnmerge = lipgloss.AdaptiveColor{Light: "127", Dark: "170"} // unmergeable collision — reconcile by hand
+
+	// colAccent is the default accent: the title, the checked-out branch marker
+	// and the selected row's left-edge marker. It was three separate values
+	// holding the same colour, which read as a coincidence; it is one role
+	// because those three mean one thing — "Drift is pointing at this" — and
+	// theming (roadmap area 16b) moves them together for the same reason. This
+	// is the *default*; a user's own accent is resolved in theme.go and poured
+	// into the same three places.
+	colAccent = lipgloss.AdaptiveColor{Light: "26", Dark: "39"}
 
 	// Diff panel. Muted rather than saturated: a whole screen of incoming change
 	// is the normal case here, so the +/- pair must read as structure, not as
@@ -78,18 +85,28 @@ type styles struct {
 	// than read from the environment at each use, so one run renders one
 	// treatment everywhere — the dashboard, the wizard and every overlay.
 	band bandTreatment
+
+	// accentName is the accent actually resolved, for the title to report while
+	// an override is set. Empty means the adaptive default, which no single
+	// value names.
+	accentName string
 }
 
 // newStyles builds the style set for one run, under the user's preferences.
 //
-// Prefs are taken as a whole rather than as the one string used today: theming
-// (roadmap area 16b) pours colours into these same roles, so it should add a
+// Prefs are taken as a whole rather than as the one string area 16a needed, and
+// theming (16b) is why: it pours a colour into these same roles, so it added a
 // field to Prefs rather than a parameter to every caller. The zero value is the
 // default set, which is what a machine with no prefs.json has — and what the
 // tests want.
+//
+// The background is forced before anything is built, because every adaptive
+// value below resolves against whatever Lip Gloss believes at the moment it is
+// used.
 func newStyles(prefs store.Prefs) styles {
-	applyBackgroundOverride()
-	band := activeBand(prefs.Selection)
+	applyBackgroundOverride(prefs.Background)
+	accent, accentName := activeAccent(prefs.Accent)
+	band := activeBand(prefs.Selection, accent)
 	return styles{
 		app: lipgloss.NewStyle().Padding(0, 1),
 		panel: lipgloss.NewStyle().
@@ -97,37 +114,38 @@ func newStyles(prefs store.Prefs) styles {
 			BorderForeground(colBorder).
 			Padding(0, 1),
 		title: lipgloss.NewStyle().
-			Foreground(colTitle).
+			Foreground(accent).
 			Bold(true),
-		ticket:    lipgloss.NewStyle(),
-		ticketSel: band.fillStyle(),
-		selMark:   band.markerStyle(),
-		branch:    lipgloss.NewStyle().Foreground(colNeutral),
-		behind:    lipgloss.NewStyle().Foreground(colWarning).Bold(true),
-		ahead:     lipgloss.NewStyle().Foreground(colNeutral),
-		sync:      lipgloss.NewStyle().Foreground(colFaint),
-		dirty:     lipgloss.NewStyle().Foreground(colDirty),
-		marker:    lipgloss.NewStyle().Foreground(colMarker),
-		target:    lipgloss.NewStyle().Foreground(colNeutral),
-		help:      lipgloss.NewStyle().Foreground(colFaint),
-		hint:      lipgloss.NewStyle().Foreground(colFaint).Italic(true),
-		errText:   lipgloss.NewStyle().Foreground(colErr),
-		unmerge:   lipgloss.NewStyle().Foreground(colUnmerge).Bold(true),
-		diffAdd:   lipgloss.NewStyle().Foreground(colDiffAdd),
-		diffDel:   lipgloss.NewStyle().Foreground(colDiffDel),
-		diffHunk:  lipgloss.NewStyle().Foreground(colDiffHunk).Bold(true),
-		diffMeta:  lipgloss.NewStyle().Foreground(colFaint),
-		band:      band,
+		ticket:     lipgloss.NewStyle(),
+		ticketSel:  band.fillStyle(),
+		selMark:    band.markerStyle(),
+		branch:     lipgloss.NewStyle().Foreground(colNeutral),
+		behind:     lipgloss.NewStyle().Foreground(colWarning).Bold(true),
+		ahead:      lipgloss.NewStyle().Foreground(colNeutral),
+		sync:       lipgloss.NewStyle().Foreground(colFaint),
+		dirty:      lipgloss.NewStyle().Foreground(colDirty),
+		marker:     lipgloss.NewStyle().Foreground(accent),
+		target:     lipgloss.NewStyle().Foreground(colNeutral),
+		help:       lipgloss.NewStyle().Foreground(colFaint),
+		hint:       lipgloss.NewStyle().Foreground(colFaint).Italic(true),
+		errText:    lipgloss.NewStyle().Foreground(colErr),
+		unmerge:    lipgloss.NewStyle().Foreground(colUnmerge).Bold(true),
+		diffAdd:    lipgloss.NewStyle().Foreground(colDiffAdd),
+		diffDel:    lipgloss.NewStyle().Foreground(colDiffDel),
+		diffHunk:   lipgloss.NewStyle().Foreground(colDiffHunk).Bold(true),
+		diffMeta:   lipgloss.NewStyle().Foreground(colFaint),
+		band:       band,
+		accentName: accentName,
 	}
 }
 
-// titleText is the app title, carrying the active selection treatment while
-// DRIFT_BAND or DRIFT_BG is set and nothing on an ordinary run. It is
-// one helper so the dashboard header and the wizard's own title agree, and so
-// the label is measured by whatever truncation each of them already applies.
+// titleText is the app title, carrying whatever the environment has overridden
+// and nothing on an ordinary run. It is one helper so the dashboard header and
+// the wizard's own title agree, and so the label is measured by whatever
+// truncation each of them already applies.
 func titleText(s styles) string {
 	t := s.title.Render("drift")
-	if label := bandLabel(s.band); label != "" {
+	if label := overrideLabel(s); label != "" {
 		t += "  " + s.help.Render(label)
 	}
 	return t

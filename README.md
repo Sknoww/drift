@@ -174,27 +174,58 @@ in every repo you clone. `$XDG_CONFIG_HOME` is honoured where it's set.
 
 ```json
 {
-  "selection": "pair"
+  "selection": "pair",
+  "accent": "#ff8800",
+  "background": "dark"
 }
 ```
 
-`selection` is how the cursor's row is drawn:
+Every key is optional, and no file at all is the full default set.
+
+`selection` is the **shape** of the cursor's row:
 
 | value | |
 |---|---|
 | `pair` | a subtle band under a left-edge `▌` — the default |
 | `contrast` | a grey band that reads on its own, no marker |
-| `accent` | an accent hue rather than a lighter grey |
+| `accent` | a fixed accent-hue band rather than a lighter grey |
 | `marker` | the left-edge `▌` only, no background at all |
 
-An unrecognized value is an error naming the file, not a silent fall back to the
-default — a treatment that quietly didn't apply looks exactly like one that did.
+`accent` is the **colour** poured into it — one value, either an ANSI-256 index
+(`"39"`) or a hex colour (`"#ff8800"`). It recolours the three things that mean "drift
+is pointing at this": the title, the checked-out branch marker, and the selected row's
+`▌`. They move together on purpose.
 
-`DRIFT_BAND` overrides the file for a single run (`DRIFT_BAND=marker drift`), which is
-how to try one before saving it. `DRIFT_BG=light|dark` forces which end of the palette
-is used: drift picks it from the terminal's background, and this is how to check that
-detection got it right. While either is set the title says which treatment and which
-background are actually in force.
+Nothing else is themable. Colour is the signal here — `↓behind` is the one thing on
+screen that shouts and `⚠ unmergeable` is a distinct alarm beside it — so a setting
+that let two of those collide wouldn't be a preference, it'd be a broken screen.
+
+> `selection: "accent"` and the `accent` key are unrelated, which the shared word
+> hides. The treatment is a fixed-hue *background*, and a background is only half a
+> decision: it needs a foreground pinned against it, and one value can't pin a pair.
+> The `accent` key colours foregrounds, where one value carries the signal on its own.
+
+`background` forces which end of the palette is used when your terminal is misdetected
+— `"light"` or `"dark"`. Drift normally reads it from the terminal, and every colour
+names both ends, so this is only for a terminal that reports the wrong thing.
+
+An unrecognized value on any of the three is an error naming the file, not a silent
+fall back to the default — a preference that quietly didn't apply looks exactly like
+one that did.
+
+Each has a single-run override, which is how to try one before saving it:
+
+```sh
+DRIFT_BAND=marker drift
+DRIFT_ACCENT='#ff8800' drift
+DRIFT_BG=light drift
+```
+
+An env var says "for this run" in a way an edited file can't — you'd be editing the
+file whose contents you're trying to decide. While any of them is set the title names
+what's actually in force, including which background was detected; a typo in one falls
+through to the file rather than refusing, and the title still names what really
+rendered.
 
 ## Sandbox
 

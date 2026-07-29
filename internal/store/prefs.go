@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -50,16 +52,112 @@ func SelectionNames() []string {
 	return []string{SelectionPair, SelectionContrast, SelectionAccent, SelectionMarker}
 }
 
+// Background names. Which end of the adaptive palette is in force is normally
+// detected from the terminal, and these force it.
+//
+// This began as DRIFT_BG alone, an instrument for the one part of the adaptive
+// palette with a silent failure mode: if detection decides the terminal is dark
+// when it is not, every Light value is inert and the result is
+// indistinguishable from Light values that were simply chosen badly. An env var
+// says "for this run", which is the right thing for diagnosing that — and the
+// wrong thing for a terminal that is misdetected *every* run. A permanent
+// misdetection is a permanent setting, so it gets a home here beside the
+// preferences it distorts.
+const (
+	BackgroundLight = "light"
+	BackgroundDark  = "dark"
+)
+
+// BackgroundNames lists the valid background values, in the order an error
+// offers them back. There is no default entry: unset means "detect it", which
+// is not a value anyone writes.
+func BackgroundNames() []string {
+	return []string{BackgroundLight, BackgroundDark}
+}
+
+// accentFormats is the offer half of an error about an accent Drift cannot
+// render, and the sentence the README documents the field with.
+//
+// Both depths are accepted on purpose. ANSI-256 is right for Drift's *own*
+// palette, which has to be legible on a terminal Drift knows nothing about
+// (DESIGN.md §1) — but a user picking their own accent has it in front of them,
+// and the value they have in hand is a hex code out of their terminal theme,
+// not an xterm-256 index. Lip Gloss degrades a hex colour to the nearest
+// indexed one on a 256-colour profile, so accepting hex costs nothing and asks
+// nothing of the user that the ANSI-only rule would.
+const accentFormats = `an ANSI-256 index "0"-"255", or a hex colour like "#ff8800"`
+
+var hexAccent = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+// ParseAccent canonicalises an accent value, reporting whether it is one Drift
+// can render.
+//
+// It is the single rule behind both entry points — the file, which this package
+// validates, and DRIFT_ACCENT, which internal/ui resolves — so a value that is
+// good in one is good in the other. Canonicalising rather than merely accepting
+// matters because the resolved value is *reported*: the title names the accent
+// actually in force while an override is set, and a title reading `accent:007`
+// when `7` is what got rendered would be the same class of lie the declared
+// badge exists to prevent.
+func ParseAccent(v string) (string, bool) {
+	v = strings.TrimSpace(v)
+	if hexAccent.MatchString(v) {
+		return strings.ToLower(v), true
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 255 {
+		return strconv.Itoa(n), true
+	}
+	return "", false
+}
+
+// ParseBackground reports whether v names an end of the adaptive palette. The
+// same single rule serves the file and DRIFT_BG.
+func ParseBackground(v string) (string, bool) {
+	switch strings.TrimSpace(v) {
+	case BackgroundLight:
+		return BackgroundLight, true
+	case BackgroundDark:
+		return BackgroundDark, true
+	}
+	return "", false
+}
+
 // Prefs is the user-global preferences file: ~/.config/drift/prefs.json,
 // hand-edited, and absent on most machines.
 //
 // Every field is optional and an absent file is the whole default set, so a
 // user who has never heard of this file loses nothing. Theming (roadmap area
-// 16b) adds fields beside Selection rather than a second file.
+// 16b) added fields beside Selection rather than a second file, which is what
+// the root existing already bought.
 type Prefs struct {
 	// Selection names the selected-row treatment (SelectionPair and friends).
 	// Empty means unset, which is the default — not an error.
 	Selection string `json:"selection,omitempty"`
+
+	// Accent is the one themable colour role (roadmap area 16b): the title, the
+	// checked-out branch marker, and the selected row's left-edge marker. Those
+	// three move together because they mean one thing — "Drift is pointing at
+	// this" — so recolouring is one field rather than three.
+	//
+	// The alarm roles are deliberately *not* themable. Colour is the signal
+	// (DESIGN.md §1): `behind` is the one thing on screen that shouts,
+	// `unmergeable` is a distinct alarm beside it, and neutral recedes. A theme
+	// that let two of those collide would not be a preference, it would be a
+	// broken screen — and validating distinctness across arbitrary colours means
+	// a perceptual-distance threshold that either rejects good choices or admits
+	// broken ones. The accent carries no alarm, so it needs no such check.
+	//
+	// One value, used for both ends of the palette. Drift's *own* default is an
+	// adaptive pair, because Drift is choosing on behalf of a terminal it has
+	// never seen; a user is choosing for the terminal in front of them and can
+	// see the result immediately, so asking them for a light end they will never
+	// look at buys precision nobody wants. Empty means the adaptive default.
+	Accent string `json:"accent,omitempty"`
+
+	// Background forces which end of the adaptive palette is used, for a
+	// terminal Lip Gloss misdetects. Empty means detect it, which is right on
+	// every terminal that reports honestly.
+	Background string `json:"background,omitempty"`
 }
 
 // UserConfigDir is Drift's user-global root: $XDG_CONFIG_HOME/drift, or
@@ -139,18 +237,42 @@ func loadPrefsAt(path string) (Prefs, error) {
 }
 
 // validate rejects a preference that would otherwise be applied as its own
-// absence. Empty is unset and always valid; anything else must name a treatment
-// that exists.
+// absence. Empty is unset and always valid on every field; anything else must
+// name something Drift can actually render.
+//
+// The rule is the same for all three, and it is the declare.destinations rule:
+// a value that quietly did not apply is indistinguishable on screen from one
+// that did. A mistyped selection renders the default treatment, a mistyped
+// accent renders the default blue, and a mistyped background renders whatever
+// detection was going to render anyway — in each case the screen looks like it
+// worked. So the file refuses to start, and names both the file and the values
+// it would have taken.
 func (p Prefs) validate() error {
-	if strings.TrimSpace(p.Selection) == "" {
-		return nil
-	}
-	for _, name := range SelectionNames() {
-		if p.Selection == name {
-			return nil
+	if v := strings.TrimSpace(p.Selection); v != "" {
+		if !validSelection(p.Selection) {
+			return fmt.Errorf("unknown selection %q (want %s)", p.Selection, quotedList(SelectionNames()))
 		}
 	}
-	return fmt.Errorf("unknown selection %q (want %s)", p.Selection, quotedList(SelectionNames()))
+	if v := strings.TrimSpace(p.Accent); v != "" {
+		if _, ok := ParseAccent(p.Accent); !ok {
+			return fmt.Errorf("unknown accent %q (want %s)", p.Accent, accentFormats)
+		}
+	}
+	if v := strings.TrimSpace(p.Background); v != "" {
+		if _, ok := ParseBackground(p.Background); !ok {
+			return fmt.Errorf("unknown background %q (want %s)", p.Background, quotedList(BackgroundNames()))
+		}
+	}
+	return nil
+}
+
+func validSelection(v string) bool {
+	for _, name := range SelectionNames() {
+		if v == name {
+			return true
+		}
+	}
+	return false
 }
 
 // quotedList renders names as `"a", "b", "c"` — the offer half of an error

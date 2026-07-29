@@ -570,11 +570,12 @@ is; link its spec/ADR once one exists.
           whole and never scrolls — clipping against a guessed height would make a short
           overlay claim a scroll it doesn't have
     - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list
-16. 🛠️ **User-global preferences** — the second config root (`~/.config/drift/`,
+16. ✅ **User-global preferences** — the second config root (`~/.config/drift/`,
     XDG-respecting), which `CONTEXT.md` has declared from the start. Purely additive: a
     new root, no migration, and the per-repo `<.git>/drift/config.json` is untouched.
-    Split in two: **16a** shipped the layer on the smallest real setting, **16b** is
-    theming — the half with a wrong answer.
+    Split in two: **16a** shipped the layer on the smallest real setting, **16b** was
+    theming — the half with a wrong answer. Both shipped; the split paid off exactly as
+    intended, since 16b added two fields to an existing file rather than a file.
     - ✅ **16a — Selection style, and the root it lives in.** `~/.config/drift/prefs.json`,
       hand-edited, optional, and absent on most machines. Area 15 built four treatments,
       all four read well, and picking one for everybody is the wrong shape of answer — but
@@ -620,33 +621,73 @@ is; link its spec/ADR once one exists.
         it than a whole keymap format, so the layer got built once and proved on something
         small. `keymap.json` is a sibling file under the same root, on the same argument that
         kept `prefs.json` out of `config.json`
-    - ⏳ **16b — Theming: pick the accent, not just the shape.** Raised by dogfooding area 15's
+    - ✅ **16b — Theming: pick the accent, not just the shape.** Raised by dogfooding area 15's
       result: the marker reads well and the *blue* is not to taste. That is a second axis
       and the pair decomposes cleanly along it — a treatment is a **shape** (does it
       fill, does it mark) and a **palette** is the colours poured into it. Area 15 shipped
       four shapes with their colours baked in; splitting the two is what lets `pair` in
       someone's own accent exist without a fifth hardcoded treatment. 16a built the root,
-      the file, the load path and the validation rule, so this adds fields to `Prefs`
-      beside `selection` rather than a second file — which is why `newStyles` takes the
-      whole `store.Prefs` and not the one string it uses today.
-      - **Colour is the signal, so theming cannot be a free-for-all** (DESIGN.md §1). The
-        alarm roles carry meaning — `behind` shouts, `unmergeable` is a *distinct* alarm
-        from it, neutral recedes — and a theme that let two of them collide would not be
-        a preference, it would be a broken screen. The likely shape is that the **accent
-        is themable and the alarm roles are not**, or that everything is themable with
-        distinctness validated the way `declare.destinations` is validated. Decide before
-        building; this is the part with a wrong answer
-      - **One accent currently serves three roles** — the title, the checked-out marker,
-        and now the selection marker. Whether recolouring moves all three together or
-        splits them is a real choice, not an implementation detail: they move together
-        today because they *mean* "Drift is pointing at this", and that may be worth
-        keeping
-      - **A themed colour needs both ends or neither.** Every role names a light and a
-        dark value now, so a user supplying one colour is supplying half a role. Either
-        the config takes a pair, or Drift takes one value and uses it for both — which is
-        the dark-terminal assumption walking back in through the front door, on exactly
-        the surface area 15 spent itself fixing
-      - **`DRIFT_BG` is the one to fold in.** It exists because the adaptive palette has a
-        silent failure mode (16a kept it documented for exactly that reason), and a
-        themable palette either gives it a `prefs.json` home or keeps it as the override
-        it is. Decide alongside the palette, not after
+      the file, the load path and the validation rule, so this added fields to `Prefs`
+      beside `selection` rather than a second file — which is why `newStyles` already took
+      the whole `store.Prefs` and not the one string it then used. New: `internal/ui/theme.go`,
+      where the palette is resolved and `band.go` is left owning the shape alone.
+      All four open questions were settled before a line was written, which is what the
+      area asked for. No ADR: nothing here reverses a documented decision — DESIGN.md §1
+      has always called the palette "considered-not-sacred"
+      - ✅ **Settled: the accent is themable and nothing else is.** Colour is the signal
+        (DESIGN.md §1), and the alarm roles carry meaning — `behind` shouts,
+        `unmergeable` is a *distinct* alarm from it, neutral recedes. The alternative on
+        the table was everything-themable with distinctness validated the way
+        `declare.destinations` is, and it lost on what that validation would actually
+        have to be: mapping arbitrary colours to a perceptual-distance threshold, which
+        either rejects good choices or admits broken ones. The accent carries no alarm,
+        so it needs no such check — the scope *is* the reason the feature needs no
+        machinery. It is also the whole of the complaint that raised the area. Pinned by
+        a test that rebuilds the style set under an accent and asserts every other role
+        is byte-identical, so the surface cannot widen by accident
+      - ✅ **One accent, three roles, one field.** The title, the checked-out marker and
+        the selection marker move together, because they *mean* "Drift is pointing at
+        this" — they held the same value before, and that read as a coincidence rather
+        than as a role. Three settings would have been three ways to make an incoherent
+        screen. `colTitle` and `colMarker` are now one `colAccent`, which is the decision
+        expressed in the code rather than only in a doc. Splitting them later stays
+        additive (new fields defaulting to `accent`), so nothing is foreclosed
+      - ✅ **One value, used for both ends — and that is not the assumption walking back
+        in.** The roadmap framed this as a pair-or-nothing rule, and building it found
+        the distinction the rule was missing: Drift's *own* defaults are adaptive because
+        Drift is choosing on behalf of a terminal it has never seen, which is precisely
+        the bug area 15 fixed. A user is choosing for the terminal in front of them and
+        sees the result immediately, so asking them for a light end they will never look
+        at buys precision nobody wants. The default stays an adaptive pair; only an
+        override collapses to one value, and only because someone typed it
+        - Both depths accepted — an ANSI-256 index *or* a hex colour. ANSI-256 stays
+          right for Drift's own palette (DESIGN.md §1) for the same
+          terminal-it-has-never-seen reason, but the value a user has in hand comes out
+          of their terminal theme as hex, and Lip Gloss degrades it to the nearest
+          indexed colour on a 256-colour profile. `store.ParseAccent` is the one rule
+          behind the file and the env var, and it **canonicalises** rather than merely
+          accepting, because the resolved value is reported in the title — a title
+          reading `accent:007` when `7` is what rendered would be the same class of lie
+          the declared badge exists to prevent
+      - ✅ **`DRIFT_BG` folded in, and the argument generalised.** It was built as an
+        instrument for the adaptive palette's silent failure mode, and "for this run" is
+        the right shape for *diagnosing* that — but a terminal Lip Gloss misdetects is
+        misdetected every run, so the diagnostic was being handed to people who needed a
+        setting. `"background": "light"|"dark"` is that setting; `DRIFT_BG` survives
+        unchanged above it. That completes the symmetry: all three settings resolve
+        env → file → default, and a bad value still reads differently at each level
+      - **The one wrinkle, documented rather than designed away:** `selection: "accent"`
+        (a fixed-hue *band*) and the `accent` key are unrelated, and the shared word
+        hides it. Renaming the treatment was rejected — it has shipped, and 16a's own
+        rule is that a name in a file is a name someone has. The treatment stays baked
+        because a band is only half a decision: it needs a foreground pinned against it
+        (the light-terminal defect area 15 fixed), and one user value cannot pin a pair.
+        The `accent` key colours *foregrounds*, where one value carries the signal alone.
+        README and DESIGN.md §1 both say so outright
+      - `DRIFT_ACCENT` joins the other two as a documented single-run override, on 16a's
+        argument verbatim — and it bites harder here than it did for the selection, since
+        deciding a colour by editing the file whose contents you are deciding is the
+        worst version of that loop. The title's label is now `overrideLabel` and names
+        the accent **only when it was overridden**: an accent is literally the colour the
+        label is drawn beside, so naming it otherwise is noise, where `pair` and
+        `contrast` differ subtly enough that the screen does not tell you which you got

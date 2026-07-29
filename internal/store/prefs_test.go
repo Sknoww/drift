@@ -134,6 +134,122 @@ func TestEverySelectionNameValidates(t *testing.T) {
 	}
 }
 
+// Theming (area 16b) adds two fields beside the selection, and they load the
+// same way — which is the point of the root having been built first.
+func TestLoadPrefsReadsTheThemeFields(t *testing.T) {
+	path := prefsHome(t)
+	writePrefs(t, path, `{"selection": "pair", "accent": "#FF8800", "background": "light"}`)
+
+	p, err := LoadPrefs()
+	if err != nil {
+		t.Fatalf("LoadPrefs: %v", err)
+	}
+	if p.Accent != "#FF8800" {
+		t.Errorf("Accent = %q, want the value as written", p.Accent)
+	}
+	if p.Background != BackgroundLight {
+		t.Errorf("Background = %q, want %q", p.Background, BackgroundLight)
+	}
+}
+
+// Both depths are accepted: an ANSI-256 index, because that is what Drift's own
+// palette is written in, and a hex colour, because that is what a user actually
+// has in hand from their terminal theme.
+func TestParseAccentTakesBothDepths(t *testing.T) {
+	valid := map[string]string{
+		"0":       "0",
+		"39":      "39",
+		"255":     "255",
+		"#ff8800": "#ff8800",
+		"#FF8800": "#ff8800", // canonicalised, so the title reports what rendered
+		"#f80":    "#f80",
+		" 39 ":    "39", // a stray space in a hand-edited file is not a typo
+		"007":     "7",
+	}
+	for in, want := range valid {
+		got, ok := ParseAccent(in)
+		if !ok {
+			t.Errorf("ParseAccent(%q) rejected a value Drift can render", in)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseAccent(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	for _, in := range []string{"", "256", "-1", "blue", "#gg8800", "#ff88", "39px", "0x27"} {
+		if got, ok := ParseAccent(in); ok {
+			t.Errorf("ParseAccent(%q) = %q, want rejected", in, got)
+		}
+	}
+}
+
+// The same rule as an unknown selection, for the same reason: a mistyped accent
+// renders the default blue, which on screen is indistinguishable from the
+// requested one working.
+func TestLoadPrefsRejectsAnUnknownAccent(t *testing.T) {
+	path := prefsHome(t)
+	writePrefs(t, path, `{"accent": "orange"}`)
+
+	_, err := LoadPrefs()
+	if err == nil {
+		t.Fatal("an unrenderable accent was accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, path) {
+		t.Errorf("error must name the file to edit, got %q", msg)
+	}
+	if !strings.Contains(msg, `"orange"`) {
+		t.Errorf("error must quote what was written, got %q", msg)
+	}
+	// And describe both forms it would have taken, so the fix never needs the
+	// README.
+	if !strings.Contains(msg, "255") || !strings.Contains(msg, "#ff8800") {
+		t.Errorf("error does not offer the accepted forms back: %q", msg)
+	}
+}
+
+func TestLoadPrefsRejectsAnUnknownBackground(t *testing.T) {
+	path := prefsHome(t)
+	writePrefs(t, path, `{"background": "auto"}`)
+
+	_, err := LoadPrefs()
+	if err == nil {
+		t.Fatal("an unknown background was accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, path) || !strings.Contains(msg, `"auto"`) {
+		t.Errorf("error must name the file and quote the value, got %q", msg)
+	}
+	for _, name := range BackgroundNames() {
+		if !strings.Contains(msg, `"`+name+`"`) {
+			t.Errorf("error does not offer %q: %q", name, msg)
+		}
+	}
+}
+
+// Unset is unset on every field, not a value that happens to be blank. This is
+// what a machine with a prefs.json that only sets `selection` relies on.
+func TestLoadPrefsAcceptsEmptyThemeFields(t *testing.T) {
+	path := prefsHome(t)
+	writePrefs(t, path, `{"selection": "", "accent": "", "background": ""}`)
+
+	if _, err := LoadPrefs(); err != nil {
+		t.Errorf("empty theme fields are unset, not an error: %v", err)
+	}
+}
+
+func TestEveryBackgroundNameValidates(t *testing.T) {
+	for _, name := range BackgroundNames() {
+		if err := (Prefs{Background: name}).validate(); err != nil {
+			t.Errorf("%s is offered but rejected: %v", name, err)
+		}
+		if got, ok := ParseBackground(name); !ok || got != name {
+			t.Errorf("ParseBackground(%q) = %q, %v", name, got, ok)
+		}
+	}
+}
+
 // XDG_CONFIG_HOME wins where it is set, on every platform — that is what makes
 // the rest of these tests possible, and what lets a user put the file where
 // their other tools' config lives.

@@ -63,8 +63,22 @@ type bandTreatment struct {
 
 // bandTreatments are the supported selection styles, the default first.
 //
-// Every colour is adaptive. That is not a flourish but the second half of the
-// pass — a treatment judged only against a dark terminal is exactly how the
+// A treatment is a **shape** — does it fill, does it mark — and theming
+// (roadmap area 16b) is the palette poured into it. That split is why the
+// marker treatments name no accent here: theirs is resolved per run in
+// theme.go, so `pair` in someone else's accent is the same shape with a
+// different value rather than a fifth hardcoded entry in this list.
+//
+// The fill colours stay baked, and that is the split holding rather than an
+// omission. A band is a *background*, so it is only ever half a decision: it
+// needs a foreground pinned against it (the light-terminal defect this whole
+// pass exists to fix), and one user-supplied value cannot pin the pair. Note
+// that store.SelectionAccent — a band in an accent *hue* — is therefore
+// unrelated to the accent preference, which is a foreground signal. Two things
+// with one word, and the README says so.
+//
+// Every colour here is adaptive. That is not a flourish but the second half of
+// the pass — a treatment judged only against a dark terminal is exactly how the
 // original one got here. ANSI-256 stays right (DESIGN.md §1); this is about
 // light versus dark, not colour depth.
 var bandTreatments = []bandTreatment{
@@ -76,7 +90,6 @@ var bandTreatments = []bandTreatment{
 		bold:   true,
 		bg:     lipgloss.AdaptiveColor{Light: "254", Dark: "237"},
 		fg:     lipgloss.AdaptiveColor{Light: "232", Dark: "255"},
-		accent: lipgloss.AdaptiveColor{Light: "26", Dark: "39"},
 	},
 	{
 		name: store.SelectionContrast,
@@ -88,7 +101,7 @@ var bandTreatments = []bandTreatment{
 	},
 	{
 		name: store.SelectionAccent,
-		desc: "an accent hue rather than a lighter grey — the lazygit/k9s shape",
+		desc: "a fixed accent hue rather than a lighter grey — the lazygit/k9s shape",
 		fill: true,
 		bold: true,
 		bg:   lipgloss.AdaptiveColor{Light: "153", Dark: "24"},
@@ -98,7 +111,6 @@ var bandTreatments = []bandTreatment{
 		name:   store.SelectionMarker,
 		desc:   "left-edge ▌ only, no background at all — deletes reopenBand",
 		marker: true,
-		accent: lipgloss.AdaptiveColor{Light: "26", Dark: "39"},
 	},
 }
 
@@ -158,16 +170,23 @@ func (t bandTreatment) markerStyle() lipgloss.Style {
 // start, since a typo silently rendering the default is indistinguishable from
 // the requested treatment working. A bad DRIFT_BAND is a shell typo in a
 // throwaway override, and it is not silent either — while any override is set
-// the title carries the treatment actually in force (bandLabel), so what is on
-// screen always names itself.
-func activeBand(pref string) bandTreatment {
-	if t, ok := bandNamed(os.Getenv("DRIFT_BAND")); ok {
-		return t
+// the title carries the treatment actually in force (overrideLabel), so what is
+// on screen always names itself.
+//
+// The accent is applied here rather than stored on the treatment, so the shape
+// and its colour are resolved in one place and a marker treatment can never
+// reach a screen with an unset glyph colour.
+func activeBand(pref string, accent lipgloss.TerminalColor) bandTreatment {
+	t := bandTreatments[0]
+	if named, ok := bandNamed(os.Getenv("DRIFT_BAND")); ok {
+		t = named
+	} else if named, ok := bandNamed(pref); ok {
+		t = named
 	}
-	if t, ok := bandNamed(pref); ok {
-		return t
+	if t.marker {
+		t.accent = accent
 	}
-	return bandTreatments[0]
+	return t
 }
 
 // bandNamed looks a treatment up by name, reporting whether it exists. An empty
@@ -185,50 +204,6 @@ func bandNamed(name string) (bandTreatment, bool) {
 	return bandTreatment{}, false
 }
 
-// bandLabel is the suffix the title carries while either environment override
-// is set, and empty on an ordinary run — a default install must never carry
-// diagnostics in its title. It names the treatment actually resolved, not the
-// string asked for, so a typo reads as the default rather than as the treatment
-// the user thought they had selected.
-//
-// A treatment chosen in prefs.json deliberately does *not* light it up. The
-// label is for a run being experimented on; a saved preference is a decision
-// already made, and stamping it on the title of every run afterwards would be
-// noise about something the user is no longer asking.
-//
-// It carries the detected background alongside it, because that is the half of
-// the palette work with a silent failure mode: every Light value is inert if
-// Lip Gloss decides the terminal is dark when it is not, and an adaptive
-// palette that never adapts looks exactly like one whose light values are badly
-// chosen. Naming the detected end tells those two apart from the screen.
-func bandLabel(t bandTreatment) string {
-	if strings.TrimSpace(os.Getenv("DRIFT_BAND")) == "" &&
-		strings.TrimSpace(os.Getenv("DRIFT_BG")) == "" {
-		return ""
-	}
-	bg := "light"
-	if lipgloss.HasDarkBackground() {
-		bg = "dark"
-	}
-	return "band:" + t.name + " · bg:" + bg
-}
-
-// applyBackgroundOverride forces which end of the palette is used, for the one
-// question a single terminal cannot otherwise answer.
-//
-// Judging the light values properly means actually switching the terminal's
-// theme — a light palette rendered against a dark background says nothing about
-// legibility, which is the whole question. What this is for is the failure
-// *underneath* that: confirming detection works at all, and letting the light
-// values be read off the screen without hunting for them in the source.
-//
-// Only ever acts when DRIFT_BG is set, so it is inert on a normal run and in
-// tests, neither of which should be touching global renderer state.
-func applyBackgroundOverride() {
-	switch strings.TrimSpace(os.Getenv("DRIFT_BG")) {
-	case "light":
-		lipgloss.SetHasDarkBackground(false)
-	case "dark":
-		lipgloss.SetHasDarkBackground(true)
-	}
-}
+// The title's override label and the background override both moved to
+// theme.go when area 16b split shape from palette: neither is about the
+// selected row, and the label now reports an accent this file no longer owns.

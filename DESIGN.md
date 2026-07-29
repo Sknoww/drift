@@ -43,11 +43,44 @@ the home row. "Looks like raw text output" is a bug.
     left to the code: if detection decides the terminal is dark when it is not, every
     light value is inert and the result is indistinguishable from light values that
     were badly chosen. `DRIFT_BG` forces an end, and the title names the detected one
-    while it or `DRIFT_BAND` is set, so the two can be told apart from the screen.
-    Both are documented overrides now (area 16a), not a temporary harness — a
-    treatment saved in `prefs.json` deliberately leaves the title alone, since the
-    label belongs to a run being experimented on rather than to a decision already
-    made.
+    while any override is set, so the two can be told apart from the screen. The
+    overrides are documented (area 16a), not a temporary harness — a preference saved
+    in `prefs.json` deliberately leaves the title alone, since the label belongs to a
+    run being experimented on rather than to a decision already made. `DRIFT_BG` also
+    has a **file** now (area 16b): it was built to diagnose a misdetection, but a
+    terminal that reports the wrong thing reports it every run, and "for this run" is
+    the wrong shape for that fix.
+- **One role is themable, and it is the accent** ✅ (area 16b) — `"accent"` in
+  `prefs.json` recolours the title, the checked-out branch marker and the selected
+  row's `▌`. A selection treatment is a **shape** (does it fill, does it mark) and the
+  palette is what is poured into it; area 15 shipped four shapes with their colours
+  baked in, and splitting the two is what lets `pair` exist in someone else's accent
+  without a fifth hardcoded treatment.
+  - **The three roles move together, as one field.** They held the same value before
+    and that read as a coincidence; they are one role because they mean one thing —
+    *drift is pointing at this*. Three separate settings would be three ways to make
+    an incoherent screen, and it answers a question nobody asked.
+  - **Nothing else is on offer, and that is the decision, not a first increment.**
+    Colour *is* the signal: `behind` is the one alarm that shouts, `unmergeable` is a
+    distinct alarm beside it, neutral recedes. A preference that let two of those
+    collide would not be a preference, it would be a broken screen — and validating
+    distinctness across arbitrary colours means a perceptual-distance threshold that
+    either rejects good choices or admits broken ones. The accent carries no alarm, so
+    it needs no such check. Asserted, so the surface cannot widen by accident.
+  - **One value, used for both ends** — deliberately not the pair every built-in role
+    names. Drift's *own* defaults are adaptive because Drift is choosing for a terminal
+    it has never seen; a user is choosing for the terminal in front of them and sees
+    the result immediately, so asking for a light end they will never look at buys
+    precision nobody wants. The default stays an adaptive pair.
+  - Both depths are accepted — an ANSI-256 index or a hex colour. ANSI-256 is right for
+    Drift's own palette for the reason above, but the value a user actually has in hand
+    is a hex code out of their terminal theme, and Lip Gloss degrades one to the nearest
+    indexed colour on a 256-colour profile.
+  - **`selection: "accent"` is unrelated to the `accent` setting**, which the shared
+    word hides and the README says outright. That treatment is a *background*, and a
+    background is only half a decision — it needs a foreground pinned against it (the
+    light-terminal defect below), and one user value cannot pin a pair. The setting
+    colours foregrounds, where one value carries the signal alone.
 - **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
   title (`drift`) sits on its own line above the panel, with the checked-out branch or
   a refresh spinner to its right. The panel spans the **full terminal width** (computed
@@ -498,6 +531,11 @@ behind it. Resolution is `DRIFT_BAND` → `prefs.json` → the default, and a ba
 reads differently at each level on purpose: a typo in the file refuses to start (it
 would otherwise render the default and look like it worked), while a typo in the
 env var falls through to the file and is named in the title.
+- **The marker's colour is the themable accent** ✅ (area 16b, §1), so a treatment is
+  a shape and the accent is what fills it — resolved `DRIFT_ACCENT` → `prefs.json` →
+  the default, the same order and the same asymmetry. It is applied where the shape is
+  resolved rather than stored on the treatment, so a marker treatment cannot reach a
+  screen with an uncoloured glyph.
 - **The band pins both ends, background *and* foreground.** A background with no
   foreground was the same defect's other half: on a light terminal the default
   foreground is dark, so the band rendered dark-on-dark and the one thing that must

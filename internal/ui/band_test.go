@@ -18,7 +18,7 @@ import (
 func TestActiveBandResolvesByName(t *testing.T) {
 	for _, want := range bandTreatments {
 		t.Setenv("DRIFT_BAND", want.name)
-		if got := activeBand(""); got.name != want.name {
+		if got := activeBand("", colAccent); got.name != want.name {
 			t.Errorf("DRIFT_BAND=%q selected %q", want.name, got.name)
 		}
 	}
@@ -29,27 +29,27 @@ func TestActiveBandResolvesByName(t *testing.T) {
 		t.Errorf("the default treatment is %q, want pair", bandTreatments[0].name)
 	}
 	t.Setenv("DRIFT_BAND", "")
-	if got := activeBand(""); got.name != bandTreatments[0].name {
+	if got := activeBand("", colAccent); got.name != bandTreatments[0].name {
 		t.Errorf("unset DRIFT_BAND selected %q, want the default", got.name)
 	}
 	t.Setenv("DRIFT_BAND", "nonesuch")
-	if got := activeBand(""); got.name != bandTreatments[0].name {
+	if got := activeBand("", colAccent); got.name != bandTreatments[0].name {
 		t.Errorf("unknown DRIFT_BAND selected %q, want the default", got.name)
 	}
-	if got := bandLabel(activeBand("")); !strings.HasPrefix(got, "band:"+bandTreatments[0].name) {
+	if got := overrideLabel(newStyles(store.Prefs{})); !strings.HasPrefix(got, "band:"+bandTreatments[0].name) {
 		t.Errorf("a typo must still name the treatment actually in force, got %q", got)
 	}
 	// The label also states which end of the palette is live — the one thing
 	// about the adaptive half with a silent failure mode.
-	if got := bandLabel(activeBand("")); !strings.Contains(got, "bg:") {
+	if got := overrideLabel(newStyles(store.Prefs{})); !strings.Contains(got, "bg:") {
 		t.Errorf("label %q does not say which background was detected", got)
 	}
 
 	// With nothing set the title carries no label at all: an ordinary run leaves
 	// no diagnostics on screen.
 	t.Setenv("DRIFT_BAND", "")
-	if got := bandLabel(activeBand("")); got != "" {
-		t.Errorf("bandLabel with DRIFT_BAND unset = %q, want empty", got)
+	if got := overrideLabel(newStyles(store.Prefs{})); got != "" {
+		t.Errorf("overrideLabel with nothing overridden = %q, want empty", got)
 	}
 }
 
@@ -59,15 +59,15 @@ func TestActiveBandResolvesByName(t *testing.T) {
 // the contents of.
 func TestSelectionPreferenceRanksBelowTheEnvironment(t *testing.T) {
 	t.Setenv("DRIFT_BAND", "")
-	if got := activeBand(store.SelectionMarker); got.name != store.SelectionMarker {
+	if got := activeBand(store.SelectionMarker, colAccent); got.name != store.SelectionMarker {
 		t.Errorf("prefs selected %q, want marker", got.name)
 	}
-	if got := activeBand(""); got.name != bandTreatments[0].name {
+	if got := activeBand("", colAccent); got.name != bandTreatments[0].name {
 		t.Errorf("an unset preference selected %q, want the default", got.name)
 	}
 
 	t.Setenv("DRIFT_BAND", store.SelectionAccent)
-	if got := activeBand(store.SelectionMarker); got.name != store.SelectionAccent {
+	if got := activeBand(store.SelectionMarker, colAccent); got.name != store.SelectionAccent {
 		t.Errorf("DRIFT_BAND lost to the preference: got %q, want accent", got.name)
 	}
 
@@ -75,14 +75,14 @@ func TestSelectionPreferenceRanksBelowTheEnvironment(t *testing.T) {
 	// the override failed, so the saved choice is what is left. (A typo in
 	// prefs.json cannot get this far: store.LoadPrefs refuses to start.)
 	t.Setenv("DRIFT_BAND", "nonesuch")
-	if got := activeBand(store.SelectionMarker); got.name != store.SelectionMarker {
+	if got := activeBand(store.SelectionMarker, colAccent); got.name != store.SelectionMarker {
 		t.Errorf("a bad override selected %q, want the preference underneath it", got.name)
 	}
 
 	// A saved preference is a decision already made, so it leaves the title
 	// alone — the label belongs to a run being experimented on.
 	t.Setenv("DRIFT_BAND", "")
-	if got := bandLabel(activeBand(store.SelectionMarker)); got != "" {
+	if got := overrideLabel(newStyles(store.Prefs{Selection: store.SelectionMarker})); got != "" {
 		t.Errorf("a prefs-selected treatment labelled the title with %q", got)
 	}
 }
@@ -254,9 +254,20 @@ func TestFillTreatmentsPinBothEnds(t *testing.T) {
 			t.Errorf("%s: fill treatment must set both a background and a foreground", tr.name)
 		}
 	}
+	// A marker treatment's glyph colour is the themable accent, so it is poured
+	// in by activeBand rather than baked into the list — which means the
+	// property to assert is that no marker treatment can *reach* a screen with
+	// an uncoloured glyph, whatever the accent resolved to.
 	for _, tr := range bandTreatments {
-		if tr.marker && tr.accent == nil {
-			t.Errorf("%s: marker treatment must colour its glyph", tr.name)
+		if !tr.marker {
+			continue
+		}
+		t.Setenv("DRIFT_BAND", tr.name)
+		if got := newStyles(store.Prefs{}); got.band.accent == nil {
+			t.Errorf("%s: marker treatment reached a screen with no glyph colour", tr.name)
+		}
+		if got := newStyles(store.Prefs{Accent: "208"}); got.band.accent != lipgloss.Color("208") {
+			t.Errorf("%s: a themed accent did not reach the marker, got %v", tr.name, got.band.accent)
 		}
 	}
 }
@@ -269,8 +280,7 @@ func TestPaletteRolesNameBothBackgrounds(t *testing.T) {
 		"warning":  colWarning,
 		"neutral":  colNeutral,
 		"dirty":    colDirty,
-		"marker":   colMarker,
-		"title":    colTitle,
+		"accent":   colAccent,
 		"border":   colBorder,
 		"faint":    colFaint,
 		"err":      colErr,
