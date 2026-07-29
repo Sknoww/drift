@@ -851,3 +851,19 @@ is; link its spec/ADR once one exists.
         rests on `Upstreams`, the one new git call: present-with-an-empty-value means a
         branch that has never been published, absent means a branch that is not there.
         One shell-out for the whole repo per sweep rather than one per row
+
+18. ⏳ **CI only runs at the point of no return.** `release.yml` triggers on `v*` tags and
+    nothing else, so the first time CI ever executes a commit is the tag that publishes
+    it. Cutting v0.3.0 is what surfaced this: the break rode `master` for two commits and
+    announced itself by burning the tag. The test gate inside `release.yml` did its job —
+    it stopped the run before GoReleaser and nothing was published — but a gate that only
+    fires at the moment of commitment is a gate you meet too late
+    - **A `go test ./...` job on push and PR** is the whole of it. The release workflow's
+      own test step stays where it is: it guards the tag specifically, which is a
+      different claim from "this commit is good", and the tag is the one that cannot be
+      taken back
+    - **The suite being hermetic is what makes this worth having.** Before, a green local
+      run and a red CI run were both honest and neither was wrong; a push-triggered job
+      would just have moved the surprise earlier. Now that `TestMain` pins
+      `GIT_CONFIG_NOSYSTEM` (see `CONTEXT.md`'s Testing row), local and CI answer the same
+      question, so a push job that passes means something on every machine
