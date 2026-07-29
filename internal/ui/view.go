@@ -67,7 +67,7 @@ func (m Model) dashboardView() string {
 // wrapping the header onto a second line the frame never budgeted for. Same
 // order of allocation as a branch row: the fixed cost is paid first (chrome.go).
 func (m Model) header() string {
-	title := m.styles.title.Render("drift")
+	title := titleText(m.styles)
 
 	right := ""
 	switch {
@@ -174,6 +174,30 @@ func contentWidth(s styles, width int) int {
 	return w
 }
 
+// rowWidth is what a *row* has to spend, as against contentWidth, which is what
+// the *panel* spans. They differ by the selection gutter: a marker treatment
+// reserves cells at the left edge of every row for its glyph, and those cells
+// are not the row's to fill (band.go).
+//
+// Every column budget measures against this one; the panel, the band and the
+// chrome keep measuring against contentWidth. Sizing rows against the panel and
+// then prefixing a marker is the bug this exists to avoid — the row overflows by
+// exactly the gutter, and clipRow cuts the trailing status cluster, so the
+// treatment appears to cost a signal it does not cost.
+//
+// With no gutter — every band treatment, and so every run today — it is
+// contentWidth exactly.
+func rowWidth(s styles, width int) int {
+	cw := contentWidth(s, width)
+	if cw <= 0 {
+		return cw // size unknown: callers fall back to natural sizing
+	}
+	if w := cw - s.band.gutter(); w > 0 {
+		return w
+	}
+	return 1
+}
+
 // selectBand highlights rows[selected] as a band filling the panel's full inner
 // width, so the selection reads as a row rather than hugging its text
 // (DESIGN.md §3). Before the size is known it falls back to the widest row. A
@@ -183,6 +207,9 @@ func contentWidth(s styles, width int) int {
 func selectBand(s styles, width int, rows []string, selected int) []string {
 	if selected < 0 || selected >= len(rows) {
 		return rows
+	}
+	if !s.band.fill {
+		return rows // a marker-only treatment: the row is already marked, nothing to paint
 	}
 	w := 0
 	for _, r := range rows {
@@ -299,7 +326,7 @@ func (m Model) branchColumns() branchCols {
 	}
 	target := m.targetKeyWidth
 
-	cw := contentWidth(m.styles, m.width)
+	cw := rowWidth(m.styles, m.width)
 	if cw <= 0 {
 		return branchCols{name: name, target: target, ab: ab} // size unknown: natural sizing
 	}
@@ -541,7 +568,7 @@ func (m Model) candidateNameWidth(visible []int, assignWidth int) int {
 	w := widestCell(len(visible), maxNameCol, func(i int) string {
 		return m.add.candidates[visible[i]].branch
 	})
-	cw := contentWidth(m.styles, m.width)
+	cw := rowWidth(m.styles, m.width)
 	if cw <= 0 {
 		return w // size unknown: natural sizing
 	}

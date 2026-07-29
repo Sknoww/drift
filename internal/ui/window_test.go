@@ -179,16 +179,26 @@ func TestWizardBoundsTheFrameWithLongRefNames(t *testing.T) {
 	}
 }
 
-// A clipped row keeps the panel's width exactly — one cell over and Lip Gloss
-// wraps it, which is the whole failure being prevented.
-func TestClipRowCapsAtThePanelWidth(t *testing.T) {
+// A clipped row keeps its own width exactly — one cell over and Lip Gloss wraps
+// it, which is the whole failure being prevented.
+//
+// The width a row has is rowWidth, not contentWidth: under a treatment that
+// draws a left-edge marker the gutter is not the row's to spend, and clipping to
+// the panel would let every row overflow by exactly the gutter (band.go).
+func TestClipRowCapsAtTheRowWidth(t *testing.T) {
 	s := newStyles()
 	for _, width := range []int{40, 80, 100} {
-		cw := contentWidth(s, width)
-		long := s.branch.Render(strings.Repeat("x", cw+50))
+		rw := rowWidth(s, width)
+		long := s.branch.Render(strings.Repeat("x", rw+50))
 
-		if got := lipgloss.Width(clipRow(s, width, long)); got != cw {
-			t.Errorf("width %d: clipped row = %d cells, want %d", width, got, cw)
+		if got := lipgloss.Width(clipRow(s, width, long)); got != rw {
+			t.Errorf("width %d: clipped row = %d cells, want %d", width, got, rw)
+		}
+		// A panel line drawn without a cursor — the help overlay — has no gutter
+		// to reserve and gets the whole content width.
+		cw := contentWidth(s, width)
+		if got := lipgloss.Width(clipPanelLine(s, width, long)); got != cw {
+			t.Errorf("width %d: clipped panel line = %d cells, want %d", width, got, cw)
 		}
 		// A row that already fits is returned untouched, ellipsis and all absent.
 		short := s.branch.Render("fits")

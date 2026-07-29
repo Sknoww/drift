@@ -101,22 +101,34 @@ func rowWindow(n, selected, capacity int) (start, end int) {
 func listBody(s styles, width, height int, header, rows []string, selected int) string {
 	start, end := rowWindow(len(rows), selected, listCapacity(height, headerLines(s, width, header)))
 
+	// The selection gutter, blank on every row but the cursor's. It is drawn
+	// here rather than by selectBand because every row needs it, not just the
+	// selected one: a marker that pushed only its own row right would put that
+	// row's columns two cells out of line with the rest of the list. Zero-width
+	// for every band treatment, which makes this whole block a no-op there.
+	g := s.band.gutter()
+	blank := strings.Repeat(" ", g)
+
 	lines := make([]string, 0, len(header)+(end-start)+2)
 	lines = append(lines, header...)
 	if start > 0 {
-		lines = append(lines, s.help.Render(fmt.Sprintf("↑ %d more", start)))
+		lines = append(lines, blank+s.help.Render(fmt.Sprintf("↑ %d more", start)))
 	}
 
 	band := -1
 	if selected >= start && selected < end {
 		band = len(lines) + (selected - start)
 	}
-	for _, row := range rows[start:end] {
-		lines = append(lines, clipRow(s, width, row))
+	for i, row := range rows[start:end] {
+		lead := blank
+		if g > 0 && start+i == selected {
+			lead = s.selMark.Render(bandMarkerGlyph) + strings.Repeat(" ", g-1)
+		}
+		lines = append(lines, lead+clipRow(s, width, row))
 	}
 
 	if end < len(rows) {
-		lines = append(lines, s.help.Render(fmt.Sprintf("↓ %d more", len(rows)-end)))
+		lines = append(lines, blank+s.help.Render(fmt.Sprintf("↓ %d more", len(rows)-end)))
 	}
 	return strings.Join(selectBand(s, width, lines, band), "\n")
 }
@@ -166,10 +178,25 @@ func headerLines(s styles, width int, header []string) int {
 // anticipated — a trailing cell with nothing after it to align, or a screen
 // still to be converted. Clipping blind drops whatever overflows off the
 // right-hand end; a column that sizes itself ellipsises in place instead.
+// It measures against rowWidth, not contentWidth: inside a list a row spends
+// the panel less the selection gutter, and clipping to the panel would let a row
+// overflow into the gutter's cells by exactly the gutter's width (view.go).
 func clipRow(s styles, width int, row string) string {
-	cw := contentWidth(s, width)
-	if cw <= 0 {
-		return row // size unknown: nothing to clip against
+	return clipToWidth(rowWidth(s, width), row)
+}
+
+// clipPanelLine is clipRow for a line drawn in the panel's place rather than as
+// a list row — the help overlay — where there is no cursor and so no selection
+// gutter to reserve. It gets the whole content width.
+func clipPanelLine(s styles, width int, row string) string {
+	return clipToWidth(contentWidth(s, width), row)
+}
+
+// clipToWidth is the cut both of the above share. A non-positive width means the
+// terminal size is not known yet, and nothing is clipped against a guess.
+func clipToWidth(w int, row string) string {
+	if w <= 0 {
+		return row
 	}
-	return ansi.Truncate(row, cw, "…")
+	return ansi.Truncate(row, w, "…")
 }

@@ -401,7 +401,7 @@ func (m wizardModel) View() string {
 		return m.styles.app.Render(v)
 	}
 	var b strings.Builder
-	b.WriteString(m.styles.title.Render("drift") + "  " + m.styles.help.Render("first-run setup"))
+	b.WriteString(titleText(m.styles) + "  " + m.styles.help.Render("first-run setup"))
 	b.WriteString("\n")
 
 	b.WriteString(panelStyle(m.styles, m.width).Render(m.body()))
@@ -548,7 +548,7 @@ func relativeAge(tip, now time.Time) string {
 // row past a panel none of them need (DESIGN.md §1).
 func (m wizardModel) keyColWidth(visible []int) int {
 	w := widestCell(len(visible), maxKeyCol, func(i int) string { return m.targets[visible[i]].key })
-	cw := contentWidth(m.styles, m.width)
+	cw := rowWidth(m.styles, m.width)
 	if cw <= 0 {
 		return w // size unknown: natural sizing
 	}

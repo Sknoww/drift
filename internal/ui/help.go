@@ -358,7 +358,7 @@ func (m Model) helpBody() string {
 	// 60-column floor the longest action wording is wider than the panel, so this
 	// is not hypothetical.
 	for i, l := range lines {
-		lines[i] = clipRow(m.styles, m.width, l)
+		lines[i] = clipPanelLine(m.styles, m.width, l)
 	}
 	return strings.Join(lines, "\n")
 }

@@ -383,13 +383,14 @@ is; link its spec/ADR once one exists.
       refactor is a long list, and finding one file in it is exactly the filter's job); the
       target picker and the declare overlays are bounded by config and by a file's matched
       globs, so they are unlikely ever to need it
-15. 🛠️ **UI polish pass.** The accumulated nits, found by auditing the render layer after
+15. ✅ **UI polish pass.** The accumulated nits, found by auditing the render layer after
     area 14's measurements. Deliberately after 14: polish on a screen that can't be
     navigated is wasted work. Each item below was verified against the code, not guessed
-    — the file:line is the evidence. **Slice A (geometry and truncation) and slice B
-    (the chrome: header, status line, help line, `?` overlay) have shipped**; what
-    remains is the two color items, which are independent of both and of each other.
-    Those are also the two this area cannot settle by argument — prototype and look.
+    — the file:line is the evidence. Slice A (geometry and truncation), slice B (the
+    chrome: header, status line, help line, `?` overlay) and slice C (the two color
+    items) have all shipped. Slice C is the one the area could not settle by argument,
+    and didn't try to: it was prototyped and looked at, and it produced the project's
+    first ADR.
     - ✅ **Per-column truncation, and one way to measure.** The systemic item, and the
       root of several symptoms that looked unrelated. `padRight` padded to a width but
       *returned long input unchanged*, so every "capped" column was only capped against
@@ -477,8 +478,8 @@ is; link its spec/ADR once one exists.
         name, which is as unbounded as any name on a row below it. The title is the fixed
         cost and the branch cell absorbs what is left — the slice-A allocation rule,
         applied to the one row that had never been through it
-    - **The selection band barely renders.** Raised by dogfooding as "not the cleanest
-      looking thing", and measurement backs it: the band is ANSI 236 = `rgb(48,48,48)`,
+    - ✅ **The selection band barely renders.** Raised by dogfooding as "not the cleanest
+      looking thing", and measurement backs it: the band was ANSI 236 = `rgb(48,48,48)`,
       which against common terminal backgrounds gives a contrast ratio of **1.06:1** on
       One Dark, 1.08 Dracula, 1.12 Gruvbox, 1.26 VS Code Dark, and 1.59 on pure black —
       its best case. On most modern themes it sits within ~3% luminance of the page. The
@@ -499,17 +500,48 @@ is; link its spec/ADR once one exists.
       - *Process note:* raising the contrast is a tweak to a value DESIGN.md §1 already
         calls "considered-not-sacred" — no ADR needed. Replacing the band with a marker
         reverses a documented §1/§3 decision and **earns an ADR**
-      - *Settle it by looking, not by reasoning.* This is the one item in this area that
-        argument cannot resolve — prototype two or three treatments against a real repo
-        on a dark **and** a light theme, and pick with your eyes
-    - **The palette assumes a dark terminal.** Colors are fixed ANSI-256 (`styles.go:9`),
-      and `ticketSel` sets `Background(236)` — near-black — with **no foreground**
-      (`styles.go:65`). On a light-background terminal the default foreground is dark, so
-      the selected row renders dark-on-dark: the selection band, the one thing that must
-      always be legible, is the thing that disappears. `lipgloss.AdaptiveColor` is the
-      fix. Worth confirming visually on a light theme before building — the mechanism is
-      clear from the code but the severity isn't. Note the ANSI-256 choice itself stays
-      right (DESIGN.md §1); this is about light vs dark, not color depth
+      - *Settled by looking, as it had to be.* Four treatments were built behind
+        `DRIFT_BAND` — raised grey, accent hue, marker-only, and the two paired — and
+        looked at on a dark theme and a light one. **`pair` won**: a subtle band under
+        a left-edge `▌`. The deciding property was **degradation**, which is the one
+        the measurement above is really about — a band is at the mercy of a background
+        Drift does not control, and a band vanishing into an unanticipated theme *is*
+        the bug; a glyph in an accent colour does not depend on the background at all.
+        Neither half has to carry the signal alone, which is why the pair beat a
+        better-tuned version of either
+      - Keeping the band **and** adding a marker reverses the documented band-only rule
+        and spends the "a marker would delete `reopenBand`" argument, so it earned
+        [ADR 0001](./docs/adr/0001-selection-band-and-marker.md) — the project's first.
+        `reopenBand` is permanent, and it now has a second invariant beside it: the
+        marker's gutter is not the row's to spend, so rows size against the new
+        `rowWidth` while the panel, the band and the chrome keep sizing against
+        `contentWidth`. Sizing a row to the panel and *then* pushing it right overflows
+        by exactly the gutter, and `clipRow` cuts the trailing cell — the status
+        cluster, the signal slice A's allocation rule exists to protect
+      - The original 236 band is **not** a supported option, not even as a choice: it is
+        the defect, and offering it would ship it. The three that lost stay in
+        `band.go`, selectable by `DRIFT_BAND` — undocumented and temporary, since a
+        selection style is a per-user preference and its home is area 16
+    - ✅ **The palette assumed a dark terminal.** Colors were fixed ANSI-256 (`styles.go:9`),
+      and `ticketSel` set `Background(236)` — near-black — with **no foreground**. On a
+      light-background terminal the default foreground is dark, so the selected row
+      rendered dark-on-dark: the selection band, the one thing that must always be
+      legible, was the thing that disappeared. `lipgloss.AdaptiveColor` was the fix, and
+      every role now names both a light and a dark end — the dark values are the ones
+      that shipped, unchanged; the light ones are the same hues a few steps darker, so
+      the roles keep their relationship to each other. The ANSI-256 choice itself stays
+      right (DESIGN.md §1); this was about light vs dark, not color depth
+      - **The band was the acute case, not the general one.** Pinning a foreground
+        wherever there is a background is now a rule rather than a fix applied once —
+        asserted over every treatment, so it cannot come back under another name
+      - **It has a silent failure mode, so it is instrumented.** If detection decides the
+        terminal is dark when it is not, every light value is inert and the result is
+        indistinguishable from light values that were simply chosen badly. `DRIFT_BG`
+        forces an end and the title names the detected one, so the two can be told apart
+        from the screen rather than by reading the source
+      - The one deliberate asymmetry: the border is a shade fainter than the hint text on
+        light and identical to it on dark. On white, `240` draws an outline that competes
+        with the rows inside it, and a border's job is to be found without being read
       - ✅ **The `?` overlay scrolls.** Measured at 80×24 before the fix: **28 lines on
         the dashboard**, 26 on pairing, 23 on the diff screen — so the keys it exists to
         teach were the ones scrolled off the top. The count decided the fix: shortening
@@ -536,3 +568,50 @@ is; link its spec/ADR once one exists.
           whole and never scrolls — clipping against a guessed height would make a short
           overlay claim a scroll it doesn't have
     - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list
+16. ⏳ **User-global preferences: selection style, then theming** — the second entry on
+    the config search path
+    (`~/.config/drift/`, XDG-respecting), which `CONTEXT.md` has declared from the start
+    and area 2 built the path for. Purely additive: a new root, no migration, and the
+    per-repo `<.git>/drift/config.json` is untouched.
+    - **Selection style is its first inhabitant**, ahead of keymaps. Area 15 built four
+      treatments, all four read well, and picking one for everybody is the wrong shape of
+      answer — but the choice is a *person's*, not a repo's, so it must not live in the
+      per-repo config where it would be re-declared in every repo. That is precisely the
+      scope the user-global root exists for
+    - **Area 12 (custom keymaps) then rides on this** rather than building it. Keymaps
+      were always going to need this root; a one-string setting is a far better first
+      load for it than a whole keymap format, so the layer gets built once and proved on
+      something small
+    - `DRIFT_BAND` and `DRIFT_BG` are the interim way in, and are deliberately
+      undocumented. They go away — or become documented overrides of the config value —
+      when this lands; an env var is a weak home for a setting in a tool that has a
+      config file
+    - **Theming — pick the accent, not just the shape.** Raised by dogfooding area 15's
+      result: the marker reads well and the *blue* is not to taste. That is a second axis
+      and the pair decomposes cleanly along it — a treatment is a **shape** (does it
+      fill, does it mark) and a **palette** is the colours poured into it. Area 15 shipped
+      four shapes with their colours baked in; splitting the two is what lets `pair` in
+      someone's own accent exist without a fifth hardcoded treatment
+      - **Colour is the signal, so theming cannot be a free-for-all** (DESIGN.md §1). The
+        alarm roles carry meaning — `behind` shouts, `unmergeable` is a *distinct* alarm
+        from it, neutral recedes — and a theme that let two of them collide would not be
+        a preference, it would be a broken screen. The likely shape is that the **accent
+        is themable and the alarm roles are not**, or that everything is themable with
+        distinctness validated the way `declare.destinations` is validated. Decide before
+        building; this is the part with a wrong answer
+      - **One accent currently serves three roles** — the title, the checked-out marker,
+        and now the selection marker. Whether recolouring moves all three together or
+        splits them is a real choice, not an implementation detail: they move together
+        today because they *mean* "Drift is pointing at this", and that may be worth
+        keeping
+      - **A themed colour needs both ends or neither.** Every role names a light and a
+        dark value now, so a user supplying one colour is supplying half a role. Either
+        the config takes a pair, or Drift takes one value and uses it for both — which is
+        the dark-terminal assumption walking back in through the front door, on exactly
+        the surface area 15 spent itself fixing
+    - **Open, and worth deciding before building:** whether this file is `config.json`
+      under a second root (one shape, two locations, merged by the search path) or a
+      differently-named `prefs.json` (one file, one purpose). The first is what "search
+      path" implies; the second avoids a user-global file that could plausibly hold
+      `targets`, which would be meaningless outside a repo. Not a detail to settle in the
+      middle of writing it

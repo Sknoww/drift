@@ -391,7 +391,7 @@ func (m Model) localOnlyBody() string {
 	// note beside it something to occupy.
 	mechWidth := widestCell(len(m.local.entries), 0, func(i int) string { return m.local.entries[i].mechanism() })
 	pathWidth := widestCell(len(m.local.entries), maxPathCol, func(i int) string { return m.local.entries[i].path })
-	if cw := contentWidth(m.styles, m.width); cw > 0 {
+	if cw := rowWidth(m.styles, m.width); cw > 0 {
 		const fixed = 1 + 1 + 2 + 2 // glyph and the three separators
 		if avail := cw - fixed - mechWidth - minNameCol; pathWidth > avail {
 			if pathWidth = avail; pathWidth < minNameCol {
@@ -449,7 +449,7 @@ func (m Model) localAddBody() string {
 	}
 	width := widestCell(len(m.local.add.candidates), maxPathCol,
 		func(i int) string { return m.local.add.candidates[i].path })
-	if cw := contentWidth(m.styles, m.width); cw > 0 {
+	if cw := rowWidth(m.styles, m.width); cw > 0 {
 		detailWidth := widestCell(len(details), 0, func(i int) string { return details[i] })
 		if avail := cw - 2 - detailWidth; width > avail {
 			if width = avail; width < minNameCol {

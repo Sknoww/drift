@@ -17,16 +17,33 @@ the home row. "Looks like raw text output" is a bug.
 - **Color roles** ✅ — meaning first. `behind > 0` is the one alarm that matters (the
   target main moved under me) and reads as a warning; `ahead` is neutral. Dirty is a
   dot, not a color shift. The checked-out branch gets a marker. The selected row is a
-  highlighted band. Pinned on the first build (ANSI-256, in `internal/ui/styles.go`,
-  a considered-not-sacred starting point): `warning 214` (behind), `neutral 245`
-  (ahead / in-sync), `dirty dot 220`, `checked-out marker 39`, `title 39`,
-  `border/faint 240`, `selected band bg 236`, `error 203`, `unmergeable 170` (a
+  band *and* a left-edge marker (below). Pinned on the first build (ANSI-256, in
+  `internal/ui/styles.go`, a considered-not-sacred starting point): `warning 214`
+  (behind), `neutral 245` (ahead / in-sync), `dirty dot 220`, `checked-out marker 39`,
+  `title 39`, `border/faint 240`, `error 203`, `unmergeable 170` (a
   branch with a collision that must be reconciled by hand — a distinct alarm from
   `behind`, since it means "moved *and* unmergeable", not just "moved").
   **Diff panel** ✅: `add 71`, `remove 167`, `hunk header 109`, git's bookkeeping
   lines faint `240`, context left unstyled. Muted rather than saturated — a whole
   screen of incoming change is the normal case there, so `+`/`-` must read as
   structure, not as alarm; `behind` stays the only thing on screen shouting.
+- **Every role names a light end and a dark end** ✅ — the values above are the *dark*
+  half of a `lipgloss.AdaptiveColor`, and Lip Gloss resolves which end to use from
+  the background it detects at startup. The palette was pinned against a dark
+  terminal and read as simply "fixed ANSI-256", which is two decisions wearing one
+  coat: the **depth** is still right, the **assumption** was not. On a light
+  background the dark values invert — `dirty 220` all but vanishes on white — and the
+  selection band was worse than that (§3). The light values are the same hues a few
+  steps darker, so the roles keep their relationship to each other: warning still
+  shouts, neutral still recedes. The one deliberate asymmetry is the border, a shade
+  fainter than the hint text on light and identical to it on dark: on white, `240`
+  draws an outline that competes with the rows inside it, and a border's whole job is
+  to be found without being read.
+  - This has a **silent failure mode**, which is why it is called out rather than
+    left to the code: if detection decides the terminal is dark when it is not, every
+    light value is inert and the result is indistinguishable from light values that
+    were badly chosen. `DRIFT_BG` forces an end, and the title names the detected one
+    while it or `DRIFT_BAND` is set, so the two can be told apart from the screen.
 - **Panels** ✅ — Lip Gloss rounded border (`240`), 1-col horizontal padding; the
   title (`drift`) sits on its own line above the panel, with the checked-out branch or
   a refresh spinner to its right. The panel spans the **full terminal width** (computed
@@ -458,6 +475,30 @@ panel's full inner width** (which now spans the terminal — see §1 Panels) rat
 hugging its text; the band width is applied once every row is built (`selectBand` in
 `view.go`).
 
+**The selected row is a band *under* a left-edge marker** ✅ — `▌` in an accent colour,
+plus a subtle background. The band alone was measured at **1.06:1** against One Dark
+(1.08 Dracula, 1.12 Gruvbox, 1.26 VS Code Dark, 1.59 on pure black, its best case): it
+was not badly designed so much as almost not drawn. Pairing the two is what fzf and
+Telescope do, and the property that decided it is **degradation** — a band is at the
+mercy of a background Drift does not control, and a disappearing band is exactly the
+failure being fixed, while a glyph in an accent colour does not depend on the
+background at all. Neither half has to carry the signal alone. It reverses the
+band-only rule this section used to state, so it earns
+[ADR 0001](./docs/adr/0001-selection-band-and-marker.md); the alternatives that lost
+are still in `band.go`, and become a per-user setting in area 16.
+- **The band pins both ends, background *and* foreground.** A background with no
+  foreground was the same defect's other half: on a light terminal the default
+  foreground is dark, so the band rendered dark-on-dark and the one thing that must
+  always be legible was the thing that disappeared.
+- **The marker's gutter is not the row's to spend.** Rows size against `rowWidth` —
+  the panel less the gutter — while the panel, the band and the chrome keep sizing
+  against `contentWidth`. This is correctness, not bookkeeping: a row built to the
+  full panel and then pushed right overflows by exactly the gutter, and `clipRow`
+  cuts the trailing cell — which on a branch row is the status cluster, the very
+  signal §1's order of allocation exists to protect.
+- **The gutter is drawn on every row**, blank except the cursor's, so marking a row
+  never puts its columns out of line with the rest of the list.
+
 **The band has a second trap, distinct from the `Width()` one in §1.** A row is
 assembled from independently styled cells (branch name, target, `↓behind ↑ahead`, dirty
 dot, unmergeable marker), and each closes with a *full* SGR reset — which switches the
@@ -467,4 +508,7 @@ the trailing pad. `selectBand` re-arms the band's sequence after every inner res
 (`reopenBand`), discovering that sequence by rendering a sentinel through the style so
 it follows the terminal's actual color profile. Neither band trap is visible to a test
 — a test profile has no color, so nothing wraps and nothing resets — which is why both
-are asserted structurally rather than by eyeballing rendered output.
+are asserted structurally rather than by eyeballing rendered output. **This machinery
+is now permanent** — keeping the band alongside the marker spends the argument that a
+marker-only selection would delete it (ADR 0001), so every future row-assembling
+screen has to keep the property it protects.
