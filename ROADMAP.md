@@ -877,30 +877,78 @@ is; link its spec/ADR once one exists.
       `GIT_CONFIG_NOSYSTEM` (see `CONTEXT.md`'s Testing row), local and CI answer the same
       question, so a push job that passes means something on every machine
 
-19. ⏳ **`u` published a merge nobody agreed to, onto a pairing nobody could fix.** Raised
-    by dogfooding v0.3.0 on a work repo, and it is the same kind of finding as area 17 —
-    the verb 17 shipped did its job and the job was wrong. One keypress put a merge into an
-    open merge request: the merged branch's commits showed up in the MR one at a time, the
-    MR went conflicted against its own target, and the way out was `reset --hard` to the
-    merge's first parent plus a force-push. **The merge mechanics are not at fault and are
-    not in scope.** `Merge` is `git merge --no-edit` (`internal/git/shelve.go:202`) — the
+19. ⏳ **`u` published a merge nobody agreed to, onto a target that named a feature
+    branch.** Raised by dogfooding v0.3.0 on a work repo, and it is the same kind of finding
+    as area 17 — the verb 17 shipped did its job and the job was wrong. One keypress put a
+    merge into an open merge request: the merged branch's commits showed up in the MR one at
+    a time, the MR went conflicted against its own target, and the way out was `reset --hard`
+    to the merge's first parent plus a force-push. **The merge mechanics are not at fault and
+    are not in scope.** `Merge` is `git merge --no-edit` (`internal/git/shelve.go:202`) — the
     same command the IntelliJ flow this verb is modelled on runs — and nothing anywhere in
     the sequence rebases, cherry-picks or squashes. Three other things were each true, and
     each is a separate piece of work: nobody was asked before the push, the ref being
     merged was never shown, and once it was wrong there was no way to correct it in the
     tool
-    - **Open: which ref actually got merged, and the answer decides how 19b is
-      weighted.** The symptom points hard at the target ref not being the branch's MR
-      target: merging a branch into a source whose MR *targets* that branch cannot add
-      commits to the MR — the merge base moves forward and the commit list is unchanged,
-      which is exactly why the manual flow shows one merge commit and nothing else. For
-      the commits to appear individually, and for the MR to go conflicted afterwards, the
-      merged ref has to be one the MR does not target. Drift did not hit a conflict of its
-      own — `stepMerge` aborts and rolls the whole sequence back on conflict
-      (`internal/ui/shelve.go:409`), so a run that reached the push was clean on its own
-      terms. Confirmed by comparing the MR's target branch against the target key on the
-      dashboard row; until that is done this is a strong reading of the evidence and not a
-      diagnosis
+    - **Build order, after the diagnosis below.** 19d and 19e are what *caused* the
+      incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
+      unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
+      visible at rest and at the one moment it can still be stopped for free
+    - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
+      the work repo's reflog and its `config.json`. The roadmap's reading was right in every
+      part — merging a branch into a source whose MR *targets* that branch cannot add commits
+      to the MR (the merge base moves forward and the commit list is unchanged, which is why
+      the manual flow shows one merge commit and nothing else), so for the commits to appear
+      individually the merged ref had to be one the MR does not target. It was:
+
+      ```
+      "key": "mvp-3",
+      "ref": "origin/fix/PSOT-22114-PickHistory-API-…-for-audit/mvp-3"
+      ```
+
+      A colleague's live ticket branch that happens to *end* in `/mvp-3`, not `origin/mvp-3`.
+      The repo's other two targets were correct, so exactly one target was wrong and it was
+      the one in use
+      - **The reflog is the confirmation, and it reads backwards at first.** The only
+        `merge origin/…` line in months of history is
+        `merge origin/fix/PSOT-22114-…/mvp-3` — which looks like step 6 merging the branch's
+        own upstream and is in fact **step 7 merging the target**. There is no
+        `merge origin/mvp-3` anywhere in the repo's history, and there never could have been.
+        Everything else in the reflog is bare (`merge mvp-3`, `merge release-2-stability`) —
+        the user's own manual workflow, not Drift. `merge origin/…` is Drift's fingerprint,
+        which is worth remembering the next time a reflog has to be read
+      - **Drift never hit a conflict of its own**, exactly as predicted: `stepMerge` aborts
+        and rolls the whole sequence back on conflict (`internal/ui/shelve.go:409`), so the
+        run that reached the push was clean on its own terms. The sequence did precisely what
+        it was told. It was told the wrong thing
+      - **Three shipped decisions combined to tell it that**, each defensible alone, and the
+        confluence is the finding:
+        1. `deriveKey` (`internal/ui/wizard.go:179`) falls back to the ref's **last path
+           segment** once the path is past `keySeedWidth`, so
+           `origin/fix/PSOT-22114-…/mvp-3` seeds the key `mvp-3`
+        2. The wizard sorts by **recency** (area 14), and an actively-developed feature branch
+           sorts *above* a long-lived main, which by its nature moves less
+        3. *Some* people in the repo end a branch with the main it targets, so those
+           branches literally end in a main's name. It is a personal habit, not a team
+           convention — others use the full string, others nothing of the sort. The ref that
+           caused this belonged to someone who does it
+        Net effect: the wizard put a feature branch at the top of the list and labelled it
+        `mvp-3` — the exact string the user was looking for
+      - **Area 4's safeguard held perfectly and bought nothing.** "`Ref` is the picked ref, so
+        a target can never be a typo" is still true; this was not a typo but a correctly
+        recorded wrong pick. A guard against mistyping is no guard at all against a list that
+        offers the wrong thing under the right name — see 19d
+      - **It has a second symptom, and that one is permanent rather than momentary.** The
+        dashboard row was measured against an active feature branch, so it read `↓behind`
+        forever and moved every time that branch's owner pushed. Pulling the real `mvp-3`
+        could never converge it. A wrong target does not just misfire once when `u` is
+        pressed — it makes the dashboard's central signal quietly untrue for as long as it
+        stands
+      - **The crossed-pairing reading was wrong and is worth recording as such.** Every
+        `targetKey` in `state.json` was correct (`-mvp3`→`mvp-3`, `-r2stab`→
+        `release-2-stability`, `-r2perf`→`release-2-performance`). The two branch names on
+        that ticket differ only in that tail and the dashboard truncates tails (`fit` keeps the head,
+        `internal/ui/columns.go:40`), which made a crossed pairing look like the obvious
+        cause. It was not this bug — but the truncation is real and 19e carries it
     - ⏳ **19a — the gate asks about the stash, and the step that needed gating is the
       push.** `stepReady` opens the confirmation on `leaves() && dirty`
       (`internal/ui/shelve.go:330`, predicate at `:104`), so it fires only when `u` has to
@@ -919,6 +967,18 @@ is; link its spec/ADR once one exists.
         at the one moment it can still be stopped for free. That argues for widening the
         existing prompt rather than adding a second one — one overlay, one place the plan
         is stated, and the `?`-consumes-its-key rule keeps working
+      - ✅ **Validated by the diagnosis, and sharpened by it: the overlay must name the
+        `Ref`, never the `Key`.** An overlay reading `merging origin/fix/PSOT-22114-…/mvp-3`
+        would have stopped the incident dead, for free, before anything was published. One
+        reading `merging mvp-3` would have printed the key — which was correct, which is
+        what made the target look right on the dashboard, and which was the whole of the
+        lie. The bullet above already says `<targetRef>`; this pins *why* that is the
+        load-bearing word rather than an arbitrary choice between two strings
+      - **Truncating the ref needs care, and the head is the half that carries the
+        warning.** `fit` keeps the head and ellipsises the tail, which is right here —
+        `origin/fix/PSOT-22114-…` is the giveaway and the tail `/mvp-3` is the misleading
+        part. Worth stating so nobody later "improves" it into a middle-elide that shows
+        `origin/fix/…/mvp-3` and hides the one thing worth reading
       - **Open: does the widened gate fire on every `u`, or only when it will push?**
         Every-time is the simpler rule and the easier one to trust. Only-when-publishing
         is quieter but makes the prompt's absence carry meaning, which is a thing a user
@@ -936,11 +996,16 @@ is; link its spec/ADR once one exists.
       fix one), re-adding the same ID is refused as already tracked (`addflow.go:110`), and
       the only other route is hand-editing `targetKey` in `<git-dir>/drift/state.json` with
       Drift closed, since `SaveState` rewrites the file whole
-      - **This is what turns 19's incident from a mistake into a trap.** Prevention (19a)
-        and correction are different jobs, and shipping only the first would leave anyone
-        who already has a bad pairing editing JSON. It is also the cheapest of the three:
-        the picker screen, the accelerators and the store round-trip all exist, so the work
-        is a dashboard entry point, a `TargetKey` setter, and a save
+      - **Not implicated in 19's incident** — every pairing in the work repo was correct,
+        and the wrong field was the *target's* `Ref` rather than a branch's `TargetKey` (see
+        the diagnosis above, and 19e, which is the correction path that would actually have
+        helped). This bullet previously claimed 19b was what turned the incident into a
+        trap; that was written before the diagnosis and is wrong
+      - **It is still real work, on its own merits.** Prevention (19a) and correction are
+        different jobs, and a mispaired branch is genuinely uncorrectable in the tool today.
+        It is also the cheapest of the three: the picker screen, the accelerators and the
+        store round-trip all exist, so the work is a dashboard entry point, a `TargetKey`
+        setter, and a save. It just is not urgent on this evidence
       - **Open: re-pair the selected branch row only, or reopen the ticket's whole
         checklist?** The row-only version matches how `s` and `u` already read the
         selection and is one keypress from the thing being fixed. Reopening the checklist
@@ -965,3 +1030,62 @@ is; link its spec/ADR once one exists.
       - **Not the cause of the incident**, and it should not be bundled with 19a/19b on that
         pretext. It is a fidelity question about matching a documented flow, and it can be
         settled on its own evidence
+    - ⏳ **19d — the wizard can seed a key that lies about its ref.** The first of the two
+      causes the diagnosis turned up, and the deeper one: `deriveKey`'s last-segment fallback
+      (`internal/ui/wizard.go:179`) plus area 14's recency sort plus a repo whose feature
+      branches end in their main's name produced a wizard row reading `mvp-3` that pointed at
+      `origin/fix/PSOT-22114-…/mvp-3`. Every part of that behaved as designed. Area 15 chose
+      the fallback deliberately and rejected cutting to the last segment *unconditionally* on
+      exactly the right grounds — it collapses `release/2.0` and `hotfix/2.0` into two targets
+      both called `2.0`. The case it did not have in front of it is the one where the last
+      segment is not merely ambiguous but **actively wrong**: a real main's name attached to
+      something that is not a main
+      - **Open: is this the key's problem or the list's?** Two different fixes. Making the
+        *key* honest means never seeding a name the ref does not justify — but "justify" is a
+        heuristic about what a main looks like, and area 14 already declined exactly that
+        class of reasoning on the never-guess rule when it refused to narrow the wizard list
+        by recency. Making the *list* honest means the ref is never the small print: show it
+        at full weight beside the key, or refuse to seed a key at all for a ref with a deep
+        path and make the user type one. The second is more in keeping with how the project
+        has settled every prior version of this question
+      - **Open: should a ref that is plainly somebody's ticket branch be flagged rather than
+        filtered?** Flagging is not narrowing — area 14's settled distinction, and it survives
+        here: an advisory marker removes nothing and hides nothing, so a repo whose main
+        genuinely lives at a deep path still lists it and still works. What the marker keys
+        off is the open part, and it must not become a naming convention Drift enforces
+      - **Branch naming is per-person, not per-repo, which rules most of the answer out.**
+        The work repo has no house convention: one person suffixes the target, another writes
+        it out in full, others do neither. So there is no lexical pattern to key off, and
+        anything trained on one person's habit would mislabel everyone else's branches in the
+        same list. What *is* stable is structural — path depth, how many segments the ref has
+        past the remote, whether the last segment repeats another offered ref's name — and a
+        signal that survives the naming question is the only kind worth building on. This is
+        the same shape as area 7's rule about never parsing git's English: read structure,
+        not prose
+      - **A test that would have caught it exists in shape already.** Area 16b pins that an
+        accent cannot widen its surface by accident; the equivalent here is a case asserting
+        that a seeded key round-trips to a ref a reader would recognise. Worth writing
+        whichever way the two questions above land
+    - ⏳ **19e — a target's ref is write-once and invisible, so a wrong one cannot be seen or
+      fixed.** The second cause, and the cheaper half. `Target.Ref` is written in exactly one
+      place — the first-run wizard — and rendered in exactly one place, the wizard's own
+      picker row (`internal/ui/view.go:580`). The dashboard shows `br.TargetKey`
+      (`view.go:364`) and never the ref behind it, so a target pointing at the wrong branch
+      looks *correct* on the screen the user lives in: the key said `mvp-3`, and `mvp-3` was
+      what they wanted. The only route to a fix was hand-editing `config.json` with Drift
+      closed — which is what the incident actually required, and it is a route nobody finds
+      without reading the source
+      - **This is the correction path 19b was miscast as.** Same argument, different field:
+        prevention and correction are separate jobs, and 19a alone would have left a user who
+        already has a bad target editing JSON. Unlike 19b it is load-bearing on real evidence
+      - **Open: show the ref, let it be edited, or both?** Showing is nearly free and fixes
+        the invisibility outright — a target's ref could sit in the `?` overlay, on a header
+        line, or under a keypress on the row. Editing is the larger piece and overlaps the
+        wizard: re-running target selection against the current repo is a screen that already
+        exists, and reaching it from the dashboard may be the whole feature. Showing without
+        editing is a coherent ship on its own and probably the first slice
+      - **Whatever is built must re-read, never assume.** The rule areas 5 and 6 both landed
+        on: after a write, ask git what is true rather than trusting what Drift just did. A
+        re-pointed target changes every row's `↓behind` at once, and a stale sweep would
+        report the old number against the new ref — the same class of lie as the declared
+        badge before it re-read `check-attr`
