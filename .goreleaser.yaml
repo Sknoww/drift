@@ -1,0 +1,69 @@
+# Release automation: one `git push --tags` builds every binary, cuts the
+# GitHub release, and updates the Homebrew cask in Sknoww/homebrew-tap.
+#
+# Run `goreleaser release --snapshot --clean` to exercise the whole pipeline
+# locally without publishing anything.
+version: 2
+
+project_name: drift
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    # main.version is the same variable the old formula stamped via ldflags,
+    # so `drift -version` keeps reporting the release on every install path.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+homebrew_casks:
+  - name: drift
+    repository:
+      owner: Sknoww
+      name: homebrew-tap
+      # The workflow's default GITHUB_TOKEN is scoped to this repo only, so
+      # pushing the cask to the tap needs a token that can write there.
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/Sknoww/drift"
+    description: "Ticket-based git TUI"
+    commit_msg_template: "drift {{ .Version }}"
+    url:
+      # homepage and download host are both github.com; naming it explicitly
+      # keeps `brew audit` from flagging the cask.
+      verified: "github.com/Sknoww/drift/"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/drift"]
+          end
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^Roadmap:"
+      - "^docs:"
+      - "^test:"
+
+release:
+  footer: |
+    ## Install
+
+    ```sh
+    brew install Sknoww/tap/drift
+    ```
