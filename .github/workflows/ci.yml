@@ -1,0 +1,31 @@
+name: ci
+
+# The release workflow's test step guards the *tag*, which is a different
+# claim from "this commit is good" — and a tag is the one thing that cannot
+# be taken back. This runs the same suite at every push and PR instead, so a
+# break is found on the commit that introduced it rather than on the commit
+# that publishes it.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The suite is hermetic — TestMain pins GIT_CONFIG_NOSYSTEM in every
+      # package that shells out to git — so this asks the same question a
+      # local `go test ./...` does, and a green run here means something on
+      # every machine.
+      - name: Test
+        run: go test ./...

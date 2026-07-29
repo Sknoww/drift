@@ -852,16 +852,25 @@ is; link its spec/ADR once one exists.
         branch that has never been published, absent means a branch that is not there.
         One shell-out for the whole repo per sweep rather than one per row
 
-18. ⏳ **CI only runs at the point of no return.** `release.yml` triggers on `v*` tags and
+18. ✅ **CI only runs at the point of no return.** `release.yml` triggers on `v*` tags and
     nothing else, so the first time CI ever executes a commit is the tag that publishes
     it. Cutting v0.3.0 is what surfaced this: the break rode `master` for two commits and
     announced itself by burning the tag. The test gate inside `release.yml` did its job —
     it stopped the run before GoReleaser and nothing was published — but a gate that only
     fires at the moment of commitment is a gate you meet too late
-    - **A `go test ./...` job on push and PR** is the whole of it. The release workflow's
-      own test step stays where it is: it guards the tag specifically, which is a
-      different claim from "this commit is good", and the tag is the one that cannot be
-      taken back
+    - ✅ **A `go test ./...` job on push and PR** is the whole of it — `.github/workflows/ci.yml`,
+      one job, no matrix, no lint or vet step, nothing else. The release workflow's own
+      test step stays where it is: it guards the tag specifically, which is a different
+      claim from "this commit is good", and the tag is the one that cannot be taken back
+      - **Every branch, not just `master`.** A push filter of `["**"]` beside
+        `pull_request` double-runs a branch that has a PR open, and that was accepted:
+        work here lands on `master` directly, so the duplicate is theoretical while
+        narrowing to `master` would leave a branch untested until the moment it merges —
+        the same found-too-late shape, one step in
+      - **Ubuntu only, matching `release.yml`.** The divergence that actually bit was
+        never Mac-vs-Linux, it was declared-vs-inherited git config, and the Testing row's
+        `GIT_CONFIG_NOSYSTEM` fix closed that. macOS is covered by the dev machine running
+        the suite before anything is pushed
     - **The suite being hermetic is what makes this worth having.** Before, a green local
       run and a red CI run were both honest and neither was wrong; a push-triggered job
       would just have moved the surprise earlier. Now that `TestMain` pins
