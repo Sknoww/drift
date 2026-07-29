@@ -21,6 +21,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # GoReleaser publishes the release before it pushes the cask, so a
+      # missing token fails *after* the release exists — leaving the tag
+      # burned and the tap stale. Check it while nothing has been published.
+      - name: Check tap token
+        run: |
+          if [ -z "${{ secrets.HOMEBREW_TAP_TOKEN }}" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is not set. The cask push to Sknoww/homebrew-tap needs it."
+            echo "Set it with: gh secret set HOMEBREW_TAP_TOKEN --repo Sknoww/drift"
+            exit 1
+          fi
+
       # A tag is the point of no return: once the release is published the
       # cask points at it. Fail here instead of shipping a broken build.
       - name: Test

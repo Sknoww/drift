@@ -756,13 +756,19 @@ is; link its spec/ADR once one exists.
       is heading and is deliberately not here. One conflict mid-sweep raises questions
       about the other branches that the per-branch path does not have to answer yet, and
       the ADR should cover one reversal rather than two
-    - **Open: `u` alongside `s`, or does `u` replace it?** The proposal is both — `u`
-      updates and publishes, `s` stays local-only (merge the target, push nothing), so the
-      two verbs differ by commitment rather than by mechanism. The case against is that
-      two near-identical sequences is two things to explain in a help table that is
-      generated per action. Settle it before building
-    - **Open: what "up to date" means on the dashboard afterwards.** A pushed branch and a
-      locally-merged-but-unpushed branch are different states and today's `↓behind ↑ahead`
-      pair against the target does not distinguish them. If `u` lands, the dashboard
-      probably owes the user an ahead-of-`origin/<branch>` signal too, or the push it just
-      did is invisible
+    - ✅ **Settled: `u` and `s` both, differing by commitment.** `u` updates and publishes;
+      `s` stays exactly as it shipped — merge the target, push nothing, checked-out branch
+      only. Keeping `s` means the local-only path is still reachable for the case where you
+      want to see the merge before it goes anywhere, and a verb that has shipped is a verb
+      someone has. The cost is real and accepted: two near-identical sequences are two
+      entries in a help table generated per action, so their descriptions have to carry
+      the distinction on their own — "merge the target in" versus "bring it up to date and
+      publish it". If that cannot be said in one line each, the split is wrong
+    - ✅ **Settled: the dashboard gains an ahead-of-`origin/<branch>` signal.** Without it
+      `u`'s push is invisible: today's `↓behind ↑ahead` measures against the *target*, so a
+      pushed branch and a locally-merged-but-unpushed one render identically, and the
+      column would be silent about the only step that touches the remote. This is the
+      state `s` leaves you in by design, which is what makes the two verbs legible on
+      screen rather than only in the help — `s` leaves the branch ahead of its own remote,
+      `u` does not. Unpaired with a target and unrelated to it: a branch can be current
+      with its target and still unpushed
