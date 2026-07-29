@@ -92,6 +92,29 @@ the home row. "Looks like raw text output" is a bug.
     wraps to three at the width floor, and the window then drew one row too many and ran
     the frame off the terminal. Prose can break the row budget exactly as rows can
     (`headerLines`).
+- **The chrome measures itself too** ✅ — the header, the status line and the help line
+  sit *outside* the panel, so neither windowing (rows) nor `fit` (columns) ever touched
+  them, and all three overflowed. They are now measured against `chromeWidth` — the
+  width inside the app's padding but outside the panel's border, so wider than
+  `contentWidth` — in `internal/ui/chrome.go`.
+  - **The help line elides against the real width; it is not shortened.** Shortening is
+    lossy at *every* width (a 140-column terminal would show the same cut line as an 80)
+    and goes stale the moment a binding is added. `helpLine` takes `lead` and `tail`:
+    the **tail is what the line must never stop saying** — how to leave, and where the
+    full key list is — and is paid for first, the same order of allocation a branch row
+    uses. The lead is spent from the front, so what survives a narrow terminal is the
+    start of the line, and `…` marks what went: an elided line must never read as the
+    whole list. Segment order is therefore load-bearing, and the dashboard's is ordered
+    by what a reader needs first rather than by grouping.
+  - **A `esc`-means-two-things segment is always an anchor.** Where the line's job is to
+    say which meaning is live (§3), elision can never be what removes it.
+  - **One line means one line.** The status line's real defect was not its width but the
+    newline: `err.Error()` is repo-supplied *and* multi-line, while `listChrome` costs
+    this line as exactly one, so a three-line git error ran the frame off the top of the
+    terminal — the same failure as a wrapping header line, from prose again.
+    `chromeText` collapses whitespace first, then clips.
+  - Before the first `WindowSizeMsg` nothing is clipped, the rule `contentWidth` already
+    follows. The newline collapse is not a width decision and applies regardless.
 - **A minimum usable width, declared rather than clamped** ✅ — below **60 columns**
   (`minTerminalWidth`) every screen draws one notice saying so and nothing else. The old
   behaviour was to clamp the content width to 1 and render into it, which produces
@@ -218,6 +241,23 @@ repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not 
 - **Help overlay** (`?`) ✅ — keys and glyphs for **the screen you are on**, drawn in
   the panel's place; any key closes it (and is consumed, so the closing key never also
   acts on the screen underneath). `ctrl+c` still quits, as everywhere.
+  - **It scrolls, because it outgrew the terminal.** Measured at 80×24: 28 lines on the
+    dashboard, 26 on pairing — the keys it exists to teach were the ones off the top.
+    Area 14's windowing does not apply (there is no cursor to window around) but a
+    viewport does, and it is the only fix that stays fixed: shortening buys back four
+    lines once, and areas 11 and 12 both add actions. **Only the scroll offset is kept**
+    — the pane is derived on every render, so a resize refits it with no wiring and an
+    offset can never point past content it was measured against (§1: derived, never
+    tracked). An overlay that fits is drawn straight rather than through the viewport,
+    so the panel keeps hugging its content.
+  - **"Any key closes" survives, with one carve-out that says so.** The scroll keys are
+    an **allowlist** (`j`/`k`/arrows/`pgup`/`pgdn`), never the viewport's own keymap —
+    that one binds `d`, `u`, `f`, `b`, `space`, `h` and `l`, and on the dashboard `d` is
+    delete. The carve-out applies **only while there is something to scroll**, and the
+    footer states which contract is live (`any key closes` / `↑↓ N more · j/k scroll ·
+    any other key closes`) — the same one-meaning-at-a-time rule `esc` follows (§3). The
+    diff panel can let every unbound key fall through precisely because it has no such
+    contract to keep.
   - The key table is **generated from the live keymap**, never hand-written. Named
     actions are the contract (§3), so the help is a view of the bindings actually in
     force: an area-12 rebind updates it with no code change, and it cannot drift from

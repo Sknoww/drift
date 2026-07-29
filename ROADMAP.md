@@ -386,9 +386,10 @@ is; link its spec/ADR once one exists.
 15. 🛠️ **UI polish pass.** The accumulated nits, found by auditing the render layer after
     area 14's measurements. Deliberately after 14: polish on a screen that can't be
     navigated is wasted work. Each item below was verified against the code, not guessed
-    — the file:line is the evidence. **Slice A (geometry and truncation) has shipped**;
-    what remains is the fixed-text overflow items and the two color items, which are
-    independent of it and of each other.
+    — the file:line is the evidence. **Slice A (geometry and truncation) and slice B
+    (the chrome: header, status line, help line, `?` overlay) have shipped**; what
+    remains is the two color items, which are independent of both and of each other.
+    Those are also the two this area cannot settle by argument — prototype and look.
     - ✅ **Per-column truncation, and one way to measure.** The systemic item, and the
       root of several symptoms that looked unrelated. `padRight` padded to a width but
       *returned long input unchanged*, so every "capped" column was only capped against
@@ -445,11 +446,37 @@ is; link its spec/ADR once one exists.
       - `listCapacity`'s floor-at-one-row in the other axis is left as it was — it keeps a
         short terminal correct rather than usable, which is the right trade until a
         height floor has a reason to exist
-    - **The dashboard help line overflows a standard terminal.** 108 columns of text
-      (`view.go:385`) plus the app's 2 columns of padding needs a 110-column window. It
-      wraps at the near-universal 80, and still wraps at 100. Either shorten it or elide
-      it against the real width — it is the one line on screen that teaches the keys, so
-      it wrapping into the panel border is the worst place to spend the overflow
+    - ✅ **Slice B — the chrome now measures itself too.** The three fixed-text items
+      turned out to be one bug in three places: area 14 bounded the *rows* and slice A
+      bounded the *columns*, and neither touched the header, the status line or the help
+      line — the lines drawn outside the panel. They are now measured against
+      `chromeWidth` (the width outside the panel, which is wider than `contentWidth`) in
+      the new `internal/ui/chrome.go`
+      - ✅ **The help line elides against the real width**, rather than being shortened.
+        It was 108 columns (`view.go:385`) plus the app's 2 of padding against a
+        110-column need, so it wrapped into the panel border at the near-universal 80 and
+        still wrapped at 100 — and it was not alone: pairing-with-filter (85), the
+        wizard's filter line (81), pairing (79) and local-only (79) all overflowed 80.
+        Shortening was the worse trade twice over — lossy at *every* width, and stale the
+        moment area 11 or 12 adds a binding. `helpLine` takes the segments as `lead` and
+        `tail`: the tail is what the line must never stop saying (how to leave, and where
+        the full key list is), it is paid for first exactly as a branch row pays for its
+        status cluster, and the lead is spent from the front with `…` marking what went.
+        Every help line in the package routes through it, so a new screen cannot
+        reintroduce the bug
+      - ✅ **The dashboard's segment order is now load-bearing**, so it was re-ordered: a
+        narrow terminal keeps the front of the line, and at 80 columns the old order
+        would have elided `a add` — how a new user does the first thing Drift is for.
+        Move and open, then add and delete, then the sweep and the two screens
+      - ✅ **The status line's real bug was the newline, not the width.** `statusLine`
+        rendered `err.Error()` raw, and a git error is unbounded *and* multi-line while
+        `listChrome` costs this line as exactly one — so a three-line error broke the row
+        budget the same way the wrapping wizard header did, and ran the frame off the
+        top. `chromeText` collapses whitespace first, then clips
+      - ✅ **The header was the same defect, unlisted.** It carries the checked-out branch
+        name, which is as unbounded as any name on a row below it. The title is the fixed
+        cost and the branch cell absorbs what is left — the slice-A allocation rule,
+        applied to the one row that had never been through it
     - **The selection band barely renders.** Raised by dogfooding as "not the cleanest
       looking thing", and measurement backs it: the band is ANSI 236 = `rgb(48,48,48)`,
       which against common terminal backgrounds gives a contrast ratio of **1.06:1** on
@@ -483,13 +510,29 @@ is; link its spec/ADR once one exists.
       fix. Worth confirming visually on a light theme before building — the mechanism is
       clear from the code but the severity isn't. Note the ANSI-256 choice itself stays
       right (DESIGN.md §1); this is about light vs dark, not color depth
-    - **Error text is unbounded.** `statusLine` (`view.go:370`) renders `err.Error()` raw,
-      and git errors are not short. One long error wraps the frame under the panel
-    - **The `?` help overlay runs off the top of a standard terminal.** Found while
-      measuring area 14: **27 lines on the dashboard** against a 24-line window, and
-      exactly 24 on the diff screen — so the keys it exists to teach are the ones
-      scrolled away. Same class as area 14's freeze, but **windowing does not apply**:
-      the overlay is not a cursor-navigated list, so there is no cursor to window around
-      and nothing to scroll with. It needs shortening, paging, or its own viewport —
-      decide which by counting what the table actually owes on the worst screen
+      - ✅ **The `?` overlay scrolls.** Measured at 80×24 before the fix: **28 lines on
+        the dashboard**, 26 on pairing, 23 on the diff screen — so the keys it exists to
+        teach were the ones scrolled off the top. The count decided the fix: shortening
+        buys back four lines *once*, and areas 11 and 12 both add actions. Windowing does
+        not apply (no cursor to window around) but a viewport does, and the diff panel
+        already had one. Now a flat ≤23 lines on a 24-line terminal at every width and on
+        every screen
+        - **Only the offset is kept; the pane is derived on every render** (`helpPane`),
+          the same move as area 14's window and its filter's matching set. A resize
+          refits it with no wiring, opening it on a different screen needs no reset, and
+          `SetYOffset` clamps an offset against content it was actually measured against
+        - **The scroll keys are an allowlist, not the viewport's own keymap.** That keymap
+          binds `d`, `u`, `f`, `b`, `space`, `h` and `l` — and on the dashboard `d` is
+          delete, so a user pressing it over the help expects the overlay to close, not to
+          half-page down. The diff panel can let every unbound key fall through precisely
+          because it has no "any key closes" contract to keep
+        - **The carve-out only applies while there is something to scroll**, and the
+          footer says which contract is live — `any key closes` when it fits, `↑/↓ N more
+          · j/k scroll · any other key closes` when it doesn't. The same
+          one-meaning-at-a-time rule `esc` follows. An overlay that fits is still drawn
+          straight rather than through the viewport, so the panel hugs its content instead
+          of sitting in a box of blank lines
+        - Before the first `WindowSizeMsg` the height is unknown, so the overlay draws
+          whole and never scrolls — clipping against a guessed height would make a short
+          overlay claim a scroll it doesn't have
     - Add items here as dogfooding turns them up — this area is the bucket, not a fixed list

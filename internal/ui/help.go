@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/bubbles/viewport"
 )
 
 // The `?` overlay: what the keys do, and what the glyphs mean.
@@ -230,9 +232,99 @@ func (m Model) unboundEntries() []helpEntry {
 	return nil
 }
 
-// helpView draws the overlay in the panel's place, over whatever screen asked
-// for it.
-func (m Model) helpView() string {
+// The overlay scrolls, because it outgrew the terminal (roadmap area 15).
+//
+// Measured on an 80×24 terminal: the dashboard's overlay was **28 lines** and
+// the pairing screen's 26, so the keys it exists to teach were the ones scrolled
+// off the top. Area 14's windowing does not apply — there is no cursor to window
+// around — but a viewport does, and the diff panel already uses one. It is also
+// the only fix that stays fixed: shortening the wording buys back four lines
+// once, and areas 11 and 12 both add actions.
+//
+// The scroll keys are an **allowlist**, not the viewport's own keymap. That
+// keymap binds `d`, `u`, `f`, `b`, `space`, `h` and `l` — and on the dashboard
+// `d` is delete, so a user pressing it over the help expects the overlay to
+// close, not to half-page down. The diff panel can let every unbound key fall
+// through precisely because it has no such contract; here "any key closes" is
+// the contract, and only these keys are carved out of it.
+var helpScrollKeys = map[string]bool{
+	"j": true, "k": true,
+	"up": true, "down": true,
+	"pgup": true, "pgdown": true,
+}
+
+// helpViewportHeight is the lines the overlay body may draw: the same budget
+// every list panel gets, since the overlay sits in the same frame.
+//
+// Before the first WindowSizeMsg the height is genuinely unknown, and it then
+// reports the content's own line count — the whole thing, unclipped. Falling
+// back to a fixed guess would be worse than useless here: it would make a short
+// overlay look scrollable, and j would scroll a screen that fits instead of
+// closing it, which is the one thing the footer promises. Same rule
+// contentWidth follows in the other axis (view.go).
+func helpViewportHeight(height int, body string) int {
+	if c := listCapacity(height, 0); c > 0 {
+		return c
+	}
+	return strings.Count(body, "\n") + 1
+}
+
+// helpPane builds the overlay's viewport for this frame — content, size and
+// scroll position — from the model's single int of state.
+//
+// **Derived on every render, never stored**, the same move as area 14's window
+// and its filter's matching set (DESIGN.md §1). The model keeps only how far
+// down the user has scrolled; the content, the height it is measured against and
+// the clamp all fall out of the current terminal size. So there is nothing to
+// rebuild on a resize, nothing to reset when the overlay is opened on a
+// different screen, and an offset can never point past content it was measured
+// against — SetYOffset clamps it to whatever this frame actually holds.
+func (m Model) helpPane() viewport.Model {
+	body, height, _ := m.helpFrame()
+	vp := viewport.New(panelViewportWidth(m.styles, m.width), height)
+	vp.SetContent(body)
+	vp.SetYOffset(m.helpOffset)
+	return vp
+}
+
+// helpFrame is the overlay's content, the height it may draw into, and how many
+// lines it really has — the three numbers every decision here rests on.
+func (m Model) helpFrame() (body string, height, total int) {
+	body = m.helpBody()
+	return body, helpViewportHeight(m.height, body), strings.Count(body, "\n") + 1
+}
+
+// helpScrolls reports whether the overlay has more than it can show — which is
+// what makes a scroll key mean anything. When everything fits, "any key closes"
+// holds unqualified and j/k close it like any other key: one contract, and the
+// footer says which one is live, the same way esc does (DESIGN.md §3).
+func (m Model) helpScrolls() bool {
+	_, height, total := m.helpFrame()
+	return total > height
+}
+
+// scrollHelp moves the overlay by one of its allowlisted keys, keeping only the
+// resulting offset. Driven by explicit calls rather than viewport.Update so no
+// binding can arrive with the component.
+func (m Model) scrollHelp(key string) Model {
+	vp := m.helpPane()
+	switch key {
+	case "j", "down":
+		vp.LineDown(1)
+	case "k", "up":
+		vp.LineUp(1)
+	case "pgdown":
+		vp.PageDown()
+	case "pgup":
+		vp.PageUp()
+	}
+	m.helpOffset = vp.YOffset
+	return m
+}
+
+// helpBody is the overlay's content: the key table for the screen it was opened
+// from, then the glyph legend.
+func (m Model) helpBody() string {
 	entries := append(helpEntries(m.activeKeys()), m.unboundEntries()...)
 	legend := m.glyphLegend()
 
@@ -261,5 +353,39 @@ func (m Model) helpView() string {
 			fit(e.keys, width), m.styles.help.Render(e.what)))
 	}
 
-	return m.screenView(strings.Join(lines, "\n"), m.styles.help.Render("any key closes"))
+	// Clipped for the same reason every windowed row is: a line wider than the
+	// panel wraps to two, and the viewport's height budget is in lines. At the
+	// 60-column floor the longest action wording is wider than the panel, so this
+	// is not hypothetical.
+	for i, l := range lines {
+		lines[i] = clipRow(m.styles, m.width, l)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// helpView draws the overlay in the panel's place, over whatever screen asked
+// for it.
+func (m Model) helpView() string {
+	body, height, total := m.helpFrame()
+	if total <= height {
+		// It fits: draw it straight, so the panel hugs its content exactly as it
+		// did before the overlay could scroll. Going through the viewport anyway
+		// would pad every short overlay out to the terminal's full height and
+		// leave it sitting in a box of blank lines.
+		return m.screenView(body, helpLine(m.styles, m.width, nil, []string{"any key closes"}))
+	}
+
+	vp := m.helpPane()
+	// The footer says what is hidden and in which direction, the same two markers
+	// a windowed list carries (`↑ N more` / `↓ N more`) — a clipped edge always
+	// says so — and states which key contract is live alongside them.
+	lead := []string{}
+	if above := vp.YOffset; above > 0 {
+		lead = append(lead, fmt.Sprintf("↑ %d more", above))
+	}
+	if below := total - vp.YOffset - height; below > 0 {
+		lead = append(lead, fmt.Sprintf("↓ %d more", below))
+	}
+	lead = append(lead, "j/k scroll")
+	return m.screenView(vp.View(), helpLine(m.styles, m.width, lead, []string{"any other key closes"}))
 }

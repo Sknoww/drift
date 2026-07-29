@@ -17,9 +17,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		if m.screen == screenDiff {
-			m.diff.vp.Width = diffViewportWidth(m.styles, m.width)
+			m.diff.vp.Width = panelViewportWidth(m.styles, m.width)
 			m.diff.vp.Height = diffViewportHeight(m.height)
 		}
+		// The help overlay needs nothing here: its pane is derived from the size
+		// on every render, so a resize refits it by itself (help.go).
 		return m, nil
 
 	case spinner.TickMsg:
@@ -108,9 +110,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The help overlay is a read-only interruption: any key dismisses it and is
 	// consumed, so a key pressed to close it never also acts on the screen
 	// underneath. ctrl+c still quits, since it always does.
+	//
+	// The one carve-out is scrolling, and only while there *is* something to
+	// scroll — the overlay is taller than a standard terminal on the busier
+	// screens (help.go). On a screen whose help fits, "any key closes" holds
+	// unqualified and j/k close it like anything else, so the footer never claims
+	// a key does something it doesn't.
 	if m.showHelp {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if helpScrollKeys[msg.String()] && m.helpScrolls() {
+			return m.scrollHelp(msg.String()), nil
 		}
 		m.showHelp = false
 		return m, nil
@@ -224,6 +235,7 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 	// and it reads the screen it was opened from rather than replacing it.
 	if action == ActionHelp {
 		m.showHelp = true
+		m.helpOffset = 0 // each opening starts at the top, whatever the last one left
 		return m, nil
 	}
 	switch m.screen {

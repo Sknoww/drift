@@ -408,7 +408,9 @@ func (m wizardModel) View() string {
 	b.WriteString("\n")
 
 	if m.notice != "" {
-		b.WriteString(m.styles.hint.Render(m.notice))
+		// Same one-line contract as the dashboard's status line: a notice naming a
+		// ref carries repo-supplied text, and the frame budgets this as one line.
+		b.WriteString(m.styles.hint.Render(chromeText(m.styles, m.width, m.notice)))
 		b.WriteString("\n")
 	}
 	b.WriteString(m.help())
@@ -467,17 +469,23 @@ func (m wizardModel) body() string {
 
 func (m wizardModel) help() string {
 	if m.editing {
-		return m.styles.help.Render("enter save name · esc cancel edit")
+		return helpLine(m.styles, m.width, nil, []string{"enter save name", "esc cancel edit"})
 	}
 	if m.filter.open {
-		return m.styles.help.Render("type to filter · ↑/↓ move · enter accept · esc clear")
+		return helpLine(m.styles, m.width,
+			[]string{"type to filter", "↑/↓ move"}, []string{"enter accept", "esc clear"})
 	}
 	// esc means one thing at a time, and the line says which is live — with a
-	// filter applied it undoes the filter, not the wizard.
+	// filter applied it undoes the filter, not the wizard. That segment is an
+	// anchor for exactly that reason: it is never what a narrow terminal elides.
 	if m.filter.active() {
-		return m.styles.help.Render("j/k move · / refine · space select · e rename key · enter save · esc clear filter")
+		return helpLine(m.styles, m.width,
+			[]string{"j/k move", "/ refine", "space select", "e rename key"},
+			[]string{"enter save", "esc clear filter"})
 	}
-	return m.styles.help.Render("j/k move · / filter · space select · e rename key · enter save · esc skip")
+	return helpLine(m.styles, m.width,
+		[]string{"j/k move", "/ filter", "space select", "e rename key"},
+		[]string{"enter save", "esc skip"})
 }
 
 // ageColWidth is the fixed width of the age column, sized to the longest value

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Sknoww/drift/internal/store"
 )
@@ -60,6 +61,11 @@ func (m Model) dashboardView() string {
 
 // header is the title row, with a spinner while a sweep is in flight and the
 // checked-out branch for orientation.
+//
+// The right-hand cell carries a branch name — repo-supplied and unbounded, like
+// any name on a row below it — so it absorbs what the title leaves rather than
+// wrapping the header onto a second line the frame never budgeted for. Same
+// order of allocation as a branch row: the fixed cost is paid first (chrome.go).
 func (m Model) header() string {
 	title := m.styles.title.Render("drift")
 
@@ -72,6 +78,16 @@ func (m Model) header() string {
 		right = marker + m.styles.help.Render("on "+m.current)
 	case m.current == "":
 		right = m.styles.help.Render("(detached HEAD)")
+	}
+
+	if cw := chromeWidth(m.styles, m.width); cw > 0 {
+		// The cut is ANSI-aware: right is assembled from styled cells, and
+		// slicing one by bytes would sever an escape sequence (clipRow, §1).
+		avail := cw - lipgloss.Width(title) - 2
+		if avail < 1 {
+			return ansi.Truncate(title, cw, helpElide)
+		}
+		right = ansi.Truncate(right, avail, helpElide)
 	}
 	return title + "  " + right
 }
@@ -367,30 +383,42 @@ func (m Model) renderAheadBehind(br store.TicketBranch, st branchStatus) string 
 }
 
 // statusLine surfaces the last error or transient notice under the panel.
+//
+// Both are routed through chromeText, and the reason is a correctness one
+// rather than a cosmetic one: a git error is unbounded *and* multi-line, and
+// the frame budgets this line as exactly one (listChrome). See chrome.go.
 func (m Model) statusLine() string {
 	if m.err != nil {
-		return m.styles.errText.Render("error: " + m.err.Error())
+		return m.styles.errText.Render(chromeText(m.styles, m.width, "error: "+m.err.Error()))
 	}
 	if m.notice != "" {
-		return m.styles.hint.Render(m.notice)
+		return m.styles.hint.Render(chromeText(m.styles, m.width, m.notice))
 	}
 	return ""
 }
 
+// help is the dashboard's key line, elided against the real width.
+//
+// The lead is ordered by what a reader needs first, because that order is now
+// load-bearing: a narrow terminal keeps the front of the line and marks the
+// rest. Move and open come first, then the two verbs that build the list at
+// all — a new user on an 80-column terminal must still be told how to add a
+// ticket — then the sweep and the two screens. `? help` anchors the line
+// because it is where everything elided still lives.
 func (m Model) help() string {
 	if m.screen == screenConfirmDelete {
-		return m.styles.help.Render("y confirm · n cancel")
+		return helpLine(m.styles, m.width, nil, []string{"y confirm", "n cancel"})
 	}
-	return m.styles.help.Render(
-		"j/k move · enter expand/diff · s shelve · r refresh · f fetch · a add · d delete · l local · ? help · q quit",
-	)
+	return helpLine(m.styles, m.width,
+		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "s shelve", "r refresh", "f fetch", "l local"},
+		[]string{"? help", "q quit"})
 }
 
 // addIDView is the ticket-ID entry screen.
 func (m Model) addIDView() string {
 	panel := m.styles.hint.Render("New ticket") + "\n\n" +
 		"  ID  " + m.input.View()
-	help := m.styles.help.Render("enter continue · esc cancel")
+	help := helpLine(m.styles, m.width, nil, []string{"enter continue", "esc cancel"})
 	return m.screenView(panel, help)
 }
 
@@ -398,19 +426,25 @@ func (m Model) addIDView() string {
 // its place while it is open.
 func (m Model) pairingView() string {
 	if m.add.picker {
-		help := m.styles.help.Render("j/k move · enter select · esc back")
+		help := helpLine(m.styles, m.width, []string{"j/k move"}, []string{"enter select", "esc back"})
 		return m.screenView(m.pickerBody(), help)
 	}
 	if m.add.filter.open {
-		help := m.styles.help.Render("type to filter · ↑/↓ move · enter accept · esc clear")
+		help := helpLine(m.styles, m.width,
+			[]string{"type to filter", "↑/↓ move"}, []string{"enter accept", "esc clear"})
 		return m.screenView(m.pairingBody(), help)
 	}
-	// esc means one thing at a time, and the line says which is live.
+	// esc means one thing at a time, and the line says which is live — so the
+	// segment naming it is an anchor, never something a narrow terminal elides.
 	if m.add.filter.active() {
-		help := m.styles.help.Render("space toggle · t target · 1–9 quick-target · / refine · enter save · esc clear filter")
+		help := helpLine(m.styles, m.width,
+			[]string{"space toggle", "t target", "1–9 quick-target", "/ refine"},
+			[]string{"enter save", "esc clear filter"})
 		return m.screenView(m.pairingBody(), help)
 	}
-	help := m.styles.help.Render("space toggle · t target · 1–9 quick-target · / filter · enter save · esc cancel")
+	help := helpLine(m.styles, m.width,
+		[]string{"space toggle", "t target", "1–9 quick-target", "/ filter"},
+		[]string{"enter save", "esc cancel"})
 	return m.screenView(m.pairingBody(), help)
 }
 

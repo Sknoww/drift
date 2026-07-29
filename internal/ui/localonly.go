@@ -352,11 +352,15 @@ func heldPaths(entries []heldPath) []string {
 func (m Model) localOnlyView() string {
 	switch {
 	case m.local.note.open:
-		return m.screenView(m.localNoteBody(), m.styles.help.Render("enter save · esc cancel"))
+		return m.screenView(m.localNoteBody(),
+			helpLine(m.styles, m.width, nil, []string{"enter save", "esc cancel"}))
 	case m.local.add.open:
-		return m.screenView(m.localAddBody(), m.styles.help.Render("j/k move · enter hold · esc back"))
+		return m.screenView(m.localAddBody(),
+			helpLine(m.styles, m.width, []string{"j/k move"}, []string{"enter hold", "esc back"}))
 	}
-	help := m.styles.help.Render("j/k move · a hold · d release · n note · r refresh · esc back · ? help · q quit")
+	help := helpLine(m.styles, m.width,
+		[]string{"j/k move", "a hold", "d release", "n note", "r refresh"},
+		[]string{"esc back", "? help", "q quit"})
 	return m.screenView(m.localOnlyBody(), help)
 }
 

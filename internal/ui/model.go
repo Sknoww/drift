@@ -144,7 +144,12 @@ type Model struct {
 
 	width, height int
 
-	showHelp bool // the ? overlay is open over whatever screen asked for it
+	// The ? overlay, open over whatever screen asked for it. It scrolls, because
+	// the key table outgrew a standard terminal (help.go): windowing does not
+	// apply to a list with no cursor, but a viewport does. Only the offset is
+	// kept — the pane itself is derived on every render (helpPane).
+	showHelp   bool
+	helpOffset int
 
 	notice string // transient one-line hint or error under the panel
 	err    error  // last status-sweep error, shown until the next good sweep

@@ -561,10 +561,11 @@ func (m Model) shelveFileRow(f shelveFile) string {
 
 func (m Model) shelveHelp() string {
 	if m.shelve.active && m.shelve.cancellable {
-		return m.styles.help.Render("esc cancel · ? help · q quit")
+		return helpLine(m.styles, m.width, nil, []string{"esc cancel", "? help", "q quit"})
 	}
 	if m.shelve.active {
-		return m.styles.help.Render("running — it stops on its own · ? help · q quit")
+		return helpLine(m.styles, m.width,
+			[]string{"running — it stops on its own"}, []string{"? help", "q quit"})
 	}
-	return m.styles.help.Render("esc back · ? help · q quit")
+	return helpLine(m.styles, m.width, nil, []string{"esc back", "? help", "q quit"})
 }

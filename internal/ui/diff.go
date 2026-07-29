@@ -47,7 +47,7 @@ func (m Model) openDiff(row rowRef) (tea.Model, tea.Cmd) {
 		files:  append([]collision(nil), st.unmergeable...),
 		cursor: 0,
 		cache:  make(map[string]diffEntry),
-		vp:     viewport.New(diffViewportWidth(m.styles, m.width), diffViewportHeight(m.height)),
+		vp:     viewport.New(panelViewportWidth(m.styles, m.width), diffViewportHeight(m.height)),
 	}
 	m.screen = screenDiff
 	m.notice = ""
@@ -435,7 +435,9 @@ func (m Model) diffView() string {
 	file := m.styles.unmerge.Render(d.files[d.cursor].path) + "  " + m.declaredBadge(d.files[d.cursor])
 
 	body := head + "\n" + file + "\n\n" + d.vp.View()
-	help := m.styles.help.Render("tab/⇧tab file · j/k scroll · w declare · esc back · ? help · q quit")
+	help := helpLine(m.styles, m.width,
+		[]string{"tab/⇧tab file", "j/k scroll", "w declare"},
+		[]string{"esc back", "? help", "q quit"})
 	return m.screenView(body, help)
 }
 
@@ -456,10 +458,10 @@ func (m Model) declaredBadge(c collision) string {
 func (m Model) declareView() string {
 	d := m.diff.declare
 	if d.step == stepDest {
-		help := m.styles.help.Render("j/k move · enter write · esc back")
+		help := helpLine(m.styles, m.width, []string{"j/k move"}, []string{"enter write", "esc back"})
 		return m.screenView(m.declareDestBody(), help)
 	}
-	help := m.styles.help.Render("j/k move · enter choose · esc cancel")
+	help := helpLine(m.styles, m.width, []string{"j/k move"}, []string{"enter choose", "esc cancel"})
 	return m.screenView(m.declarePatternBody(), help)
 }
 
@@ -513,15 +515,6 @@ func (m Model) declareDestBody() string {
 			m.styles.branch.Render(fit(dest.Label(), width)), m.styles.help.Render(dest.Detail())))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
-}
-
-// diffViewportWidth is the inner panel width the diff fills, falling back to a
-// sane default before the first WindowSizeMsg.
-func diffViewportWidth(s styles, width int) int {
-	if w := contentWidth(s, width); w > 0 {
-		return w
-	}
-	return 80
 }
 
 // diffViewportHeight is the rows left for the diff after the surrounding chrome
