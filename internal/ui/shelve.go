@@ -20,8 +20,8 @@ import (
 // Two verbs share this state machine, differing by commitment. `s` shelves:
 // pull the target, merge it into the checked-out branch, put your work back, and
 // publish nothing. `u` updates: the same merge, but it checks the branch out,
-// pulls the branch's own upstream first, pushes the result, and returns you to
-// where you were standing. One machine rather than two, because the halts, the
+// fast-forwards it to its own upstream first, pushes the result, and returns you
+// to where you were standing. One machine rather than two, because the halts, the
 // stash identity rules and the report are the same in both — only the step list
 // and the commitment differ.
 //
@@ -52,7 +52,7 @@ const (
 	stepHolds                      // recompute behind, then the local-only collision check
 	stepStash                      // the first step that touches the working tree
 	stepSwitch                     // update: check the branch out
-	stepUpstream                   // update: merge the branch's own upstream
+	stepUpstream                   // update: fast-forward the branch to its own upstream
 	stepMerge                      // merge the target in
 	stepPush                       // update: publish the branch
 	stepReturn                     // update: go back to where the user was standing
@@ -87,7 +87,7 @@ func (s shelveState) steps() []shelveStepLabel {
 		if s.leaves() {
 			out = append(out, shelveStepLabel{stepSwitch, "check out " + s.branch})
 		}
-		out = append(out, shelveStepLabel{stepUpstream, "pull " + s.branch + "'s own upstream"})
+		out = append(out, shelveStepLabel{stepUpstream, "fast-forward " + s.branch + " to its own upstream"})
 	}
 	out = append(out, shelveStepLabel{stepMerge, "merge the target in"})
 	if s.mode == modeUpdate {
@@ -113,7 +113,7 @@ const (
 	shelveRunning  shelveOutcome = iota
 	shelveLanded                 // merged and restored, clean
 	shelveCurrent                // nothing had moved; nothing was touched
-	shelveHeld                   // the target changed a path you hold locally
+	shelveRefused                // a read-only check said no: nothing was touched
 	shelveReverted               // merge conflict: aborted and restored, no trace left
 	shelveHandoff                // the merge landed, but something still needs a human
 	shelveStopped                // refused by a precondition, or a git call failed
@@ -222,11 +222,12 @@ type shelveMsg struct {
 	behind   int          // stepHolds: recomputed against the freshly pulled ref
 	upBehind int          // stepHolds: how far behind its own upstream the branch is
 	upAhead  int          // stepHolds: and how far ahead — the half `u` publishes
-	files    []shelveFile // stepHolds: held collisions · merges: conflicts
+	files    []shelveFile // stepHolds: held collisions · stepMerge: conflicts
 	stashOID string       // stepStash: "" when the tree was clean and nothing was stashed
 	restored error        // the unwind's own failure, if putting the user back went wrong
 	pushed   git.PushOutcome
 	rejected bool // stepPush: the remote branch moved on; a handoff, never a force
+	diverged bool // stepUpstream: no fast-forward exists, so `u` hands the branch back
 
 	upstreamRef, pushRemote, pushBranch string // stepPull: the branch's own upstream
 }
@@ -393,9 +394,19 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 		if done, model := m.nothingToDo(msg); done {
 			return model, nil
 		}
+		// Both counts positive is exactly "no fast-forward exists", and `u` will not
+		// merge a branch with itself to manufacture one (19c). Refused here rather
+		// than at stepUpstream because it is *knowable* here, off numbers already
+		// computed for nothingToDo — so the refusal is read-only and free, the same
+		// as the held collision below it. Ordered before that one: a branch that
+		// cannot move at all outranks a question about what the merges would bring
+		// in. The counts are `u`'s alone; `s` never asks for them.
+		if msg.upBehind > 0 && msg.upAhead > 0 {
+			return m.divergedHalt(shelveRefused), nil
+		}
 		if len(msg.files) > 0 {
 			m.shelve.files = msg.files
-			return m.endShelve(shelveHeld,
+			return m.endShelve(shelveRefused,
 				"the incoming changes touch files you hold on this machine",
 				"release the hold (l) or reconcile by hand, then run it again"), nil
 		}
@@ -418,27 +429,25 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 		}
 		m.shelve.skipped[stepSwitch] = true
 		m.shelve.step = stepUpstream
-		return m, shelveUpstreamCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.upstreamRef, m.shelve.unwind())
+		return m, shelveUpstreamCmd(ctx, m.repo, m.shelve.seq, m.shelve.upstreamRef, m.shelve.unwind())
 
 	case stepSwitch:
 		// Drift is now standing somewhere the user did not put it, and owes them
 		// the way back on every path from here.
 		m.shelve.switched = true
 		m.shelve.step = stepUpstream
-		return m, shelveUpstreamCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.upstreamRef, m.shelve.unwind())
+		return m, shelveUpstreamCmd(ctx, m.repo, m.shelve.seq, m.shelve.upstreamRef, m.shelve.unwind())
 
 	case stepUpstream:
 		if msg.skipped {
 			m.shelve.skipped[stepUpstream] = true
 		}
-		if len(msg.files) > 0 {
-			// The branch diverged from itself: its upstream holds commits that
-			// conflict with the ones here. That is a genuine halt — it is not the
-			// target's doing, and no amount of merging the target will settle it.
-			m.shelve.files = msg.files
-			return m.endShelve(shelveReverted,
-				m.shelve.branch+" and its upstream have both moved, and they conflict",
-				"reconcile "+m.shelve.branch+" against "+m.shelve.upstreamRef+" by hand, then run u again"), nil
+		if msg.diverged {
+			// stepHolds refuses this for free, so reaching it here means the upstream
+			// moved between that check and this fast-forward — someone else's push,
+			// mid-sequence. The one difference is what was left behind, which is why
+			// the outcome differs and the wording does not.
+			return m.divergedHalt(shelveReverted), nil
 		}
 		m.shelve.step = stepMerge
 		return m, shelveMergeCmd(ctx, m.repo, m.cfg, m.shelve.seq, m.shelve.targetRef, m.shelve.unwind())
@@ -522,6 +531,31 @@ func (m Model) nothingToDo(msg shelveMsg) (bool, Model) {
 			"git push -u <remote> "+s.branch)
 	}
 	return true, m.endShelve(shelveCurrent, "", "")
+}
+
+// divergedHalt is the branch-has-diverged-from-its-own-remote handoff. In one
+// place because two steps reach it and they must say the same thing: stepHolds
+// refuses it before the stash, stepUpstream catches the race where the upstream
+// moved after that check. Only the outcome differs — nothing touched in the
+// first case, a sequence unwound in the second.
+//
+// It names the fix that reconciles the two, and that command is a merge — the
+// very thing `u` just declined to perform. That is the point rather than a
+// contradiction: merging your branch with its remote is often right, and a human
+// who types it has chosen it, can see the result, and is not having it published
+// as an unnamed middle step of something else.
+func (m Model) divergedHalt(outcome shelveOutcome) Model {
+	s := m.shelve
+	// The remote is unknown when the upstream is a ref no configured remote claims,
+	// which is the same third answer the push already keeps distinct: name the two
+	// refs to reconcile rather than a command Drift cannot spell.
+	next := "reconcile " + s.branch + " against " + s.upstreamRef + " by hand, then run u again"
+	if s.pushRemote != "" {
+		next = "git pull --rebase=false " + s.pushRemote + " " + s.pushBranch + ", then run u again"
+	}
+	return m.endShelve(outcome,
+		s.branch+" has diverged from "+s.upstreamRef+", so it cannot fast-forward",
+		next)
 }
 
 // applyPush records what became of the publish. Neither problem it can report is
@@ -879,16 +913,34 @@ func shelveSwitchCmd(ctx context.Context, repo *git.Repo, seq int, branch string
 	}
 }
 
-// shelveUpstreamCmd pulls the branch's own upstream — the half that keeps `u`
-// honest on a second machine, where merging the target into a stale branch
-// produces something that cannot be pushed. Normally a fast-forward; a conflict
-// means the branch diverged from itself, which is a halt in its own right.
-func shelveUpstreamCmd(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, upstreamRef string, plan unwindPlan) tea.Cmd {
+// shelveUpstreamCmd catches the branch up with its own upstream — the half that
+// keeps `u` honest on a second machine, where merging the target into a stale
+// branch produces something that cannot be pushed.
+//
+// A fast-forward and nothing more (19c). The manual sequence this verb reproduces
+// — check the target out, pull it, check your branch out, merge, push — has no
+// counterpart step at all, and finds out about a divergence at the push. Drift
+// keeps the step, because without it `u` is wrong on a second machine, but holds
+// it to the most it can honestly do unasked: move the branch to where its own
+// remote already is. A plain merge here would be the branch merged with itself —
+// a commit nobody agreed to, made at a step the plan overlay does not even list,
+// on the way to publishing the result. That is the shape of the incident area 19
+// exists for, one step to the left.
+//
+// It cannot conflict, so it needs none of the target merge's conflict handling:
+// git refuses a non-fast-forward before touching the working tree. The refusal
+// still unwinds, because the stash and the checkout are already behind it.
+func shelveUpstreamCmd(ctx context.Context, repo *git.Repo, seq int, upstreamRef string, plan unwindPlan) tea.Cmd {
 	return func() tea.Msg {
 		if upstreamRef == "" {
 			return shelveMsg{seq: seq, step: stepUpstream, skipped: true}
 		}
-		return mergeStep(ctx, repo, cfg, seq, stepUpstream, upstreamRef, plan)
+		diverged, err := repo.MergeFF(ctx, upstreamRef)
+		if err == nil && !diverged {
+			return shelveMsg{seq: seq, step: stepUpstream}
+		}
+		return shelveMsg{seq: seq, step: stepUpstream, err: err, diverged: diverged,
+			restored: unwind(ctx, repo, plan)}
 	}
 }
 
@@ -898,24 +950,17 @@ func shelveUpstreamCmd(ctx context.Context, repo *git.Repo, cfg store.Config, se
 // mind", not two steps a user could be shown standing between.
 func shelveMergeCmd(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, targetRef string, plan unwindPlan) tea.Cmd {
 	return func() tea.Msg {
-		return mergeStep(ctx, repo, cfg, seq, stepMerge, targetRef, plan)
-	}
-}
-
-// mergeStep is the shape both merges share: merge, and on anything other than
-// success roll the whole sequence back before reporting. So the mutating half
-// either lands whole or leaves no trace.
-func mergeStep(ctx context.Context, repo *git.Repo, cfg store.Config, seq int, step shelveStep, ref string, plan unwindPlan) tea.Msg {
-	conflicts, err := repo.Merge(ctx, ref)
-	if err != nil {
-		return shelveMsg{seq: seq, step: step, err: err, restored: unwind(ctx, repo, plan)}
-	}
-	if len(conflicts) == 0 {
-		return shelveMsg{seq: seq, step: step}
-	}
-	return shelveMsg{seq: seq, step: step,
-		files:    classify(ctx, repo, cfg, conflicts),
-		restored: unwind(ctx, repo, plan),
+		conflicts, err := repo.Merge(ctx, targetRef)
+		if err != nil {
+			return shelveMsg{seq: seq, step: stepMerge, err: err, restored: unwind(ctx, repo, plan)}
+		}
+		if len(conflicts) == 0 {
+			return shelveMsg{seq: seq, step: stepMerge}
+		}
+		return shelveMsg{seq: seq, step: stepMerge,
+			files:    classify(ctx, repo, cfg, conflicts),
+			restored: unwind(ctx, repo, plan),
+		}
 	}
 }
 
@@ -1225,7 +1270,7 @@ func (m Model) shelveHead() string {
 			return m.styles.sync.Render("✓ already up to date, here and on the remote. Nothing was touched")
 		}
 		return m.styles.sync.Render("✓ already current — " + s.targetKey + " hasn't moved. Nothing was touched")
-	case shelveHeld:
+	case shelveRefused:
 		return m.styles.unmerge.Render("■ stopped before touching anything")
 	case shelveReverted:
 		return m.styles.unmerge.Render("■ rolled back — you are exactly where you started")

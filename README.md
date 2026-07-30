@@ -150,10 +150,14 @@ can't be hand-edited. The report tells you where it stopped: `✓` done, `■` s
 handed back because there's something to reconcile, `✗` refused or failed outright.
 
 **Update** (`u`) is the same merge, carried the whole way, on *any* paired branch —
-including one you don't have checked out. It stashes, checks the branch out, pulls the
-branch's own upstream, merges the target, pushes, then puts you back on the branch you
+including one you don't have checked out. It stashes, checks the branch out, fast-forwards
+it to its own upstream, merges the target, pushes, then puts you back on the branch you
 were standing on and pops your work. Every halt unwinds the same way, so a conflict
 still leaves you where you started.
+
+That step is a **fast-forward and nothing more**: if your branch and its own remote have
+both moved, `u` stops before it touches anything and names the pull that reconciles them,
+rather than merging your branch with itself and publishing the result.
 
 The two differ by **commitment**. `s` merges the target in and publishes nothing, which
 leaves the branch ahead of its own remote — `⇡` on the dashboard, and useful when you

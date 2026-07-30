@@ -884,7 +884,7 @@ is; link its spec/ADR once one exists.
       `GIT_CONFIG_NOSYSTEM` (see `CONTEXT.md`'s Testing row), local and CI answer the same
       question, so a push job that passes means something on every machine
 
-19. ⏳ **`u` published a merge nobody agreed to, onto a target that named a feature
+19. ✅ **`u` published a merge nobody agreed to, onto a target that named a feature
     branch.** Raised by dogfooding v0.3.0 on a work repo, and it is the same kind of finding
     as area 17 — the verb 17 shipped did its job and the job was wrong. One keypress put a
     merge into an open merge request: the merged branch's commits showed up in the MR one at
@@ -897,16 +897,19 @@ is; link its spec/ADR once one exists.
     merged was never shown, and once it was wrong there was no way to correct it in the
     tool
     - **Build order, after the diagnosis below.** 19d and 19e are what *caused* the
-      incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
-      unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
-      visible at rest and at the one moment it can still be stopped for free.
-      **19a, 19b, 19d and both halves of 19e have shipped**, so a wrong target can no
-      longer be *offered* under a right-looking name, is visible on its own screen when one
-      exists, named on the way past at the one moment it can still be stopped for free, and
-      correctable in the tool — in *both* of its fields, since 19b closed the pairing half
-      beside 19e's ref half. That closes the incident end to end — the cause, the missed
-      gate and the missing correction path. What is left is 19c (fidelity), which the
-      incident never needed
+      incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c
+      read as unrelated fidelity work. 19e and 19a were built first — together they make a
+      wrong target visible at rest and at the one moment it can still be stopped for free.
+      **All five have shipped.** A wrong target can no longer be *offered* under a
+      right-looking name, is visible on its own screen when one exists, named on the way
+      past at the one moment it can still be stopped for free, and correctable in the tool
+      — in *both* of its fields, since 19b closed the pairing half beside 19e's ref half.
+      That closes the incident end to end: the cause, the missed gate and the missing
+      correction path
+      - **19c turned out not to be unrelated.** Built last and framed as fidelity, it
+        closed the same hole one step to the left — a step that wrote history and published
+        the result without appearing in the plan the user agreed to. The area's own
+        argument reached it in the end
     - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
       the work repo's reflog and its `config.json`. The roadmap's reading was right in every
       part — merging a branch into a source whose MR *targets* that branch cannot add commits
@@ -931,7 +934,7 @@ is; link its spec/ADR once one exists.
         the user's own manual workflow, not Drift. `merge origin/…` is Drift's fingerprint,
         which is worth remembering the next time a reflog has to be read
       - **Drift never hit a conflict of its own**, exactly as predicted: `stepMerge` aborts
-        and rolls the whole sequence back on conflict (`internal/ui/shelve.go:409`), so the
+        and rolls the whole sequence back on conflict (`internal/ui/shelve.go:455`), so the
         run that reached the push was clean on its own terms. The sequence did precisely what
         it was told. It was told the wrong thing
       - **Three shipped decisions combined to tell it that**, each defensible alone, and the
@@ -1110,25 +1113,72 @@ is; link its spec/ADR once one exists.
         is measured rather than argued: the line is ordered by frequency, and a correction
         made once loses its slot before `r` and `f` do — so 120 columns render exactly as
         they shipped and `t targets` is what gives way at 140
-    - ⏳ **19c — `u` merges the branch's own upstream, and the flow it is modelled on does
-      not.** `shelveUpstreamCmd` (`internal/ui/shelve.go:849`) merges `origin/<branch>`
-      into the branch before the target is merged at all. The manual sequence this verb
-      reproduces — check out the target, pull it, check out your branch, merge, push — has
-      no counterpart step: if the branch and its remote had diverged, the manual flow finds
-      out at the push and hands it back. 17a added this deliberately and for a real reason,
-      recorded in area 17: on a second machine, merging the target into a stale branch
-      produces something that cannot be pushed. Both halves of that are true, which is why
-      this is a question and not a defect
-      - **Open: fast-forward only, or keep the merge?** Restricting it to a fast-forward
-        keeps 17a's reason intact — a stale-but-not-diverged branch still catches up — while
-        a genuine divergence becomes a halt with a named next step instead of a merge
-        commit of the branch with itself. That is closer to the manual flow and to Drift's
-        standing habit of handing back anything that needs a human. The cost is that a case
-        which currently resolves itself would start stopping, and 17a's halt for this case
-        (`shelve.go:397`) already exists but only fires on conflict
-      - **Not the cause of the incident**, and it should not be bundled with 19a/19b on that
-        pretext. It is a fidelity question about matching a documented flow, and it can be
-        settled on its own evidence
+    - ✅ **19c — `u` merged the branch's own upstream, and the flow it is modelled on does
+      not.** `shelveUpstreamCmd` merged `origin/<branch>` into the branch before the target
+      was merged at all. The manual sequence this verb reproduces — check out the target,
+      pull it, check out your branch, merge, push — has no counterpart step: if the branch
+      and its remote had diverged, the manual flow finds out at the push and hands it back.
+      17a added this deliberately and for a real reason, recorded in area 17: on a second
+      machine, merging the target into a stale branch produces something that cannot be
+      pushed. Both halves of that were true, which is why this was a question and not a
+      defect. No ADR: 17a chose a step and this replaces it with a stricter version of the
+      same step, which is the same direction of travel — the shape 19d's fix took, for the
+      same reason
+      - ✅ **Settled: fast-forward only.** `MergeFF` is `git merge --ff-only`, so the step
+        keeps the staleness it was added for and is held to the most it can honestly do
+        unasked: move the branch to where its own remote already is. A *merge* there is the
+        branch merged with itself — a commit nobody agreed to, made at a step the plan
+        overlay does not list, on the way to publishing the result. That is area 19's own
+        incident one step to the left, which is what turned a fidelity question into the
+        same argument 19a settled for the push. The accepted cost is the one the roadmap
+        named: a divergence that used to resolve itself now stops
+      - ✅ **The refusal is read-only, and that fell out of building rather than being
+        designed.** Both counts positive against the upstream *is* "no fast-forward
+        exists", and `AheadBehind` against the upstream was already computed at step 3 for
+        `nothingToDo` — so the halt lands on the read-only head with nothing stashed,
+        nothing checked out and nothing to undo, beside the held-set check instead of after
+        the stash. The spec's central mechanic paid for itself here: the check that
+        refuses this verb was already in the right place, waiting to be read
+        - **Ordered before the held collision**, which was a choice between two read-only
+          refusals at one step: a branch that cannot move at all outranks a question about
+          what the merges would have brought in
+        - `--ff-only` **stays** at step 6 rather than being made redundant by the
+          pre-check, because the upstream can move in between — somebody else's push
+          mid-sequence. That halt is the same wording and a different rollback, since by
+          then the stash and the checkout are behind it. It also means step 6 can no longer
+          conflict at all, so it needs none of the target merge's conflict machinery and
+          `mergeStep` folded back into its one remaining caller
+      - ✅ **The halt names a merge — the very thing `u` declined to perform**, and that is
+        the point rather than a contradiction. Merging your branch with its remote is often
+        right; what made it wrong was Drift choosing it, unlisted, and publishing the
+        result. A human who types `git pull --rebase=false` has chosen it, sees what it
+        produced, and can pick a rebase or a reset instead. An upstream no configured
+        remote claims has no such command to name, so the halt names the two refs — the
+        third answer the push already keeps distinct
+      - ✅ **It closed a hole in 19a's own rule, unlisted until now.** The plan overlay
+        states the stash, the checkout, the target merge, the push and the return — and has
+        never stated this step. Under a plain merge that was a step *running unlisted*,
+        which 19a calls the same class of lie as a listed step that does not run. A
+        fast-forward is not a decision to agree to: nothing is created, and the branch
+        arrives where its remote already stood. The omission is honest exactly because the
+        step can no longer write history, so no plan line was added
+      - ✅ **The refusal is told from a failure by refs, never by git's English** (area 7's
+        rule). A `--ff-only` that fails for any other reason must not be dressed up as a
+        divergence, or the halt would name a reconciliation for a problem the user does not
+        have — pinned by a test, alongside the case that proves a *stale* branch still
+        catches up
+      - ✅ **Measured against the old behaviour before shipping.** With the pre-check
+        removed and `--ff-only` put back to a plain merge, the end-to-end test does not
+        merely fail — it reports `shelveLanded`: the sequence self-merged a diverged branch
+        and **published it**. That is the finding stated as a number rather than as an
+        argument, and it is why the roadmap's "a case which currently resolves itself"
+        framing understates what was happening
+      - `shelveHeld` became `shelveRefused`, since there are now two reasons a read-only
+        check says no and one headline for both — "■ stopped before touching anything",
+        which is the register a handoff belongs in rather than `shelveStopped`'s `✗`
+      - **Not the cause of the incident**, and it was not bundled with 19a/19b on that
+        pretext. It was a fidelity question about matching a documented flow, and it was
+        settled on its own evidence — which turned out to be the same evidence after all
     - ✅ **19d — the wizard could seed a key that lied about its ref.** The first of the two
       causes the diagnosis turned up, and the deeper one: `deriveKey`'s last-segment fallback
       plus area 14's recency sort plus a repo whose feature branches end in their main's name

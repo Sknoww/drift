@@ -128,8 +128,8 @@ The design copies the unmergeable decision's shape exactly:
 Full rules: [`docs/specs/shelve-sequence.md`](./docs/specs/shelve-sequence.md). Two verbs
 share one state machine, differing by **commitment**. `s` shelves: pull → merge the target
 main → put your work back, on the checked-out branch, publishing nothing. `u` updates: the
-same merge on *any* paired branch, with the branch checked out, its own upstream pulled
-first, the result pushed, and the user returned to where they were standing. Everywhere
+same merge on *any* paired branch, with the branch checked out, fast-forwarded to its own
+upstream first, the result pushed, and the user returned to where they were standing. Everywhere
 else Drift reads; this is where it writes to the working tree and to history, so the rules
 about *when* it may are the substance of the feature.
 
@@ -150,7 +150,10 @@ about *when* it may are the substance of the feature.
   compared as `origin/<target>`, so the pull half is a fetch **scoped to that one ref** —
   a sequence started for one branch must not quietly move every other branch's numbers.
   `u` applies the same split to the branch's own upstream, which is what keeps it correct
-  on a second machine.
+  on a second machine — but **fast-forward only** (19c). Catching a stale branch up is the
+  reason that step exists; merging a *diverged* one is the branch merged with itself, a
+  commit nobody agreed to on the way to a push, so it is refused before the stash and the
+  reconciliation is named.
 - **Read-only until the last possible moment.** Every check that can refuse the sequence
   runs before the stash, so a refusal has stashed nothing and has nothing to undo. There
   is no partially-applied refusal. This is why *both* fetches are hoisted above the stash:

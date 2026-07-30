@@ -69,7 +69,7 @@ const (
 	ActionShelve Action = "shelve" // s: run the sequence on the selected branch
 
 	// The update sequence (area 17): the same merge carried all the way — the
-	// branch checked out, its own upstream pulled, the result pushed, and the
+	// branch checked out, fast-forwarded to its own upstream, the result pushed, and the
 	// user returned to where they were standing. Two verbs rather than one
 	// because they differ by *commitment*: `s` publishes nothing and stays on the
 	// checked-out branch, `u` publishes and works on any paired branch. The cost

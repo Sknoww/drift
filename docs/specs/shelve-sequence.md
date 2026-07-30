@@ -1,6 +1,6 @@
 # Spec — The one-key sequences: shelve and update
 
-> Feature spec for roadmap **areas 7 and 17**. Governs the rules and mechanics; the
+> Feature spec for roadmap **areas 7, 17 and 19**. Governs the rules and mechanics; the
 > visual surface is ratified in [`DESIGN.md`](../../DESIGN.md), the architectural fit in
 > [`CONTEXT.md`](../../CONTEXT.md). Read the unmergeable section of `CONTEXT.md` and
 > [`local-only-changes.md`](./local-only-changes.md) first — this feature is where both
@@ -11,6 +11,11 @@
 > Area 17 reversed this spec's original *Scope* section, under
 > [ADR 0002](../adr/0002-update-checks-out.md). What that section said — the sequence
 > runs on the checked-out branch only — is still true of `s` and no longer true of `u`.
+>
+> Area 19 narrowed two things 17 shipped, in the same direction of travel rather than
+> against it, so neither earned an ADR: `u` now asks before every run (19a), and step 6
+> fast-forwards rather than merging (19c). Both are the same rule — the sequence must not
+> write history or reach the remote on a keypress that was never told it would.
 
 ## The problem
 
@@ -34,7 +39,7 @@ report; what differs is how far each is willing to go.
 |---|---|---|
 | Which branch | the checked-out one | any paired branch |
 | Pulls the target | yes | yes |
-| Pulls the branch's own upstream | no | yes |
+| Catches the branch up with its own upstream | no | yes, fast-forward only |
 | Pushes | **no** | yes |
 | Asks first | no | **yes, every time** |
 | Leaves you | where you were | where you were |
@@ -59,10 +64,11 @@ Steps 0–3 mutate nothing. Steps marked *update* are skipped by `s`.
 | 1 | **Fetch the target** — `git fetch <remote> <branch>` for this target's ref only | refs |
 | 1b | *update:* **fetch the branch's own upstream**, the same way | refs |
 | 2 | **Recompute the divergence** against the freshly-updated refs. Nothing to do → stop | no |
-| 3 | **Local-only collision check** — everything incoming ∩ held set. Non-empty → halt | no |
+| 3 | *update:* **no-fast-forward check** — the branch diverged from its own upstream → halt | no |
+| 3b | **Local-only collision check** — everything incoming ∩ held set. Non-empty → halt | no |
 | 4 | **Stash** — plain `git stash push` (no `-u`, no `-a`). Clean tree → nothing created | tree, index |
 | 5 | *update:* **check the branch out**, if it is not already current | tree, HEAD |
-| 6 | *update:* **merge the branch's own upstream**. Conflict → the branch diverged from itself | tree, HEAD |
+| 6 | *update:* **fast-forward the branch to its own upstream**, and no more than that | tree, HEAD |
 | 7 | **Merge the target** — `git merge --no-edit <targetRef>`. Conflict → roll back (below) | tree, HEAD |
 | 8 | *update:* **push** — never forced. Rejected → a handoff, not a failure | remote |
 | 9 | *update:* **return** to the branch the user was standing on | tree, HEAD |
@@ -245,23 +251,59 @@ pull — the fetch step is **skipped and said so**, and the sequence continues a
 ref as it stands. A target that cannot be fetched is not an error; silently pretending
 it was fetched would be.
 
-## Pulling the branch's own upstream (`u`)
+## Catching the branch up with its own upstream (`u`)
 
 The same split, applied to the branch instead of the target: fetch `origin/<branch>`,
-then merge it. Normally a fast-forward, and often a no-op.
+then **fast-forward onto it — `git merge --ff-only`, never a plain merge.** Often a
+no-op.
 
 It exists because without it `u` is wrong on a second machine: it would merge the target
 into a *stale* branch and then be unable to push the result — which is the exact failure
 the verb was added to prevent. It is also what makes a push rejection rare enough to be
 worth treating as a genuine handoff rather than a routine outcome.
 
-A **conflict here is a real halt**, not a rollback of somebody else's doing: it means the
-branch diverged from itself, and no amount of merging the target will settle it. Drift
-rolls back and names the two refs to reconcile.
+**Fast-forward only, because the flow this verb reproduces has no counterpart step at
+all.** The manual sequence is: check the target out, pull it, check your branch out,
+merge, push — and a branch that has diverged from its own remote finds that out at the
+push and is handed back. So the step is kept for the staleness it was added for, and held
+to the most it can honestly do unasked: move the branch to where its own remote already
+is. A plain merge here is the branch merged with *itself* — a commit nobody agreed to,
+made at a step the plan prompt does not even list, on the way to publishing the result.
+That is the shape of the incident area 19 exists for, one step to the left of it.
 
-A branch with **no upstream** has nothing to pull. The step is skipped and said so — the
-same rule as an unfetchable target — and the missing upstream surfaces properly at the
-push.
+It also settles what would otherwise be a hole in the plan prompt. The prompt lists the
+stash, the checkout, the target merge, the push and the return; it has never listed this
+step, and under a plain merge that was a step running unlisted — the same class of lie
+the prompt exists to close. A fast-forward is not a decision to agree to: nothing is
+created, and the branch merely arrives where its remote already stood. The omission is
+honest exactly because the step cannot write history.
+
+**A divergence is refused at step 3, before the stash**, and the placement is the
+substance. A fast-forward is impossible exactly when each side holds commits the other
+does not — which is `AheadBehind` against the upstream, already computed at step 3 for
+"what nothing-to-do means". So the refusal lands on the read-only head with nothing to
+undo, alongside the held-set check rather than after the stash. It is ordered *before*
+that check: a branch that cannot move at all outranks a question about what the merges
+would have brought in.
+
+Step 6 still passes `--ff-only`, and that is not belt-and-braces for its own sake — the
+upstream can move between step 3's count and step 6's merge, which is somebody else's
+push mid-sequence. Reaching the refusal there is the same halt in different
+circumstances: the wording is identical and the rollback is not, because by then the
+stash and the checkout are behind it. The refusal is told from a real failure by asking
+the refs, never by reading git's message text.
+
+**The halt names a merge — the very thing `u` just declined to perform.** That is the
+point rather than a contradiction. Merging your branch with its remote is often the right
+answer; what makes it wrong here is that Drift would be choosing it, unlisted, and
+publishing the result. A human who types `git pull --rebase=false` has chosen it, can see
+what it produced, and can pick a rebase or a reset instead. When no configured remote
+claims the upstream there is no such command to name, so the halt names the two refs to
+reconcile — the same third answer the push keeps distinct.
+
+A branch with **no upstream** has nothing to catch up with. The step is skipped and said
+so — the same rule as an unfetchable target — and the missing upstream surfaces properly
+at the push.
 
 ## Pushing (`u`)
 
@@ -301,7 +343,15 @@ Every halt is a **handoff**: Drift stops, names what it found, and leaves the
 reconciliation to the human. That is the same rule as an unmergeable file, and it is
 permanent.
 
-### Held-file collision (step 3) — before anything is touched
+### No fast-forward onto the branch's own upstream (step 3, `u`) — before anything is touched
+
+The branch and `origin/<branch>` have both moved, so step 6 has no fast-forward to make
+and `u` will not manufacture one. Refused on the read-only head: nothing stashed, nothing
+checked out, nothing published, and the reconciliation named. See *Catching the branch up
+with its own upstream* above for why the step refuses rather than merging, and why the
+named fix is itself a merge.
+
+### Held-file collision (step 3b) — before anything is touched
 
 The hazard [`local-only-changes.md`](./local-only-changes.md) names: something incoming
 changed a file you hold on this machine. Drift does not rely on Git's behavior here (it
@@ -325,7 +375,11 @@ would silently break the promise. The held set rides the *checkout* the same way
 refusing to switch because a skip-worktree file differs between the branches is a result
 worth halting on, which is why the checkout is never forced.
 
-### Merge conflict (steps 6 and 7) — roll the whole thing back
+### Merge conflict (step 7) — roll the whole thing back
+
+Step 7 is the only step that can conflict at all. Step 6 cannot: git declines a
+non-fast-forward before it writes anything, which is what lets that halt be a plain
+handoff with no merge to abort.
 
 A conflict here means both sides *committed* to the same file. Drift rolls back — abort
 the merge, return to the branch the sequence started on, put the stash back — and reports
@@ -442,7 +496,8 @@ Neither `s` nor `u` collides with any bound key on the dashboard.
 - `StashRef(ctx)` — `git rev-parse --verify --quiet refs/stash`; absent is not an error.
 - `StashPop(ctx)` — `git stash pop --index`, distinguishing clean / conflicted / failed.
 - `Merge(ctx, ref)` — `git merge --no-edit <ref>`, distinguishing already-up-to-date /
-  fast-forward / merged / conflicted, with the conflicting paths on the last.
+  fast-forward / merged / conflicted, with the conflicting paths on the last. Step 7's
+  call, and step 7's alone.
 - `MergeAbort(ctx)` — `git merge --abort`.
 - `ConflictedFiles(ctx)` — `git diff --name-only --diff-filter=U`.
 - `OperationInProgress(ctx)` — the `MERGE_HEAD` / `CHERRY_PICK_HEAD` / `REVERT_HEAD` /
@@ -463,6 +518,15 @@ Area 17 added three more:
   once, for the dashboard's sweep. One shell-out for the whole repo rather than one per
   row. Present-with-an-empty-value and absent are **different answers**: the first is a
   branch that has never been published (`⊘`), the second is a branch that is not there.
+
+Area 19c added one:
+
+- `MergeFF(ctx, ref)` — `git merge --ff-only <ref>`, reporting a *divergence* rather than
+  an error when no fast-forward exists. The refusal is told from a real failure by asking
+  the refs (`AheadBehind` against `HEAD`), not by reading git's message text: each side
+  holding commits the other does not is exactly the non-fast-forward case, while a ref
+  that is merely behind makes `--ff-only` succeed as already-up-to-date and never reaches
+  the probe. Step 6's call, and step 6's alone.
 
 Every one of these takes a `context.Context` and runs through the existing `run` helper,
 so the editor-proof environment above is set in **one** place rather than per call site.

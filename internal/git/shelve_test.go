@@ -294,6 +294,79 @@ func TestMergeCleanAndConflicted(t *testing.T) {
 	}
 }
 
+func TestMergeFFCatchesUpButNeverMergesABranchWithItself(t *testing.T) {
+	// Roadmap 19c. The step exists so `u` is not wrong on a second machine — a
+	// stale branch has to catch up — and it may do no more than that: a merge here
+	// is the branch merged with itself, which nobody asked for.
+	dir := newRepo(t)
+	commit(t, dir, "shared.txt", "base\n")
+	r := New(dir)
+	ctx := context.Background()
+
+	git(t, dir, "checkout", "--quiet", "-b", "upstream")
+	commit(t, dir, "theirs.txt", "from my other machine\n")
+	git(t, dir, "checkout", "--quiet", "main")
+
+	// Stale but not diverged: the whole case the step is kept for.
+	diverged, err := r.MergeFF(ctx, "upstream")
+	if err != nil {
+		t.Fatalf("MergeFF() on a stale branch errored: %v — it has to catch up", err)
+	}
+	if diverged {
+		t.Fatal("MergeFF() called a plain fast-forward a divergence")
+	}
+	if got := read(t, dir, "theirs.txt"); got != "from my other machine\n" {
+		t.Errorf("theirs.txt = %q, want the branch fast-forwarded", got)
+	}
+
+	// Already level. Nothing to do is not a divergence either.
+	if diverged, err := r.MergeFF(ctx, "upstream"); err != nil || diverged {
+		t.Errorf("MergeFF() on an already-level branch = %v, %v; want no-op, not a divergence", diverged, err)
+	}
+
+	// Now both sides have moved, so no fast-forward exists.
+	git(t, dir, "checkout", "--quiet", "upstream")
+	commit(t, dir, "theirs2.txt", "more of theirs\n")
+	git(t, dir, "checkout", "--quiet", "main")
+	commit(t, dir, "mine.txt", "mine\n")
+
+	diverged, err = r.MergeFF(ctx, "upstream")
+	if err != nil {
+		t.Fatalf("MergeFF() reported a divergence as an error: %v — it is a result", err)
+	}
+	if !diverged {
+		t.Fatal("MergeFF() fast-forwarded a diverged branch, or called the refusal something else")
+	}
+	// The refusal touches nothing, which is what lets the halt above it be a plain
+	// handoff rather than a rollback: git declines before it writes.
+	if op, err := r.OperationInProgress(ctx); err != nil || op != "" {
+		t.Errorf("OperationInProgress() = %q, %v; want idle — --ff-only must not leave a merge in flight", op, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "theirs2.txt")); !os.IsNotExist(err) {
+		t.Error("the refused fast-forward brought content in anyway")
+	}
+	if ab, err := r.AheadBehind(ctx, "main", "upstream"); err != nil || ab.Ahead != 1 || ab.Behind != 1 {
+		t.Errorf("main vs upstream = %+v, %v; want the divergence left exactly as it was", ab, err)
+	}
+}
+
+func TestMergeFFReportsARealFailureAsAnError(t *testing.T) {
+	// The other half of the probe: a --ff-only that fails for any reason *other*
+	// than a missing fast-forward must not be dressed up as a divergence, or the
+	// halt would name a reconciliation for a problem the user does not have.
+	dir := newRepo(t)
+	commit(t, dir, "shared.txt", "base\n")
+	r := New(dir)
+
+	diverged, err := r.MergeFF(context.Background(), "refs/heads/no-such-branch")
+	if err == nil {
+		t.Fatal("MergeFF() on a ref that does not resolve returned no error")
+	}
+	if diverged {
+		t.Error("MergeFF() called an unresolvable ref a divergence")
+	}
+}
+
 func TestOperationInProgressIdle(t *testing.T) {
 	op, err := New(newRepo(t)).OperationInProgress(context.Background())
 	if err != nil {

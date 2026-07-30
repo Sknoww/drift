@@ -165,8 +165,8 @@ func TestShelveHaltsOnAHeldCollisionBeforeTouchingAnything(t *testing.T) {
 		{path: "app.conf", note: "debug log level"},
 	}})
 
-	if m.shelve.outcome != shelveHeld {
-		t.Fatalf("outcome = %v, want shelveHeld", m.shelve.outcome)
+	if m.shelve.outcome != shelveRefused {
+		t.Fatalf("outcome = %v, want shelveRefused", m.shelve.outcome)
 	}
 	if m.shelve.step != stepHolds {
 		t.Errorf("stopped at %v, want stepHolds — the stash must not have run", m.shelve.step)
@@ -547,8 +547,8 @@ func TestShelveEndToEndHaltsOnAHeldCollision(t *testing.T) {
 	m.store = m.store.SetLocalOnlyNote("app.conf", "debug log level")
 	m = runChain(t, m)
 
-	if m.shelve.outcome != shelveHeld {
-		t.Fatalf("outcome = %v (%s), want shelveHeld", m.shelve.outcome, m.shelve.reason)
+	if m.shelve.outcome != shelveRefused {
+		t.Fatalf("outcome = %v (%s), want shelveRefused", m.shelve.outcome, m.shelve.reason)
 	}
 	if m.shelve.step != stepHolds {
 		t.Errorf("stopped at %v, want stepHolds — nothing should have been stashed", m.shelve.step)
@@ -1113,6 +1113,99 @@ func TestUpdateNamesTheMissingUpstreamRatherThanClaimingSuccess(t *testing.T) {
 	}
 }
 
+// --- area 19c: the branch's own upstream is caught up, never merged -------
+
+func TestUpdateRefusesADivergedBranchBeforeTouchingAnything(t *testing.T) {
+	// 19c. Both counts positive is exactly "no fast-forward exists", and it is
+	// knowable at stepHolds off numbers already computed there — so the refusal
+	// lands on the read-only head of the sequence, with nothing to undo.
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "origin/abc-1-perf", pushRemote: "origin", pushBranch: "abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 2, upBehind: 1, upAhead: 1})
+
+	if m.shelve.outcome != shelveRefused {
+		t.Fatalf("outcome = %v (%s), want shelveRefused", m.shelve.outcome, m.shelve.reason)
+	}
+	if m.shelve.step != stepHolds {
+		t.Errorf("stopped at %v, want stepHolds — a divergence must be refused before the stash", m.shelve.step)
+	}
+	if m.shelve.stashOID != "" {
+		t.Error("a stash was taken before the divergence refused the sequence")
+	}
+	// The upstream ref is the load-bearing word, exactly as the target's is in the
+	// plan overlay: "diverged" without naming what from is not actionable.
+	if !strings.Contains(m.shelve.reason, "origin/abc-1-perf") {
+		t.Errorf("reason = %q, want the upstream ref named", m.shelve.reason)
+	}
+	if !strings.Contains(m.shelve.next, "git pull --rebase=false origin abc-1-perf") {
+		t.Errorf("next = %q, want the command that reconciles the two", m.shelve.next)
+	}
+	if !strings.Contains(m.shelveOutcomeBody(), "before touching anything") {
+		t.Errorf("report = %q, want it to say nothing was touched", m.shelveOutcomeBody())
+	}
+}
+
+func TestUpdateDivergenceOutranksAHeldCollision(t *testing.T) {
+	// Both are read-only refusals at the same step, so the order is a choice: a
+	// branch that cannot move at all outranks a question about what the merges
+	// would have brought in.
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "origin/abc-1-perf", pushRemote: "origin", pushBranch: "abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 2, upBehind: 1, upAhead: 1, files: []shelveFile{
+		{path: "app.conf", note: "debug log level"},
+	}})
+
+	if !strings.Contains(m.shelve.reason, "diverged") {
+		t.Errorf("reason = %q, want the divergence reported first", m.shelve.reason)
+	}
+	if len(m.shelve.files) != 0 {
+		t.Errorf("files = %+v, want the collision list withheld — it is not what stopped this", m.shelve.files)
+	}
+}
+
+func TestUpdateNamesBothRefsWhenNoRemoteOwnsTheUpstream(t *testing.T) {
+	// The third answer, kept distinct here as it is at the push: an upstream no
+	// configured remote claims cannot be spelled as a `git pull`, so the halt
+	// names the two refs to reconcile rather than a command Drift is guessing at.
+	m := beginUpdateOn(shelveModel())
+	m = step(m, shelveMsg{step: stepReady})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "elsewhere/abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 2, upBehind: 1, upAhead: 1})
+
+	if strings.Contains(m.shelve.next, "git pull") {
+		t.Errorf("next = %q, want no pull command — Drift does not know the remote", m.shelve.next)
+	}
+	if !strings.Contains(m.shelve.next, "elsewhere/abc-1-perf") {
+		t.Errorf("next = %q, want the ref to reconcile against named", m.shelve.next)
+	}
+}
+
+func TestUpdateUnwindsWhenTheUpstreamDivergesMidSequence(t *testing.T) {
+	// stepHolds refuses a divergence for free, so reaching stepUpstream means
+	// someone pushed in between. The wording has to be the same halt; only what
+	// was left behind differs, and by then the stash and the checkout are.
+	m := beginUpdateOn(updateModel())
+	m = step(m, shelveMsg{step: stepReady, dirty: true})
+	m = step(m, shelveMsg{step: stepPull, upstreamRef: "origin/abc-1-perf", pushRemote: "origin", pushBranch: "abc-1-perf"})
+	m = step(m, shelveMsg{step: stepHolds, behind: 2})
+	m = step(m, shelveMsg{step: stepStash, stashOID: "abc123"})
+	m = step(m, shelveMsg{step: stepSwitch})
+	m = step(m, shelveMsg{step: stepUpstream, diverged: true})
+
+	if m.shelve.outcome != shelveReverted {
+		t.Fatalf("outcome = %v (%s), want shelveReverted — the sequence was past the stash",
+			m.shelve.outcome, m.shelve.reason)
+	}
+	if !strings.Contains(m.shelve.reason, "cannot fast-forward") {
+		t.Errorf("reason = %q, want the same wording the read-only refusal uses", m.shelve.reason)
+	}
+	if m.shelve.step != stepUpstream {
+		t.Errorf("stopped at %v, want stepUpstream — the target must not have been merged", m.shelve.step)
+	}
+}
+
 func TestUpdateRejectedPushIsAHandoffNotAFailure(t *testing.T) {
 	// The rejection means someone else's commit is in the way — the class of thing
 	// Drift stops and hands back. The branch is left updated and merged locally;
@@ -1289,6 +1382,52 @@ func TestUpdateEndToEndPutsYouBackWhenTheMergeConflicts(t *testing.T) {
 	}
 	if ab, err := r.AheadBehind(ctx, "feature", "origin/main"); err != nil || ab.Behind == 0 {
 		t.Errorf("feature vs origin/main = %+v, %v; want the merge undone", ab, err)
+	}
+}
+
+func TestUpdateEndToEndHandsBackADivergedBranchAndPublishesNothing(t *testing.T) {
+	// Roadmap 19c, driven for real. The branch and its own remote have both moved,
+	// so there is no fast-forward — and `u` will not manufacture one by merging the
+	// branch with itself on the way to a push. It refuses on the read-only head,
+	// which is what makes "nothing was touched" true of the remote as well as of
+	// the working tree. (The stale-but-not-diverged case, which this step exists
+	// for, is carried all the way by the end-to-end test above.)
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	r := git.New(dir)
+	ctx := context.Background()
+
+	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
+	pushToOrigin(t, origin, "feature", "theirs.txt", "from my other machine\n")
+
+	// And a commit of our own on feature, which is what makes it a divergence
+	// rather than staleness.
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	writeCommit(t, dir, "mine.txt", "mine\n")
+	rungit(t, dir, "checkout", "--quiet", "main")
+
+	before := gitOut(t, origin, "rev-parse", "feature")
+	head := gitOut(t, dir, "rev-parse", "feature")
+
+	m := runUpdate(t, updateRepoModel(t, dir))
+
+	if m.shelve.outcome != shelveRefused {
+		t.Fatalf("outcome = %v (%s), want shelveRefused", m.shelve.outcome, m.shelve.reason)
+	}
+	if after := gitOut(t, origin, "rev-parse", "feature"); after != before {
+		t.Errorf("origin/feature moved from %s to %s — a refused sequence publishes nothing", before, after)
+	}
+	if after := gitOut(t, dir, "rev-parse", "feature"); after != head {
+		t.Errorf("feature moved from %s to %s — no merge commit of the branch with itself", head, after)
+	}
+	if got, _ := r.CurrentBranch(ctx); got != "main" {
+		t.Errorf("left the user on %q, want main — the refusal never left", got)
+	}
+	if oid, err := r.StashRef(ctx); err != nil || oid != "" {
+		t.Errorf("StashRef() = %q, %v; want no stash — the refusal is on the read-only head", oid, err)
+	}
+	if !strings.Contains(m.shelve.next, "git pull --rebase=false origin feature") {
+		t.Errorf("next = %q, want the command that reconciles the branch with its remote", m.shelve.next)
 	}
 }
 

@@ -210,6 +210,31 @@ func (r *Repo) Merge(ctx context.Context, ref string) ([]string, error) {
 	return nil, nil
 }
 
+// MergeFF catches the checked-out branch up to ref by fast-forward alone,
+// reporting diverged=true when no fast-forward exists because both have moved.
+//
+// The narrower sibling of Merge, and it exists for one caller: a branch's *own*
+// upstream. Merging there is the branch merged with itself, which is a commit
+// nobody asked for — so the most this may do is move the branch to where its own
+// remote already is, and a real divergence is handed back (roadmap 19c,
+// docs/specs/shelve-sequence.md). A merely stale branch still catches up, which
+// is the whole reason the step exists.
+//
+// The refusal is told from a real failure by asking the refs, not by reading
+// git's message text — the same rule as Merge probing the unmerged index. A
+// fast-forward is impossible exactly when each side holds commits the other does
+// not; a ref that is simply *behind* HEAD makes --ff-only succeed as
+// already-up-to-date and never reaches the probe.
+func (r *Repo) MergeFF(ctx context.Context, ref string) (diverged bool, err error) {
+	if _, mergeErr := r.run(ctx, "merge", "--ff-only", ref); mergeErr != nil {
+		if ab, abErr := r.AheadBehind(ctx, "HEAD", ref); abErr == nil && ab.Ahead > 0 && ab.Behind > 0 {
+			return true, nil
+		}
+		return false, mergeErr
+	}
+	return false, nil
+}
+
 // MergeAbort restores the pre-merge state after a conflict.
 func (r *Repo) MergeAbort(ctx context.Context) error {
 	_, err := r.run(ctx, "merge", "--abort")
