@@ -883,6 +883,11 @@ is; link its spec/ADR once one exists.
       would just have moved the surprise earlier. Now that `TestMain` pins
       `GIT_CONFIG_NOSYSTEM` (see `CONTEXT.md`'s Testing row), local and CI answer the same
       question, so a push job that passes means something on every machine
+    - **A push job only guards what is pushed**, found on v0.4.0. Area 19's seven commits
+      were still local when the release was prepared, so the only green run was the commit
+      that *added* CI and `release.yml` would once again have been the first CI to execute
+      the work being tagged — this area's own failure, one step to the left. Cutting a
+      release is push, green on the exact commit, then tag
 
 19. ✅ **`u` published a merge nobody agreed to, onto a target that named a feature
     branch.** Raised by dogfooding v0.3.0 on a work repo, and it is the same kind of finding
