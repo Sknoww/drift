@@ -893,8 +893,9 @@ is; link its spec/ADR once one exists.
       incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
       unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
       visible at rest and at the one moment it can still be stopped for free.
-      **19e's showing half has shipped; 19a is next**, and it is the one that would have
-      stopped the incident outright
+      **19e's showing half and 19a have both shipped**, so a wrong target is now visible
+      on its own screen *and* named on the way past. What is left is 19e's editing half,
+      19b, 19c and 19d — none of which are what the incident needed first
     - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
       the work repo's reflog and its `config.json`. The roadmap's reading was right in every
       part — merging a branch into a source whose MR *targets* that branch cannot add commits
@@ -951,42 +952,72 @@ is; link its spec/ADR once one exists.
         that ticket differ only in that tail and the dashboard truncates tails (`fit` keeps the head,
         `internal/ui/columns.go:40`), which made a crossed pairing look like the obvious
         cause. It was not this bug — but the truncation is real and 19e carries it
-    - ⏳ **19a — the gate asks about the stash, and the step that needed gating is the
-      push.** `stepReady` opens the confirmation on `leaves() && dirty`
-      (`internal/ui/shelve.go:330`, predicate at `:104`), so it fires only when `u` has to
-      leave a branch with uncommitted work on it. That was 17b's question and 17b answered
-      it correctly — being stashed without having agreed to it is a surprise. But it means
-      a clean tree, or a branch you are already standing on, takes the entire sequence
-      *including the push* on one keypress with nothing shown first. The two are not
-      comparable risks: a stash is recoverable and local, while the push is the only step
-      in the sequence with no unwind and the only one other people can see. 17a already
-      settled that a rejected push is a handoff rather than a force; this is the same
-      argument one step earlier — the sequence should not reach the remote on a keypress
-      that was never told it would
-      - **The prompt has to name the refs, which is what also closes the hole above.**
-        17b's overlay states the plan in run order, and the same overlay carrying "merging
-        `<targetRef>` · publishing to `<remote>/<branch>`" makes a mispaired target visible
-        at the one moment it can still be stopped for free. That argues for widening the
-        existing prompt rather than adding a second one — one overlay, one place the plan
-        is stated, and the `?`-consumes-its-key rule keeps working
-      - ✅ **Validated by the diagnosis, and sharpened by it: the overlay must name the
-        `Ref`, never the `Key`.** An overlay reading `merging origin/fix/PSOT-22114-…/mvp-3`
+    - ✅ **19a — the gate asked about the stash, and the step that needed gating was the
+      push.** `stepReady` opened the confirmation on `leaves() && dirty`, so it fired only
+      when `u` had to leave a branch with uncommitted work on it. That was 17b's question
+      and 17b answered it correctly — being stashed without having agreed to it is a
+      surprise. But it meant a clean tree, or a branch you were already standing on, took
+      the entire sequence *including the push* on one keypress with nothing shown first.
+      The two are not comparable risks: a stash is recoverable and local, while the push is
+      the only step in the sequence with no unwind and the only one other people can see.
+      17a already settled that a rejected push is a handoff rather than a force; this is
+      the same argument one step earlier — the sequence must not reach the remote on a
+      keypress that was never told it would. Shipped as a widening of 17b's overlay rather
+      than a second prompt: one overlay, one place the plan is stated, and the
+      `?`-consumes-its-key rule keeps working unchanged
+      - ✅ **Settled: it fires on every `u`.** The open question turned out to be
+        near-decided by 17b's placement, which was never open. "Only when it will publish"
+        is not knowable at step 0 — whether there is anything to send is `stepHolds`'
+        answer, after both fetches — so the quieter rule could only be had by *predicting*
+        it from the dashboard's last sweep, which is the class of claim this package
+        refuses everywhere else and which a stale sweep gets wrong in the direction that
+        skips the prompt; or by moving the question into the middle of the run, which 17b
+        ruled out on the grounds that a one-keypress verb must not stop for input halfway.
+        Every-time is also the rule whose *absence* carries nothing to learn. The accepted
+        cost is real and small: `u` on a clean tree is now `u` then `y`
+      - ✅ **The prompt names the refs, which is what also closed the hole above.** The
+        overlay states the plan in run order and now carries `merge in <targetRef>` and
+        `publish it to <remote>/<branch>`, so a mispaired target is visible at the one
+        moment it can still be stopped for free
+      - ✅ **Validated by the diagnosis, and sharpened by it: the overlay names the
+        `Ref`, never the `Key`.** An overlay reading `merge in origin/fix/PSOT-22114-…/mvp-3`
         would have stopped the incident dead, for free, before anything was published. One
-        reading `merging mvp-3` would have printed the key — which was correct, which is
+        reading `merge in mvp-3` would have printed the key — which was correct, which is
         what made the target look right on the dashboard, and which was the whole of the
-        lie. The bullet above already says `<targetRef>`; this pins *why* that is the
-        load-bearing word rather than an arbitrary choice between two strings
-      - **Truncating the ref needs care, and the head is the half that carries the
-        warning.** `fit` keeps the head and ellipsises the tail, which is right here —
-        `origin/fix/PSOT-22114-…` is the giveaway and the tail `/mvp-3` is the misleading
-        part. Worth stating so nobody later "improves" it into a middle-elide that shows
-        `origin/fix/…/mvp-3` and hides the one thing worth reading
-      - **Open: does the widened gate fire on every `u`, or only when it will push?**
-        Every-time is the simpler rule and the easier one to trust. Only-when-publishing
-        is quieter but makes the prompt's absence carry meaning, which is a thing a user
-        has to learn rather than read. Placement is not open — 17b settled step 0, and the
-        reasoning (the answer cannot change once fetches land; a one-keypress verb must not
-        stop for input in the middle) holds for this question too
+        lie. That is why the ref is the load-bearing word rather than an arbitrary choice
+        between two strings, and it is pinned by a test
+      - ✅ **The ref loses its tail, and that end is a decision rather than a detail.**
+        `boundRef` sizes it against what the line has left and `fit` ellipsises at the tail
+        — `origin/fix/PSOT-22114-…` is the giveaway and the trailing `/mvp-3` is the
+        misleading part. Pinned by a test asserting *both* halves, since the obvious later
+        "improvement" is a middle-elide showing `origin/…/mvp-3`, which hides the one thing
+        worth reading. The ref is also placed **last** on its line, so the blind
+        `clipPanelLine` backstop underneath cuts the same end the bound does
+      - ✅ **The push destination is named too, on a hazard the spec already carried.** A
+        branch may track an upstream under a different name, and publishing the right
+        commits to the wrong ref is the failure a bare push hides. It comes from the
+        sweep's `Upstreams`, already read for 17b's `⇡` and now keeping the ref rather than
+        only the count. Three answers kept distinct exactly as they are on the row: a known
+        ref, a branch that has never been published (no destination *exists* yet), and
+        nothing known — which states the branch's upstream rather than guessing at one
+        - **What the plan states and what the push acts on are deliberately two fields.**
+          `planUpstream` is what the last sweep saw and is the overlay's alone;
+          `upstreamRef` is what git reports at `stepPull` and is what gets pushed. A plan
+          may be stated from what was known; only git's answer may be acted on
+      - ✅ **The plan states only what this run will do.** Opening on clean trees and on
+        the branch you are standing on means the old fixed three-line script would have
+        promised a stash that never happens. The steps are built and numbered from `dirty`
+        and `leaves()`, and the closing question matches the help line's `y` so the two
+        cannot disagree. A listed step that will not run is the same class of lie as a step
+        that runs unlisted
+      - ✅ **A conditional glyph took the "no glyphs, no legend" rule inside a screen.**
+        19e established it between screens; the prompt draws `●` only when there is work to
+        stash, so on a clean plan the `?` overlay's Glyphs heading would have promised an
+        explanation of something not on screen. Same carve-out, one level down (DESIGN.md §3)
+      - ✅ **`s` still never asks, and that is an argument rather than an omission.** It
+        publishes nothing, so every step it takes is local and covered by the same unwind
+        every halt already runs. Pinned, so the widening cannot creep across the split 17a
+        spent itself establishing
     - ⏳ **19b — a pair's target cannot be changed once it is made.** The target picker
       exists but is reachable only from the pairing checklist inside the add flow
       (`ActionOpenPicker`, handled at `internal/ui/addflow.go:186`); the dashboard keymap

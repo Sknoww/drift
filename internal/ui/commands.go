@@ -30,6 +30,15 @@ type branchStatus struct {
 	unpublished int
 	noUpstream  bool
 
+	// upstreamRef is where that push would land, kept for `u`'s plan overlay
+	// (roadmap 19a): the prompt names the destination before anything runs, and a
+	// branch may track an upstream under a *different* name — publishing the right
+	// commits to the wrong ref is the failure a bare push hides. Deliberately not
+	// the same field the sequence pushes to: this is what the last sweep saw,
+	// while stepPull asks git. A plan may be stated from what was known; the push
+	// acts only on what git reported.
+	upstreamRef string
+
 	// unmergeable is the paths that changed on both this branch and its target
 	// since they diverged AND that Git must never merge (area 5). Empty unless the
 	// target moved past the merge base (behind>0), since only then is there an
@@ -339,7 +348,7 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 				continue
 			}
 			st := branchStatus{ahead: ab.Ahead, behind: ab.Behind, known: true}
-			st.unpublished, st.noUpstream = publishState(ctx, repo, upstreams, b.Branch)
+			st.unpublished, st.noUpstream, st.upstreamRef = publishState(ctx, repo, upstreams, b.Branch)
 			// The target only has an incoming change to collide with when it moved
 			// past the merge base — so gate detection on behind>0 and reuse the
 			// count we already have. A detection error degrades the marker only,
@@ -372,19 +381,23 @@ func sweep(ctx context.Context, repo *git.Repo, cfg store.Config, tickets []stor
 // Anything that fails degrades to "no claim". A missing remote-tracking ref
 // (the branch was deleted on the remote while config still names it) is the
 // realistic case, and a silent blank beats a signal that would be a guess.
-func publishState(ctx context.Context, repo *git.Repo, upstreams map[string]string, branch string) (unpublished int, noUpstream bool) {
+func publishState(ctx context.Context, repo *git.Repo, upstreams map[string]string, branch string) (unpublished int, noUpstream bool, upstreamRef string) {
 	ref, local := upstreams[branch]
 	switch {
 	case !local:
-		return 0, false
+		return 0, false, ""
 	case ref == "":
-		return 0, true
+		return 0, true, ""
 	}
+	// The ref rides out even when the count does not: a branch whose
+	// remote-tracking ref has gone missing makes no ahead/behind claim, but where
+	// a push would be aimed is still known, and `u`'s plan is the one place that
+	// is worth saying (roadmap 19a).
 	ab, err := repo.AheadBehind(ctx, branch, ref)
 	if err != nil {
-		return 0, false
+		return 0, false, ref
 	}
-	return ab.Ahead, false
+	return ab.Ahead, false, ref
 }
 
 // detectUnmergeable resolves one branch's unmergeable collisions against its

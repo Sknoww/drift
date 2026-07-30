@@ -426,15 +426,24 @@ func driveChain(t *testing.T, m Model, cmd tea.Cmd) Model {
 	return m
 }
 
-// answerStashPrompt presses y and runs the rest of the chain, the way a user who
-// agreed to the plan does.
-func answerStashPrompt(t *testing.T, m Model) Model {
+// answerPlanPrompt presses y and runs the rest of the chain, the way a user who
+// agreed to the plan does. Since 19a every `u` stops here, so every end-to-end
+// update goes through it — which is the point: a driver that answered silently
+// would be testing a sequence nobody agreed to.
+func answerPlanPrompt(t *testing.T, m Model) Model {
 	t.Helper()
 	if !m.shelve.confirm {
-		t.Fatal("expected the sequence to be waiting on the stash prompt")
+		t.Fatalf("expected the sequence to be waiting on the plan prompt (outcome %v, %s)",
+			m.shelve.outcome, m.shelve.reason)
 	}
 	next, cmd := m.dispatch(ActionConfirm)
 	return driveChain(t, next.(Model), cmd)
+}
+
+// runUpdate is the whole of `u` end to end: begin, agree to the plan, run.
+func runUpdate(t *testing.T, m Model) Model {
+	t.Helper()
+	return answerPlanPrompt(t, runChainAs(t, m, modeUpdate))
 }
 
 // shelveResult runs a Cmd and digs the sequence's own message out of it. The
@@ -692,10 +701,10 @@ func TestShelveStillRefusesAnotherBranchAndPointsAtUpdate(t *testing.T) {
 }
 
 func TestUpdateAsksBeforeStashingWorkOnTheBranchItLeaves(t *testing.T) {
-	// The one case `u` asks about. Being blocked by unrelated dirt is the friction
-	// the verb exists to remove, so this is a prompt and not a refusal — but being
-	// stashed without having agreed to it is the surprise the prompt exists to
-	// prevent. It is taken at stepReady, while everything is still read-only.
+	// 17b's case: being stashed without having agreed to it is the surprise the
+	// prompt exists to prevent. Being blocked by unrelated dirt is the friction the
+	// verb exists to remove, so this is a prompt and not a refusal. It is taken at
+	// stepReady, while everything is still read-only.
 	m := beginUpdateOn(updateModel())
 	m = step(m, shelveMsg{step: stepReady, dirty: true})
 
@@ -710,6 +719,60 @@ func TestUpdateAsksBeforeStashingWorkOnTheBranchItLeaves(t *testing.T) {
 	}
 	if !m.shelve.cancellable {
 		t.Error("declining must still be a cancel that has nothing to undo")
+	}
+}
+
+func TestUpdateAlwaysAsksBeforeItCanReachTheRemote(t *testing.T) {
+	// Roadmap 19a. 17b gated the stash, which is recoverable and local; the step
+	// that needed gating is the push — the only one with no unwind and the only one
+	// other people can see. `u` always intends to reach the remote, so it always
+	// asks, and the two cases 17b let straight through are the ones this covers.
+	//
+	// Whether there will turn out to be anything to send is not knowable until the
+	// fetches land, so "only when it publishes" could only ever be predicted here —
+	// which is the claim this package refuses to make anywhere else.
+	tests := []struct {
+		name  string
+		model Model
+		dirty bool
+	}{
+		{"clean tree, crossing a branch boundary", updateModel(), false},
+		{"dirty tree, but no boundary to cross", shelveModel(), true},
+		{"clean tree, already on the branch", shelveModel(), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := beginUpdateOn(tc.model)
+			m = step(m, shelveMsg{step: stepReady, dirty: tc.dirty})
+
+			if !m.shelve.confirm {
+				t.Fatal("u took the whole sequence, push included, on one keypress")
+			}
+			if m.shelve.step != stepReady {
+				t.Errorf("asked at %v, want stepReady — nothing may have been touched yet", m.shelve.step)
+			}
+			if m.shelve.dirty != tc.dirty {
+				t.Errorf("dirty = %v, want %v — it settles the wording, so it has to survive",
+					m.shelve.dirty, tc.dirty)
+			}
+		})
+	}
+}
+
+func TestShelveNeverAsks(t *testing.T) {
+	// `s` publishes nothing, so every step it takes is local and undone by the same
+	// unwind every halt already runs. There is nothing here the push argument
+	// applies to, and a verb that has shipped is a verb someone has.
+	for _, dirty := range []bool{false, true} {
+		m := begin(shelveModel())
+		m = step(m, shelveMsg{step: stepReady, dirty: dirty})
+
+		if m.shelve.confirm {
+			t.Fatalf("dirty=%v: s asked permission for a sequence that publishes nothing", dirty)
+		}
+		if m.shelve.step != stepPull {
+			t.Errorf("dirty=%v: step = %v, want the sequence to have carried straight on", dirty, m.shelve.step)
+		}
 	}
 }
 
@@ -780,27 +843,121 @@ func TestAcceptingTheStashPromptRunsTheSameSequenceAsEveryOtherPath(t *testing.T
 	}
 }
 
-func TestNoStashPromptWhenThereIsNothingToWarnAbout(t *testing.T) {
-	// Two of the three cases need no prompt at all, and conflating them with the
-	// third is what made cross-branch work look harder than it is.
+func TestThePlanSaysOnlyWhatTheSequenceWillActuallyDo(t *testing.T) {
+	// The prompt now opens on cases that stash nothing and cross nothing, so the
+	// plan is built from what is true rather than from one fixed script. A step
+	// listed that will not run is the same class of lie as a step that runs unlisted.
 	tests := []struct {
-		name  string
-		model Model
-		dirty bool
+		name       string
+		model      Model
+		dirty      bool
+		want, dont []string
 	}{
-		{"clean tree, crossing a branch boundary", updateModel(), false},
-		{"dirty tree, but no boundary to cross", shelveModel(), true},
+		{
+			name: "clean tree, already on the branch", model: shelveModel(), dirty: false,
+			want: []string{"merge in", "publish it"},
+			dont: []string{"stash your work", "put your work back", "check out", "return to",
+				"uncommitted work", "Stash it and go?"},
+		},
+		{
+			name: "clean tree, crossing a boundary", model: updateModel(), dirty: false,
+			want: []string{"check out abc-1-perf", "return to somewhere-else", "Run it?"},
+			dont: []string{"stash your work", "put your work back", "uncommitted work"},
+		},
+		{
+			name: "dirty tree, no boundary to cross", model: shelveModel(), dirty: true,
+			want: []string{"has uncommitted work.", "stash your work on abc-1-perf",
+				"put your work back", "Stash it and go?"},
+			dont: []string{"check out", "return to", "isn't checked out"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := beginUpdateOn(tc.model)
+			m.width, m.height = 100, 40
 			m = step(m, shelveMsg{step: stepReady, dirty: tc.dirty})
 
-			if m.shelve.confirm {
-				t.Fatal("asked permission for something there is nothing to warn about")
+			view := m.View()
+			for _, want := range tc.want {
+				if !strings.Contains(view, want) {
+					t.Errorf("the plan never says %q:\n%s", want, view)
+				}
 			}
-			if m.shelve.step != stepPull {
-				t.Errorf("step = %v, want the sequence to have carried straight on", m.shelve.step)
+			for _, dont := range tc.dont {
+				if strings.Contains(view, dont) {
+					t.Errorf("the plan claims %q, which this run will not do:\n%s", dont, view)
+				}
+			}
+		})
+	}
+}
+
+func TestThePlanNamesTheTargetRefAndNeverOnlyItsKey(t *testing.T) {
+	// The whole of roadmap 19a, in one assertion. On the work repo the target key
+	// read `mvp-3` and was *correct*; the ref behind it was a colleague's ticket
+	// branch, and one keypress published a merge of it. A prompt reprinting the key
+	// would have reprinted the lie — the ref is the load-bearing word.
+	m := beginUpdateOn(updateModel())
+	m.width, m.height = 120, 40
+	m.shelve.targetKey = "mvp-3"
+	m.shelve.targetRef = "origin/fix/PSOT-22114-PickHistory/mvp-3"
+	m = step(m, shelveMsg{step: stepReady})
+
+	view := m.View()
+	if !strings.Contains(view, "merge in origin/fix/PSOT-22114-PickHistory/mvp-3") {
+		t.Errorf("the plan does not name the ref being merged:\n%s", view)
+	}
+}
+
+func TestALongTargetRefLosesItsTailAndKeepsItsHead(t *testing.T) {
+	// `origin/fix/PSOT-22114-…` is what gives a wrong target away; the trailing
+	// `/mvp-3` is what made it look right. So the ref ellipsises at its tail, and
+	// this is pinned because the obvious "improvement" is a middle-elide that shows
+	// `origin/…/mvp-3` and hides the one half worth reading (roadmap 19a, 19e).
+	m := beginUpdateOn(updateModel())
+	m.width, m.height = minTerminalWidth, 24
+	m.shelve.targetRef = "origin/fix/PSOT-22114-PickHistory-API-response-for-audit/mvp-3"
+	m = step(m, shelveMsg{step: stepReady})
+
+	view := m.View()
+	if !strings.Contains(view, "merge in origin/fix/PSOT-2") {
+		t.Errorf("the ref's head was cut; it is the half that gives a wrong target away:\n%s", view)
+	}
+	if strings.Contains(view, "/mvp-3") {
+		t.Errorf("the misleading tail survived, so the ref was elided in the middle:\n%s", view)
+	}
+}
+
+func TestThePlanNamesWhereThePushWillLand(t *testing.T) {
+	// A branch may track an upstream under a different name, and publishing the
+	// right commits to the wrong ref is the failure a bare push hides. Three
+	// answers, kept distinct here exactly as they are on the row and at the push.
+	tests := []struct {
+		name       string
+		st         branchStatus
+		want, dont string
+	}{
+		{"a known upstream", branchStatus{upstreamRef: "origin/renamed-on-the-remote"},
+			"publish it to origin/renamed-on-the-remote", ""},
+		{"never published", branchStatus{noUpstream: true},
+			"no upstream to publish to yet", "publish it to"},
+		{"nothing known yet", branchStatus{},
+			"publish it to its upstream", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := updateModel()
+			m.width, m.height = 100, 40
+			m.status["abc-1-perf"] = tc.st
+			m = beginUpdateOn(m)
+			m = step(m, shelveMsg{step: stepReady})
+
+			view := m.View()
+			if !strings.Contains(view, tc.want) {
+				t.Errorf("the plan never says %q:\n%s", tc.want, view)
+			}
+			if tc.dont != "" && strings.Contains(view, tc.dont) {
+				t.Errorf("the plan claims %q for a branch that has no upstream:\n%s", tc.dont, view)
 			}
 		})
 	}
@@ -818,7 +975,7 @@ func TestHelpOverTheStashPromptCannotAnswerIt(t *testing.T) {
 	if !m.showHelp {
 		t.Fatal("? did not open the help over the prompt")
 	}
-	if !strings.Contains(m.View(), "stash confirmation") {
+	if !strings.Contains(m.View(), "update confirmation") {
 		t.Errorf("the help names the wrong screen:\n%s", m.View())
 	}
 
@@ -840,19 +997,26 @@ func TestStashPromptFitsTheTerminalItIsDrawnInto(t *testing.T) {
 	m := beginUpdateOn(updateModel())
 	m.shelve.from = "release/2024-q4-maintenance-and-then-some"
 	m.shelve.branch = "feature/ABC-1234-a-name-nobody-would-type-twice"
+	m.shelve.targetRef = "origin/fix/PSOT-22114-PickHistory-API-response-for-audit/mvp-3"
+	m.shelve.planUpstream = "origin/feature/ABC-1234-a-name-nobody-would-type-twice"
 
-	for _, size := range [][2]int{{minTerminalWidth, 24}, {80, 24}, {100, 30}} {
-		m.width, m.height = size[0], size[1]
-		next := m
-		next = step(next, shelveMsg{step: stepReady, dirty: true})
+	// The dirty plan is the longest, but 19a's clean one is the one that grew a
+	// step list, so both shapes are measured.
+	for _, dirty := range []bool{true, false} {
+		for _, size := range [][2]int{{minTerminalWidth, 24}, {80, 24}, {100, 30}} {
+			m.width, m.height = size[0], size[1]
+			next := step(m, shelveMsg{step: stepReady, dirty: dirty})
 
-		lines := strings.Split(next.View(), "\n")
-		if len(lines) > size[1] {
-			t.Errorf("%dx%d: the frame is %d lines and runs off the top", size[0], size[1], len(lines))
-		}
-		for _, l := range lines {
-			if w := lipgloss.Width(l); w > size[0] {
-				t.Errorf("%dx%d: a line is %d cells wide and wraps: %q", size[0], size[1], w, l)
+			lines := strings.Split(next.View(), "\n")
+			if len(lines) > size[1] {
+				t.Errorf("dirty=%v %dx%d: the frame is %d lines and runs off the top",
+					dirty, size[0], size[1], len(lines))
+			}
+			for _, l := range lines {
+				if w := lipgloss.Width(l); w > size[0] {
+					t.Errorf("dirty=%v %dx%d: a line is %d cells wide and wraps: %q",
+						dirty, size[0], size[1], w, l)
+				}
 			}
 		}
 	}
@@ -1081,7 +1245,7 @@ func TestUpdateEndToEndCarriesAnotherBranchAllTheWay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
+	m := runUpdate(t, updateRepoModel(t, dir))
 
 	if m.shelve.outcome != shelveLanded {
 		t.Fatalf("outcome = %v (%s / %s), want shelveLanded", m.shelve.outcome, m.shelve.reason, m.shelve.publish)
@@ -1112,7 +1276,7 @@ func TestUpdateEndToEndPutsYouBackWhenTheMergeConflicts(t *testing.T) {
 	pushToOrigin(t, origin, "main", "app.conf", "level=warn\n")
 	pushToOrigin(t, origin, "feature", "app.conf", "level=trace\n")
 
-	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
+	m := runUpdate(t, updateRepoModel(t, dir))
 
 	if m.shelve.outcome != shelveReverted {
 		t.Fatalf("outcome = %v (%s), want shelveReverted", m.shelve.outcome, m.shelve.reason)
@@ -1157,6 +1321,35 @@ func TestUpdateEndToEndWaitsOnTheDirtyTreeBeforeTouchingAnything(t *testing.T) {
 	}
 }
 
+func TestUpdateEndToEndReachesNoRemoteBeforeItIsAnswered(t *testing.T) {
+	// Roadmap 19a, driven for real and on the case 17b let straight through: a
+	// clean tree. The push is the only step with no unwind and the only one other
+	// people can see, so an unanswered prompt must leave the remote exactly as it
+	// found it — not merely the working tree.
+	origin := updateOrigin(t)
+	dir := updateClone(t, origin)
+	pushToOrigin(t, origin, "main", "incoming.txt", "from the target\n")
+
+	rungit(t, dir, "checkout", "--quiet", "feature")
+	writeCommit(t, dir, "mine.txt", "mine\n")
+	rungit(t, dir, "checkout", "--quiet", "main")
+
+	before := gitOut(t, origin, "rev-parse", "feature")
+
+	m := runChainAs(t, updateRepoModel(t, dir), modeUpdate)
+
+	if !m.shelve.confirm {
+		t.Fatalf("outcome = %v (%s), want a clean tree to wait on the prompt too",
+			m.shelve.outcome, m.shelve.reason)
+	}
+	if after := gitOut(t, origin, "rev-parse", "feature"); after != before {
+		t.Errorf("origin/feature moved from %s to %s before anyone agreed to publish", before, after)
+	}
+	if got, _ := git.New(dir).CurrentBranch(context.Background()); got != "main" {
+		t.Errorf("the prompt moved the user to %q", got)
+	}
+}
+
 func TestUpdateEndToEndCarriesADirtyTreeAcrossTheBoundaryAndBack(t *testing.T) {
 	// The case 17b unlocks, and the whole of what the prompt is agreeing to: work
 	// is stashed on the branch being left, another branch is carried all the way,
@@ -1173,7 +1366,7 @@ func TestUpdateEndToEndCarriesADirtyTreeAcrossTheBoundaryAndBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := answerStashPrompt(t, runChainAs(t, updateRepoModel(t, dir), modeUpdate))
+	m := runUpdate(t, updateRepoModel(t, dir))
 
 	if m.shelve.outcome != shelveLanded {
 		t.Fatalf("outcome = %v (%s), want shelveLanded", m.shelve.outcome, m.shelve.reason)
@@ -1211,7 +1404,7 @@ func TestUpdateEndToEndPublishesFromTheBranchYouAreOn(t *testing.T) {
 
 	m := updateRepoModel(t, dir)
 	m.current = "feature"
-	m = runChainAs(t, m, modeUpdate)
+	m = runUpdate(t, m)
 
 	if m.shelve.outcome != shelveLanded {
 		t.Fatalf("outcome = %v (%s / %s), want shelveLanded", m.shelve.outcome, m.shelve.reason, m.shelve.publish)

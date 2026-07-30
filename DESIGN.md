@@ -352,7 +352,9 @@ repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not 
     the target moved. **A screen that draws no glyphs gets no legend and no heading** —
     the targets screen is two plain columns, and an empty "Glyphs" section would promise
     an explanation with nothing under it while the dashboard's would explain signals
-    that are not on the screen you are on.
+    that are not on the screen you are on. The same carve-out fires *within* a screen
+    where a glyph is conditional: `u`'s plan prompt draws `●` only when there is
+    uncommitted work to stash, and since 19a it opens on clean trees too.
   - Not offered on the ID-entry screen (every key there is text) or inside the target
     picker / declare overlays (momentary choice steps with their own one-line help).
 - **Local-only list** (area 6) ✅ — a first-class screen (`l`), not a footnote, because
@@ -378,26 +380,41 @@ repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not 
   - **Note editor** ✅ — `n` opens an inline field over the list, the same shape as the
     wizard's key rename. The note is the only thing Drift persists about a hold, and it
     answers the question the list exists to answer three weeks later: why is this here?
-- **Stash prompt** (area 17b) ✅ — the one moment `u` asks before it acts: it has to
-  leave a branch that has uncommitted work on it. Drawn in the panel's place, the same
-  mechanism as the declare overlay and the target picker; bound like the delete
-  confirmation (`y`/`enter` · `n`/`esc`), because it is a yes/no question and not a list.
-  - **It names the plan, in run order, rather than asking "are you sure?"** — which
-    branch is being left, that the work is stashed there, that Drift checks the branch
-    out and publishes it, and that it comes back and puts the work down where it picked
-    it up. A prompt that said less would be the same surprise with an extra keystroke.
-    The closing line is the guarantee ADR 0002 kept when it traded away "Drift never
-    checks anything out", and this is the one screen where it has to be taken on trust
-    before it happens — so it is **name-free and bounded**, where the plan above it
-    interpolates branches: a line naming the branch twice measured 79 cells into a
-    76-cell panel at an ordinary 80-column terminal, and the clip cut the sentence
+- **Plan prompt** (area 17b, widened by 19a) ✅ — the moment `u` states what it is about
+  to do and waits. 17b opened it for one case, leaving a branch with uncommitted work on
+  it; 19a made it unconditional on the step that actually needed gating, the push. Drawn
+  in the panel's place, the same mechanism as the declare overlay and the target picker;
+  bound like the delete confirmation (`y`/`enter` · `n`/`esc`), because it is a yes/no
+  question and not a list. `s` never opens it — it publishes nothing.
+  - **It names the plan, in run order, rather than asking "are you sure?"** — the stash,
+    the checkout, the merge, the publish, the return. A prompt that said less would be
+    the same surprise with an extra keystroke.
+  - **It states only what this run will do.** The stash and the return appear when there
+    is work to stash, the checkout when a boundary is crossed, and the `●` line with
+    them. A listed step that will not run is the same class of lie as a step that runs
+    unlisted — and a conditional glyph is why the "no glyphs, no legend" rule now fires
+    within a screen as well as between screens (§3, `?` overlay).
+  - **The ref, never the key** — the one word the whole of 19a rests on. A target's key
+    is a label the user chose and its ref is what gets merged; the dashboard shows the
+    key, so a key reading correctly over the wrong branch is invisible until the merge is
+    published. A ref too long for the line **ellipsises at its tail**:
+    `origin/fix/PSOT-22114-…` is what gives a wrong target away, and the trailing
+    `/mvp-3` is what made it look right, so a middle-elide would hide the half worth
+    reading. The push destination is named on the same argument — an upstream under a
+    different name is exactly the assumption a bare "publish it" would leave standing.
+  - The guarantee line under a dirty plan is what ADR 0002 kept when it traded away
+    "Drift never checks anything out", and this is the one screen where it has to be
+    taken on trust before it happens — so it is **name-free and bounded**, where the plan
+    above it interpolates branches: a line naming the branch twice measured 79 cells into
+    a 76-cell panel at an ordinary 80-column terminal, and the clip cut the sentence
     carrying the guarantee mid-word.
   - **A prompt, not a refusal.** Being blocked by unrelated dirt is the friction `u`
-    exists to remove. A clean tree gets no overlay, and neither does a dirty tree on the
-    branch you are already standing on — there is nothing to warn about in either.
+    exists to remove, and the split between the two dirty cases now settles the *wording*
+    rather than whether it opens at all.
   - The screen does not window (there is no cursor to window around), so its frame is
-    **measured directly** at the width floor and at 80×24, with branch names long enough
-    to be what would overflow. Prose breaks a frame exactly as rows do (§1).
+    **measured directly** at the width floor and at 80×24, in both shapes, with branch
+    names and refs long enough to be what would overflow. Prose breaks a frame exactly as
+    rows do (§1).
 - **Branch row selection** ✅ — the dashboard cursor moves over a **flat list of
   visible rows** (ticket headlines plus each expanded ticket's branch rows), so a
   branch is selectable in its own right — the prerequisite for a per-branch diff (and
@@ -519,13 +536,17 @@ taken it is **refused** with "it stops on its own", because there is no cancelli
 into an undefined middle. Both are the same named action — the screen decides what
 backing out means, exactly as every other screen does.
 
-Stash prompt (area 17b), open over the report before anything runs:
+Plan prompt (area 17b, unconditional since 19a), open over the report before anything
+runs — on every `u`, and never on `s`:
 
 | Key | Action |
 |---|---|
-| `y` / `enter` | Stash it and go |
+| `y` / `enter` | Run it — "stash it and go" when there is work on the tree |
 | `n` / `esc` | Decline — nothing has been touched |
-| `?` | Keys and glyphs for this screen |
+| `?` | Keys for this screen, and `●` when the plan draws one |
+
+The help line's `y` and the prompt's own last line carry the same wording, so the two
+cannot disagree about what is being agreed to.
 
 `q` is deliberately **unbound**, the same as on the delete confirmation: while a yes/no
 is on screen the contract is yes or no, and a key that quietly means a third thing is

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sknoww/drift/internal/git"
 	"github.com/Sknoww/drift/internal/store"
@@ -151,12 +152,35 @@ type shelveState struct {
 	pushBranch  string // the branch's name on that remote, which need not match
 	switched    bool
 
-	// confirm is the stash-plan overlay, open while the user decides (roadmap
-	// 17b). It exists for exactly one case — leaving a branch that has
-	// uncommitted work on it — and it is a *prompt*, not a warning: the machinery
-	// under it is the same machinery every other path uses, and the thing being
-	// agreed to is being stashed at all.
+	// confirm is the plan overlay, open while the user decides. It is a *prompt*,
+	// not a warning: the machinery under it is the same machinery every other path
+	// uses, and what is being agreed to is that the sequence runs at all.
+	//
+	// 17b opened it for one case — leaving a branch with uncommitted work on it —
+	// because being stashed without having agreed to it is a surprise. 19a widened
+	// it to every `u`, on the step that actually needed gating: the push is the
+	// only step in the sequence with no unwind and the only one other people can
+	// see, and a stash is recoverable and local by comparison. `u` always intends
+	// to reach the remote, so it always asks; whether there will turn out to be
+	// anything to send is not knowable until the fetches land, and predicting it
+	// here from the dashboard's last sweep is the kind of claim this package
+	// refuses to make elsewhere.
 	confirm bool
+
+	// dirty is what stepReady found in the working tree, kept because the plan has
+	// to state the stash and the return only when there is work to stash. It
+	// settles the *wording*, never the gate — that is the mode alone.
+	dirty bool
+
+	// planUpstream is where the push will land and planNoUpstream is the third
+	// answer (a branch that has never been published), both as the dashboard's
+	// last sweep saw them. They exist for the overlay and nothing else: naming a
+	// destination is the half of the plan a bare "publish it" would leave the user
+	// to assume, and an upstream under a different name is exactly the assumption
+	// worth breaking. Unknown — an empty ref with no ⊘ — states no destination
+	// rather than a guessed one.
+	planUpstream   string
+	planNoUpstream bool
 
 	step    shelveStep // the step running now, or the one that ended the sequence
 	outcome shelveOutcome
@@ -262,22 +286,29 @@ func (m Model) beginSequence(mode shelveMode) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// What the last sweep knows about where this branch publishes to. Read here,
+	// with the rest of what the plan is stated from, so the overlay never reaches
+	// back into the dashboard's state mid-sequence.
+	st := m.status[br.Branch]
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m.shelve = shelveState{
-		active:      true,
-		seq:         m.shelve.seq + 1,
-		mode:        mode,
-		ticketID:    t.ID,
-		branch:      br.Branch,
-		targetKey:   target.Key,
-		targetRef:   target.Ref,
-		from:        m.current,
-		step:        stepReady,
-		skipped:     make(map[shelveStep]bool),
-		problem:     make(map[shelveStep]bool),
-		ctx:         ctx,
-		cancel:      cancel,
-		cancellable: true,
+		active:         true,
+		seq:            m.shelve.seq + 1,
+		mode:           mode,
+		ticketID:       t.ID,
+		branch:         br.Branch,
+		targetKey:      target.Key,
+		targetRef:      target.Ref,
+		from:           m.current,
+		planUpstream:   st.upstreamRef,
+		planNoUpstream: st.noUpstream,
+		step:           stepReady,
+		skipped:        make(map[shelveStep]bool),
+		problem:        make(map[shelveStep]bool),
+		ctx:            ctx,
+		cancel:         cancel,
+		cancellable:    true,
 	}
 	m.screen = screenShelve
 	m.notice = ""
@@ -314,24 +345,30 @@ func (m Model) applyShelve(msg shelveMsg) (tea.Model, tea.Cmd) {
 	ctx := context.Background() // only the read-only head of the chain is cancellable
 	switch msg.step {
 	case stepReady:
-		// Leaving a branch that has uncommitted work on it: the machinery handles
-		// it — Drift stashes on the branch it leaves and pops on that same branch
-		// when it returns — but being stashed without having agreed to it is a
-		// surprise, so the plan is stated and the user confirms (roadmap 17b).
+		// `u` states its plan and waits, every time. 17b asked about the stash and
+		// answered that correctly; 19a widened it to the step that actually needed
+		// gating — the push, the one step with no unwind and the only one other
+		// people can see. A wrong target is then visible at the one moment it can
+		// still be stopped for free, which is the whole of what the v0.3.0 incident
+		// needed and did not get.
 		//
 		// Asked here, at the last moment before anything at all happens, rather
 		// than once the fetches have narrowed down what there is to do. Two reasons,
-		// and they point the same way. The question is about the user's own
-		// uncommitted work, which is already fully known — nothing a fetch can
-		// return would change the answer. And a verb whose whole promise is one
-		// keypress must not stop for input *in the middle*: press u, press y, walk
-		// away. The cost is a prompt on a sequence that then finds nothing to do,
-		// which ends by saying nothing was touched.
-		if m.shelve.leaves() && msg.dirty {
+		// and they point the same way. What the plan states — which refs, which
+		// remote, whose work is on the tree — is already fully known, and nothing a
+		// fetch can return would change what the user is agreeing to. And a verb
+		// whose whole promise is one keypress must not stop for input *in the
+		// middle*: press u, press y, walk away. The cost is a prompt on a sequence
+		// that then finds nothing to do, which ends by saying nothing was touched.
+		//
+		// `s` gets no prompt and needs none: it publishes nothing, so every step it
+		// takes is local and undone by the same unwind every halt already runs.
+		m.shelve.dirty = msg.dirty
+		if m.shelve.mode == modeUpdate {
 			m.shelve.confirm = true
 			return m, nil
 		}
-		// msg.dirty settles the gate above and nothing else: whether there is
+		// msg.dirty settles the wording above and nothing else: whether there is
 		// anything to *put back* is stepStash's own answer, and marking the steps
 		// from here would be predicting a result git has not given yet.
 		return m.startPull()
@@ -590,9 +627,9 @@ func (s shelveState) stashMessage() string {
 // sequence is running: while the mutating steps run it is refused rather than
 // obeyed, since there is no cancelling into an undefined middle.
 //
-// The stash-plan overlay adds the one place Confirm means anything here. It
-// needs no cancel case of its own: the sequence is still on its read-only head,
-// so declining is exactly the cancel the screen already had, down to the notice
+// The plan overlay adds the one place Confirm means anything here. It needs no
+// cancel case of its own: the sequence is still on its read-only head, so
+// declining is exactly the cancel the screen already had, down to the notice
 // saying nothing was touched.
 func (m Model) dispatchShelve(action Action) (tea.Model, tea.Cmd) {
 	if m.shelve.confirm && action == ActionConfirm {
@@ -963,7 +1000,7 @@ func (m Model) shelveView() string {
 	}
 
 	if s.confirm {
-		return m.screenView(m.confirmStashBody(title), m.shelveHelp())
+		return m.screenView(m.confirmPlanBody(title), m.shelveHelp())
 	}
 
 	lines := []string{
@@ -980,52 +1017,129 @@ func (m Model) shelveView() string {
 	return m.screenView(strings.Join(lines, "\n"), m.shelveHelp())
 }
 
-// confirmStashBody is the stash-plan overlay (roadmap 17b), drawn in the panel's
-// place — the same mechanism as the declare overlay and the target picker.
+// confirmPlanBody is the plan overlay (roadmap 17b, widened by 19a), drawn in the
+// panel's place — the same mechanism as the declare overlay and the target
+// picker.
 //
 // It names the plan in the order the sequence will run it, in the user's own
-// terms: which branch is being left, that the work is stashed, that Drift comes
-// back and puts it back. Being blocked by unrelated dirt is the friction `u`
-// exists to remove, so this is deliberately a prompt and not a refusal — but a
-// prompt that says nothing more than "are you sure?" would be the same surprise
-// with an extra keystroke.
+// terms, and it names the two things nothing else on screen says out loud: the
+// **ref** being merged, and where the push lands. Both are the point. The
+// dashboard shows a target's *key*, which in the v0.3.0 incident read `mvp-3`
+// and was correct — the ref behind it was somebody's ticket branch, and one
+// keypress published a merge of it. An overlay reading `merge in mvp-3` would
+// have reprinted the lie; one reading the ref stops it dead, for free, before
+// anything is published.
 //
-// The last line is the one that answers the question actually being asked, which
-// is not "will this work" but "where does my work end up": it is stashed on the
-// branch it was taken from and popped back on that same branch, on every path
-// including every halt. That is the invariant ADR 0002 kept when it traded away
-// "Drift never checks anything out", and this is the one screen where the user
-// has to take it on trust before it happens.
+// Being blocked is the friction `u` exists to remove, so this is deliberately a
+// prompt and not a refusal — but a prompt that says no more than "are you sure?"
+// would be the same surprise with an extra keystroke.
+//
+// The guarantee at the foot answers the question actually being asked when there
+// is work on the tree, which is not "will this work" but "where does my work end
+// up": it is stashed on the branch it was taken from and popped back on that same
+// branch, on every path including every halt. That is the invariant ADR 0002 kept
+// when it traded away "Drift never checks anything out", and this is the one
+// screen where the user has to take it on trust before it happens.
 //
 // Every line is clipped rather than wrapped, for the reason the help overlay's
 // are: this panel's height is budgeted in lines, and prose that wraps spends
 // lines the budget never costed (DESIGN.md §1).
-func (m Model) confirmStashBody(title string) string {
+func (m Model) confirmPlanBody(title string) string {
 	s := m.shelve
-	lines := []string{
-		m.styles.hint.Render(title),
-		"",
-		m.styles.dirty.Render("  ● " + s.from + " has uncommitted work, and " + s.branch + " isn't checked out."),
-		"",
-		m.styles.help.Render("  Drift will:"),
-		m.styles.help.Render("    1.  stash your work on " + s.from),
-		m.styles.help.Render("    2.  check out " + s.branch + ", update it, and publish it"),
-		m.styles.help.Render("    3.  return to " + s.from + " and put your work back"),
-		"",
-		// Deliberately name-free, unlike the plan above it. A line that interpolated
-		// the branch twice measured 79 cells into a 76-cell panel at the ordinary
-		// 80-column terminal, and clipping cut the sentence that carries the
-		// guarantee mid-word. What is left is bounded, so the point lands whatever
-		// the branches are called and however narrow the terminal gets.
-		m.styles.help.Render("  Your work is stashed and popped on the same branch — it never"),
-		m.styles.help.Render("  crosses a boundary, and every halt unwinds the same way."),
-		"",
-		m.styles.hint.Render("  Stash it and go?  (y/n)"),
+	lines := []string{m.styles.hint.Render(title), ""}
+	if s.dirty {
+		what := "  ● " + s.from + " has uncommitted work."
+		if s.leaves() {
+			what = "  ● " + s.from + " has uncommitted work, and " + s.branch + " isn't checked out."
+		}
+		lines = append(lines, m.styles.dirty.Render(what), "")
 	}
+
+	lines = append(lines, m.styles.help.Render("  Drift will:"))
+	n := 0
+	plan := func(what string) {
+		n++
+		lines = append(lines, m.styles.help.Render(fmt.Sprintf("    %d.  %s", n, what)))
+	}
+	// A step whose variable half is a ref puts it *last*, so the bound below cuts
+	// the ref's tail and never the words around it.
+	planRef := func(verb, ref string) {
+		plan(verb + " " + m.boundRef(fmt.Sprintf("    %d.  %s ", n+1, verb), ref))
+	}
+
+	if s.dirty {
+		plan("stash your work on " + s.from)
+	}
+	if s.leaves() {
+		plan("check out " + s.branch)
+	}
+	planRef("merge in", s.targetRef)
+	switch {
+	case s.planNoUpstream:
+		// The third answer, kept distinct here exactly as it is on the row and at
+		// the push: a branch that has never been published has nowhere to publish
+		// to, and the sequence will say so rather than fail.
+		plan("publish it — there is no upstream to publish to yet")
+	case s.planUpstream != "":
+		planRef("publish it to", s.planUpstream)
+	default:
+		plan("publish it to its upstream")
+	}
+	switch {
+	case s.leaves() && s.dirty:
+		plan("return to " + s.from + " and put your work back")
+	case s.leaves():
+		plan("return to " + s.from)
+	case s.dirty:
+		plan("put your work back")
+	}
+
+	if s.dirty {
+		lines = append(lines, "",
+			// Deliberately name-free, unlike the plan above it. A line that
+			// interpolated the branch twice measured 79 cells into a 76-cell panel at
+			// the ordinary 80-column terminal, and clipping cut the sentence that
+			// carries the guarantee mid-word. What is left is bounded, so the point
+			// lands whatever the branches are called and however narrow the terminal
+			// gets.
+			m.styles.help.Render("  Your work is stashed and popped on the same branch — it never"),
+			m.styles.help.Render("  crosses a boundary, and every halt unwinds the same way."))
+	}
+	lines = append(lines, "", m.styles.hint.Render("  "+planQuestion(s.dirty)+"  (y/n)"))
+
 	for i, l := range lines {
 		lines[i] = clipPanelLine(m.styles, m.width, l)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// planQuestion is the overlay's last line, which names the thing the answer is
+// actually about. With work on the tree that is the stash; without it, the run.
+// It is the same wording as the help line's y, so the two cannot disagree.
+func planQuestion(dirty bool) string {
+	if dirty {
+		return "Stash it and go?"
+	}
+	return "Run it?"
+}
+
+// boundRef renders a ref at the end of a plan line, bounded to what the line has
+// left so a long one ellipsises at its **tail** rather than being cut blind.
+//
+// The end that goes is the decision, not a detail. `origin/fix/PSOT-22114-…` is
+// what gives a wrong target away; the trailing `/mvp-3` is the part that made it
+// look right in the first place. So this must never become a middle-elide that
+// shows `origin/…/mvp-3` and hides the one half worth reading — which is exactly
+// what someone "improving" it would reach for.
+//
+// Before the first WindowSizeMsg the width is unknown, and nothing is bounded
+// against a guess: the ref goes out whole and clipPanelLine is the backstop.
+func (m Model) boundRef(prefix, ref string) string {
+	avail := contentWidth(m.styles, m.width) - lipgloss.Width(prefix)
+	if avail <= 0 {
+		return ref
+	}
+	return strings.TrimRight(fit(ref, avail), " ")
 }
 
 // shelveStepRow draws one step with its state. The steps before the stash are
@@ -1144,7 +1258,11 @@ func (m Model) shelveHelp() string {
 	if m.shelve.confirm {
 		// The two answers are the whole contract while the prompt is up, so they are
 		// what the line must never stop saying — the tail, paid for first (chrome.go).
-		return helpLine(m.styles, m.width, nil, []string{"y stash and go", "n cancel", "? help"})
+		yes := "y run it"
+		if m.shelve.dirty {
+			yes = "y stash and go"
+		}
+		return helpLine(m.styles, m.width, nil, []string{yes, "n cancel", "? help"})
 	}
 	if m.shelve.active && m.shelve.cancellable {
 		return helpLine(m.styles, m.width, nil, []string{"esc cancel", "? help", "q quit"})

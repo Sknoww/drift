@@ -36,6 +36,7 @@ report; what differs is how far each is willing to go.
 | Pulls the target | yes | yes |
 | Pulls the branch's own upstream | no | yes |
 | Pushes | **no** | yes |
+| Asks first | no | **yes, every time** |
 | Leaves you | where you were | where you were |
 
 `s` leaves the branch **ahead of its own remote**, and that is its point, not an
@@ -112,9 +113,8 @@ Checked in this order; the first failure is reported and stops the sequence:
   also earns its keep later: anything the rollback finds in flight is necessarily
   Drift's own.
 - **The branch has a paired target**, and that target resolves to a real ref.
-- **For `u` only: if the tree is dirty *and* the branch is not already checked out, the
-  user confirms.** Not a precondition that can fail — a prompt. See *The dirty tree, and
-  where it splits*.
+- **For `u` only: the user confirms the plan.** Not a precondition that can fail — a
+  prompt, and it is unconditional. See *The plan prompt*.
 
 ## Scope
 
@@ -157,30 +157,68 @@ Conflating these two is what made cross-branch work look harder than it is:
   leaving and pops on that same branch when it returns, so the narrow claim above still
   holds.
 
-The second case **asks first**. Being blocked by unrelated dirt is the friction `u`
-exists to remove, so it is not a refusal — but being stashed without having agreed to it
-is a surprise, and one `y`/`n` is the whole of the difference. A clean tree gets no
-prompt and neither does a dirty tree on the branch you are already standing on: there is
-nothing to warn about in either.
+Neither case is a refusal — being blocked by unrelated dirt is the friction `u` exists to
+remove. What the split decides is the *wording*: the plan states the stash and the return
+only when there is work to stash, and names the branch being left only when one is.
 
-### The stash prompt
+### The plan prompt
+
+**`u` asks every time.** The prompt began as a question about the stash and became a
+question about the whole sequence, because the step that needed gating was the push. A
+stash is recoverable and local; the push is the only step with no unwind and the only one
+other people can see, and 17a had already settled that a rejected push is handed back
+rather than forced. This is that argument one step earlier: the sequence must not reach
+the remote on a keypress that was never told it would.
+
+`s` gets no prompt and needs none. It publishes nothing, so every step it takes is local
+and covered by the same unwind every halt already runs.
 
 An overlay drawn in the panel's place, the same mechanism as the declare overlay and the
 target picker, and bound like the delete confirmation — `y`/`enter` proceed, `n`/`esc`
-decline. It **names the plan in run order** rather than asking "are you sure?": which
-branch is being left, that the work is stashed there, that Drift checks the branch out,
-updates and publishes it, and that it comes back and puts the work down where it picked
-it up. A prompt that said less would be the same surprise with an extra keystroke.
+decline. It **names the plan in run order** rather than asking "are you sure?", and it
+states only what this run will actually do: the stash and the return appear when there is
+work to stash, the checkout when a boundary is crossed. A prompt that said less would be
+the same surprise with an extra keystroke; a prompt that listed a step which will not run
+would be the same lie as a step that runs unlisted.
+
+**It names the target's `Ref`, never its `Key`, and that is the load-bearing word.** A
+key is a label the user chose; the ref is what gets merged. The two are shown together
+nowhere else — the dashboard renders the key — so a key that reads correctly while
+pointing at the wrong branch is invisible right up to the moment the merge is published.
+That is not hypothetical: it is what happened, and an overlay reading
+`merge in origin/fix/PSOT-22114-…/mvp-3` would have stopped it for free. One reading
+`merge in mvp-3` would have reprinted the lie.
+
+A ref too long for the line **ellipsises at its tail**. `origin/fix/PSOT-22114-…` is what
+gives a wrong target away; the trailing `/mvp-3` is what made it look right. A
+middle-elide showing `origin/…/mvp-3` would hide the one half worth reading, so it is
+pinned by a test rather than left to a later "improvement".
+
+The push destination is named for the same reason, from what the last sweep saw: a branch
+may track an upstream under a different name, and publishing the right commits to the
+wrong ref is exactly the failure a bare push hides. A branch that has never been
+published says so instead — the third answer, kept distinct here as it is on the row and
+at the push — and a destination Drift does not know yet is stated as the branch's
+upstream rather than guessed at. What the plan states is what was known; what the push
+acts on is what git reports at step 1b. Those are deliberately not the same value.
 
 Asked at **step 0**, before the fetches, and that placement is the decision:
 
-- The question is about the user's own uncommitted work, which is fully known then.
-  Nothing a fetch returns could change the answer.
+- Everything the plan states — which refs, which remote, whose work is on the tree — is
+  fully known then. Nothing a fetch returns could change what the user is agreeing to.
 - A verb whose promise is one keypress must not stop for input *in the middle*. Press
   `u`, press `y`, walk away — the alternative is a sequence that pauses after a network
   round trip, which is the babysitting this exists to remove.
 - The cost is accepted: a sequence that prompts and then finds nothing to do. It ends by
   saying nothing was touched, which is true.
+
+The same placement rules out gating on *whether there will be anything to publish*.
+That is not knowable until step 2, so asking only when it applies would mean either
+predicting it here from the dashboard's last sweep — the kind of claim this spec refuses
+everywhere else, and one a stale sweep could get wrong in the direction that skips the
+prompt — or moving the question into the middle of the run. It would also make the
+prompt's *absence* carry meaning, which is something a user has to learn rather than
+read. `u` intends to reach the remote, so `u` asks.
 
 Declining is the screen's ordinary cancel — the sequence is still on its read-only head,
 so nothing is stashed, nothing is merged, and there is nothing to undo. Accepting
@@ -238,6 +276,10 @@ live only in the help. `s` leaves `⇡`, `u` clears it. A branch with no upstrea
 renders `⊘`, the third answer the push already treats as distinct from zero. Read once
 per sweep for the whole repo (`Upstreams`), and unpaired with the target: a branch can be
 level with its target and still unpublished.
+
+**Agreed to before it runs.** It is the only step with no unwind and the only one other
+people can see, which is why the plan prompt above is unconditional rather than gated on
+the stash — and why the plan names the destination rather than leaving it assumed.
 
 **Never forced.** A rejection means the branch moved on the remote after the fetch read
 it, which is someone else's commit — exactly the class of thing Drift stops and hands

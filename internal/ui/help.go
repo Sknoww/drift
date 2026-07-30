@@ -174,9 +174,16 @@ func (m Model) glyphLegend() []helpEntry {
 		}
 	}
 	if m.screen == screenShelve && m.shelve.confirm {
-		// The prompt draws exactly one glyph, and the report's three are not on
+		// The prompt draws at most one glyph, and the report's three are not on
 		// screen yet. A legend explains the screen you are on or it teaches the
 		// wrong thing — the same rule that has each glyph drawn in its own colour.
+		//
+		// Since 19a the prompt also opens on a clean tree, where there is no ● to
+		// explain. Nothing to put under the heading means no heading, exactly as on
+		// the targets screen (19e).
+		if !m.shelve.dirty {
+			return nil
+		}
 		return []helpEntry{
 			{s.dirty.Render("●"), "the uncommitted work this is about to stash"},
 		}
@@ -239,7 +246,7 @@ func (m Model) screenName() string {
 		return "local-only changes"
 	case screenShelve:
 		if m.shelve.confirm {
-			return "stash confirmation"
+			return "update confirmation"
 		}
 		// One screen, two verbs: the report names the one that is running, so the
 		// help overlay opened over it does too.

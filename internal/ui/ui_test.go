@@ -753,6 +753,20 @@ func rungit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// gitOut is rungit for the cases that need the answer rather than the effect —
+// reading a ref straight out of a bare origin, where the git wrapper's own calls
+// would be the thing under test rather than the instrument.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func newTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

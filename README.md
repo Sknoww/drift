@@ -143,10 +143,19 @@ want to look at the merge before it goes anywhere. `u` finishes the job and clea
 Nothing is ever force-pushed: a rejected push means someone else's commit is in the way,
 so Drift leaves the branch merged locally and tells you.
 
-If `u` has to leave a branch that has uncommitted work on it, it **asks first** — one
-`y`/`n` naming the plan: which branch is being left, that your work is stashed, and that
-Drift comes back and pops it. Your work is stashed and popped on the same branch, never
-on the one it visits, and that holds on every halt path too. A clean tree gets no prompt.
+`u` **asks first, every time** — one `y`/`n` over the plan, before a single ref is
+touched. It names the steps in run order, and it names the **ref** it is about to merge
+(`origin/release/mvp-3`), not just the target's key, plus where the push will land. That
+matters because a target's key is a label you chose and its ref is what actually gets
+merged: a key reading `mvp-3` pointing at somebody's ticket branch looks perfectly
+correct on the dashboard, and the prompt is where the two are shown together. The push is
+also the one step with no undo and the only one other people see, so it never happens on
+a keypress that wasn't told it would.
+
+When there's uncommitted work on the tree, the plan says where it goes too: stashed on
+the branch being left and popped on that same branch, never on the one Drift visits, and
+that holds on every halt path. `s` never prompts — it publishes nothing, so everything it
+does is local and the same unwind covers it.
 
 **Unmergeable detection** is hybrid. Drift reads git's own declaration via
 `git check-attr merge` — `*.uwe -merge` in a `.gitattributes` — and adds the glob
