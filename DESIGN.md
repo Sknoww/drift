@@ -223,6 +223,40 @@ the home row. "Looks like raw text output" is a bug.
     windowing exists to prevent.
   - A ref whose date git could not report renders an **empty** cell, never a guessed age.
     The column states the one thing it exists to state, or nothing.
+- **A seeded name is the whole name, or no name** ✅ (area 19d) — the wizard seeds a
+  target's key from its ref, and `deriveKey` may only ever hand back the ref's *whole*
+  path after the remote. Put a seeded key back under its remote and it reproduces the ref
+  it came from; a key that cannot be reconstructed names something other than what it
+  points at. Where there is no honest whole-path key to offer, the row is seeded with
+  **nothing** and the user names it (`e`).
+  - **It is the never-guess rule applied to a label rather than to a choice.** The old
+    rule fell back to the ref's last segment past a width threshold, so
+    `origin/fix/PSOT-22114-…/mvp-3` was offered as `mvp-3` — a real main's name on
+    somebody's ticket branch, sorted to the top by recency because a feature branch moves
+    more than a main does. That target's key then read correctly on every dashboard row
+    while its ref pointed at a feature branch: `↓behind` never converged, and one `u`
+    published a merge into an open merge request. A guard against *mistyping* a ref (area
+    4) is no guard against a list offering the wrong ref under the right name.
+  - **Depth decides, then width.** A single-segment path is the ref's name at any length
+    — nothing was dropped to reach it, and the key column bounds it. Only a multi-segment
+    path has a shorter form to be tempted by, so only there does terseness gate the seed
+    (`keySeedWidth`), which keeps `release/2.0` and `hotfix/2.0` distinct rather than
+    collapsing both to `2.0`. Gating on width alone would refuse to name
+    `origin/release-2-stability` — a real main, honestly named — and buy no honesty for it.
+  - **An unnamed row states what it lacks**, in the key column's own place
+    (`name it (e)`): a blank cell reads as a rendering fault. It is quiet until the row is
+    selected and shouts (`⚠`) once it is, because a ref nobody picked is missing nothing —
+    the pairing checklist's grammar exactly, where `⚠ pick a target` appears only on an
+    included candidate. The blocked save then names the **ref**, never the key, on 19a's
+    rule: the key is the string that made the wrong target look right.
+  - **No advisory marker on a deep ref, and that is settled rather than pending.**
+    Flagging is not narrowing and would have been admissible on area 14's distinction, but
+    the only convention-free signal available — a last segment repeating another offered
+    ref's name — is exactly what refusing to seed already neutralises. Keying one off path
+    depth instead would put the same glyph on somebody's ticket branch and on a legitimate
+    deep main (`origin/releases/2024/lts-maintenance`), which Drift cannot tell apart
+    without enforcing a naming convention it has no business enforcing. Branch naming in
+    the repo this came from is per-person, not per-repo.
 - **Status cluster** — per branch: target label · `↓behind ↑ahead` · unpublished ·
   dirty dot · checked-out marker. Fixed order, aligned into columns so the eye scans
   down. The target label is **variable width** — column widths are computed from the

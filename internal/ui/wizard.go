@@ -144,42 +144,91 @@ func (m wizardModel) reveal(idx int) wizardModel {
 	return m
 }
 
-// keySeedWidth is how long a derived key may get before deriveKey stops keeping
-// the whole path. Sized so the multi-segment refs that carry real meaning —
-// release/2.0, hotfix/2.0 — survive intact, while the ones nobody would type do
-// not.
+// keySeedWidth is how terse a *multi-segment* path must be for deriveKey to seed
+// a key from it at all. Sized so the deep refs that carry real meaning —
+// release/2.0, hotfix/2.0 — survive intact, while the ones nobody would type are
+// never offered as a name. It has no say over a single-segment path, which is the
+// ref's own name at any length.
 const keySeedWidth = 16
 
-// deriveKey seeds a target's key from its ref by dropping the remote prefix,
-// keeping the rest of the path while it stays terse and falling back to the
-// ref's last segment when it does not:
+// deriveKey seeds a target's key from its ref by dropping the remote prefix and
+// keeping the rest of the path — the *whole* rest, or nothing at all:
 //
 //	origin/main                        -> main
+//	origin/release-2-stability         -> release-2-stability
 //	origin/release/2.0                 -> release/2.0
-//	origin/feature/TEAM-1234-long-name -> TEAM-1234-long-name
+//	origin/feature/TEAM-1234-long-name -> ""  (name it)
+//	origin/fix/PSOT-22114-…/mvp-3      -> ""  (name it)
 //
-// A key is a terse UI label — main, r2perf — and the whole path after the remote
-// is not one: nobody would type feature/TEAM-1234-long-name to name a target,
-// and every dashboard row would carry it. But cutting to the last segment
-// unconditionally throws away the half that says what a ref *is*, turning
-// release/2.0 and hotfix/2.0 into two targets both called 2.0. The threshold
-// keeps the short ones whole and only shortens what was the actual complaint.
+// A seeded key is the ref's whole path after the remote, or nothing. That
+// invariant is the whole of roadmap area 19d, and it is pinned by a test: whatever
+// key Drift offers, putting it back under the ref's remote reproduces the ref it
+// came from. A key that cannot be reconstructed is a key that names something
+// other than what it points at.
+//
+// The old rule fell back to the ref's *last segment* once the path grew past
+// keySeedWidth, so origin/fix/PSOT-22114-…/mvp-3 seeded the key `mvp-3` — a real
+// main's name attached to somebody's ticket branch. The wizard sorts by recency
+// (area 14), an actively-developed feature branch outranks a long-lived main by
+// its nature, and the top row then read as the exact string the user was looking
+// for. One keypress later, `u` published a merge into an open merge request
+// (area 19).
+//
+// Area 15 chose that fallback deliberately and its reasoning survives intact:
+// cutting to the last segment *unconditionally* turns release/2.0 and hotfix/2.0
+// into two targets both called 2.0, which is why those are kept whole here rather
+// than shortened to their tails. The case it did not have in front of it is the
+// one where the last segment is not merely ambiguous but actively **wrong**.
+// Declining to seed is the only answer that cannot be wrong: Drift has no honest
+// way to shorten a deep path, while the user, looking at the ref on the row, does.
+//
+// **Depth decides, then width.** A single segment is the ref's name whatever its
+// length — nothing was dropped to arrive at it, so it is seeded whole and the key
+// column bounds it (keyColWidth). Only a multi-segment path has a shorter form to
+// be tempted by, and that is the one place the threshold applies. Sizing by width
+// alone would refuse to name origin/release-2-stability — a real main, honestly
+// named, in the very repo this area came from — and buy no honesty for it.
 //
 // It is a seed either way, never a decision: the wizard shows the key beside the
-// ref it came from, e renames it, and a duplicate blocks the save with the row
-// revealed. Nothing here is guessed on the user's behalf and left unseen.
+// ref it came from, e renames it, and save blocks an unnamed selection with the
+// ref named and the row revealed. Nothing here is guessed on the user's behalf
+// and left unseen.
 func deriveKey(ref string) string {
-	_, rest, found := strings.Cut(ref, "/")
-	if !found {
-		return ref
+	path := ref
+	if _, rest, found := strings.Cut(ref, "/"); found {
+		path = rest
 	}
-	if lipgloss.Width(rest) <= keySeedWidth {
-		return rest
+	if !strings.Contains(path, "/") {
+		return path // one segment: the path *is* the name, so there is nothing to lie about
 	}
-	if i := strings.LastIndex(rest, "/"); i >= 0 {
-		return rest[i+1:]
+	if lipgloss.Width(path) <= keySeedWidth {
+		return path
 	}
-	return rest // one long segment: there is nothing shorter to take, so e it is
+	return ""
+}
+
+// keyPrompt is what the key column says for a ref deriveKey declined to seed. It
+// names what the row lacks and the key that supplies it, rather than leaving a
+// blank cell that reads as a rendering fault.
+const keyPrompt = "name it (e)"
+
+// keyCell is a row's key column: the key, or the prompt for one, with the style
+// that carries the difference.
+//
+// Three states, and the grammar is the pairing checklist's (⚠ pick a target): a
+// ref nobody has selected is missing nothing, so the prompt is quiet — a repo of
+// deep-pathed feature branches would otherwise open first-run setup on a screenful
+// of alarms about rows the user has not touched. Selecting one is what turns the
+// prompt into the thing blocking the save, and that is when it shouts.
+func (m wizardModel) keyCell(t wizardTarget) (string, lipgloss.Style) {
+	switch {
+	case t.key != "":
+		return t.key, m.styles.target
+	case t.included:
+		return "⚠ " + keyPrompt, m.styles.errText
+	default:
+		return keyPrompt, m.styles.help
+	}
 }
 
 func (m wizardModel) Init() tea.Cmd { return nil }
@@ -376,7 +425,11 @@ func (m wizardModel) save() (tea.Model, tea.Cmd) {
 		}
 		key := strings.TrimSpace(t.key)
 		if key == "" {
-			m.notice = "give " + t.ref + " a key (e) before saving"
+			// Shares its verb with the row's own prompt (keyCell): with area 19d the
+			// unnamed selection is the ordinary case rather than an oddity — a ref
+			// whose path is too deep to seed an honest key from — so the cell and the
+			// notice have to read as one requirement, not two.
+			m.notice = "name " + t.ref + " (e) before saving"
 			return m.reveal(i), nil
 		}
 		if seen[key] {
@@ -446,7 +499,8 @@ func (m wizardModel) body() string {
 			box = "[x]"
 		}
 
-		keyCell := fit(t.key, keyWidth)
+		keyText, keyStyle := m.keyCell(t)
+		keyCell := keyStyle.Render(fit(keyText, keyWidth))
 		if m.editing && i == m.cursor {
 			// The live field is never fitted: it owns its own width, and clipping
 			// what the user is typing would hide the tail of their own edit.
@@ -460,7 +514,7 @@ func (m wizardModel) body() string {
 		rows[i] = fmt.Sprintf("%s %s %s  %s %s",
 			m.styles.help.Render(padLeft(relativeAge(t.updated, m.now), ageColWidth)),
 			box,
-			m.styles.target.Render(keyCell),
+			keyCell,
 			m.styles.help.Render("←"),
 			m.styles.branch.Render(t.ref))
 	}
@@ -536,18 +590,25 @@ func relativeAge(tip, now time.Time) string {
 	}
 }
 
-// keyColWidth aligns the key column at the widest key, so the ← arrows line up —
+// keyColWidth aligns the key column at the widest cell, so the ← arrows line up —
 // bounded by its cap and by what the panel has left for the ref, since a key is
 // user-supplied (e renames it to anything) and one long one used to pad every
 // drawn row past the panel edge. That padding is what doubled the frame in area
 // 14's measurements; deriveKey stopped seeding the long ones, and this stops a
 // hand-typed one doing the same.
 //
+// It measures what the column *draws*, not the key behind it: an unseeded row
+// carries the prompt (keyCell), and sizing to the raw key would leave the prompt
+// overflowing a column too narrow for it and every ← on the screen out of line.
+//
 // Measured over the visible rows only: the column exists to align what is on
 // screen, and widening it for a ref the filter is hiding would pad every drawn
 // row past a panel none of them need (DESIGN.md §1).
 func (m wizardModel) keyColWidth(visible []int) int {
-	w := widestCell(len(visible), maxKeyCol, func(i int) string { return m.targets[visible[i]].key })
+	w := widestCell(len(visible), maxKeyCol, func(i int) string {
+		text, _ := m.keyCell(m.targets[visible[i]])
+		return text
+	})
 	cw := rowWidth(m.styles, m.width)
 	if cw <= 0 {
 		return w // size unknown: natural sizing

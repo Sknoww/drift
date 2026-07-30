@@ -31,11 +31,11 @@ func remoteBranches(refs ...string) []git.RemoteBranch {
 	return out
 }
 
-// A key is a terse UI label. deriveKey used to keep the whole path after the
-// remote, so origin/feature/TEAM-1234-some-long-name seeded a key nobody would
-// type — and padded every wizard row to it. It now keeps the path while it stays
-// terse and falls back to the last segment past that, so the multi-segment refs
-// that carry meaning (release/2.0) survive and only the long ones are cut.
+// A key is a terse UI label. deriveKey keeps the whole path after the remote, and
+// where it cannot keep the whole path it seeds *nothing* rather than inventing a
+// shorter name for it (area 19d). Depth decides, then width: a single segment is
+// the ref's own name at any length, while a deep path is seeded only while it
+// stays terse.
 func TestDeriveKeySeedsATerseKey(t *testing.T) {
 	cases := map[string]string{
 		"origin/main":         "main",
@@ -46,20 +46,175 @@ func TestDeriveKeySeedsATerseKey(t *testing.T) {
 		"origin/feature/x":   "feature/x",
 		"origin/release/2.0": "release/2.0",
 
-		// Past the threshold: the last segment is what is left worth naming.
-		"origin/feature/TEAM-1234-some-long-name": "TEAM-1234-some-long-name",
+		// A deep path past the threshold. The old rule cut to the last segment
+		// here; that is what let a ticket branch inherit a main's name (see the
+		// test below).
+		"origin/feature/TEAM-1234-some-long-name": "",
 
-		// One long segment and nothing shorter to take. Honest rather than
-		// invented — the column bounds it and e renames it.
+		// One segment, so the threshold has no say: long, but it is the branch's
+		// name and nothing was dropped to reach it. The column bounds it and e
+		// renames it. This is a real main's shape in the repo area 19 came from.
+		"origin/release-2-stability":               "release-2-stability",
 		"origin/a-very-long-single-segment-branch": "a-very-long-single-segment-branch",
 
-		// No remote prefix at all: nothing to strip.
+		// No remote prefix at all: nothing to strip, and the whole ref is the path.
 		"main": "main",
 	}
 	for ref, want := range cases {
 		if got := deriveKey(ref); got != want {
 			t.Errorf("deriveKey(%q) = %q, want %q", ref, got, want)
 		}
+	}
+}
+
+// The invariant area 19d bought, and the one that makes the seed unable to lie:
+// **a seeded key is the ref's whole path after the remote, or nothing.** Put a
+// seeded key back under its ref's remote and you get the ref itself.
+//
+// Pinned as a property rather than as a table of expectations because the failure
+// it guards against is a *new* shortening rule being added later — an initialism,
+// a middle-elide, a last-segment fallback reintroduced under another name. Each
+// would pass a table that was updated alongside it; none can pass this.
+func TestASeededKeyAlwaysReconstructsItsRef(t *testing.T) {
+	refs := []string{
+		"origin/main",
+		"origin/mvp-3",
+		"origin/release/2.0",
+		"origin/hotfix/2.0",
+		"origin/feature/TEAM-1234-some-long-name",
+		"origin/fix/PSOT-22114-PickHistory-API-for-audit/mvp-3",
+		"origin/releases/2024/lts-maintenance",
+		"origin/release-2-stability",
+		"origin/a-very-long-single-segment-branch",
+		"upstream/main",
+		"main",
+	}
+	for _, ref := range refs {
+		key := deriveKey(ref)
+		if key == "" {
+			continue // no seed offered: there is no name here that could be wrong
+		}
+		rebuilt := key
+		if remote, _, found := strings.Cut(ref, "/"); found {
+			rebuilt = remote + "/" + key
+		}
+		if rebuilt != ref {
+			t.Errorf("deriveKey(%q) = %q, which names %q — a key must reconstruct its own ref",
+				ref, key, rebuilt)
+		}
+	}
+}
+
+// The area-19 incident, at its source. A colleague's ticket branch ending in
+// /mvp-3 sorted above the real origin/mvp-3 (recency, area 14) and the old
+// last-segment fallback labelled it `mvp-3` — the exact string the user was
+// looking for. Selecting it recorded a target whose key read correctly on every
+// dashboard row and whose ref pointed at a feature branch, and `u` published a
+// merge into an open merge request.
+//
+// Now the deep ref is offered with no name at all: its row says so, selecting it
+// blocks the save, and the block names the *ref* — so a target called mvp-3 can
+// only exist if the user typed mvp-3 while looking at what it points at.
+func TestWizardWillNotSeedAKeyThatLiesAboutItsRef(t *testing.T) {
+	const lie = "origin/fix/PSOT-22114-PickHistory-API-for-audit/mvp-3"
+	m := wizardWith(lie, "origin/mvp-3")
+	m.width, m.height = 100, 24
+
+	if got := m.targets[0].key; got != "" {
+		t.Fatalf("key seeded for %q = %q, want none — it is not that branch's name", lie, got)
+	}
+	if got := m.targets[1].key; got != "mvp-3" {
+		t.Errorf("key for origin/mvp-3 = %q, want mvp-3 — the honest ref must still seed", got)
+	}
+
+	// The row states what it lacks and how to supply it, rather than showing a
+	// blank cell that reads as a rendering fault.
+	if view := m.View(); !strings.Contains(view, keyPrompt) {
+		t.Errorf("an unseeded row must prompt for a name:\n%s", view)
+	}
+
+	// Selecting it and saving is refused, with the ref named — never the key,
+	// which is the string that made the wrong target look right (19a's rule).
+	m.targets[0].included = true
+	out, cmd := m.dispatch(ActionConfirm)
+	final := out.(wizardModel)
+	if final.done || cmd != nil {
+		t.Fatal("saving a selected ref with no key must be blocked")
+	}
+	if !strings.Contains(final.notice, lie) {
+		t.Errorf("notice = %q, want it to name the ref it is asking about", final.notice)
+	}
+
+	// And it is nameable: e, type it, save. The user's own choice, made against
+	// the ref on screen.
+	out, _ = final.dispatch(ActionEditKey)
+	edit := out.(wizardModel)
+	edit.input.SetValue("psot-22114")
+	out, _ = edit.commitEdit().dispatch(ActionConfirm)
+	saved := out.(wizardModel)
+	if len(saved.result) != 1 || saved.result[0].Key != "psot-22114" || saved.result[0].Ref != lie {
+		t.Errorf("saved = %+v, want the hand-typed key against the picked ref", saved.result)
+	}
+}
+
+// An unseeded row is quiet until it is selected, and then it is not. A repo of
+// deep-pathed feature branches must not open first-run setup on a screenful of
+// alarms about rows the user has never touched — the pairing checklist's own
+// grammar, where ⚠ pick a target appears only on an included candidate.
+func TestWizardPromptsQuietlyUntilTheRowIsSelected(t *testing.T) {
+	m := wizardWith("origin/feature/TEAM-1234-some-long-name")
+	m.width, m.height = 100, 24
+
+	text, style := m.keyCell(m.targets[0])
+	if text != keyPrompt {
+		t.Errorf("unselected prompt = %q, want %q with no warning glyph", text, keyPrompt)
+	}
+	// Compared by the style's own foreground rather than by its rendered output: a
+	// test's color profile emits no color at all, so Render would make every style
+	// on the screen look identical (DESIGN.md §3 — the class of bug that hid area
+	// 3's two band traps from the suite).
+	if style.GetForeground() != m.styles.help.GetForeground() {
+		t.Error("an untouched row is missing nothing yet — the prompt must not be styled as an error")
+	}
+
+	m.targets[0].included = true
+	text, style = m.keyCell(m.targets[0])
+	if !strings.HasPrefix(text, "⚠ ") {
+		t.Errorf("selected prompt = %q, want it flagged — it now blocks the save", text)
+	}
+	if style.GetForeground() != m.styles.errText.GetForeground() {
+		t.Error("a selection that blocks the save must be styled as the blocker it is")
+	}
+}
+
+// The prompt is drawn *in* the key column, so the column has to be sized to what
+// it draws rather than to the empty key behind it — otherwise the prompt
+// overflows and every ← on the screen goes out of line.
+func TestWizardKeyColumnFitsThePrompt(t *testing.T) {
+	m := wizardWith("origin/feature/TEAM-1234-some-long-name", "origin/main")
+	m.width, m.height = 100, 24
+	m.targets[0].included = true
+
+	promptText, _ := m.keyCell(m.targets[0])
+	if got := m.keyColWidth(m.visible()); got < lipgloss.Width(promptText) {
+		t.Errorf("key column = %d, too narrow for the prompt %q (%d cells)",
+			got, promptText, lipgloss.Width(promptText))
+	}
+
+	// Every drawn arrow lands in the same column. Measured in display cells, not
+	// bytes: the prompt carries a multi-byte ⚠ and the key beside it is ASCII, so
+	// byte offsets would differ on two rows that line up perfectly on screen.
+	var cols []int
+	for _, line := range strings.Split(m.View(), "\n") {
+		if i := strings.Index(line, "←"); i >= 0 {
+			cols = append(cols, lipgloss.Width(line[:i]))
+		}
+	}
+	if len(cols) != 2 {
+		t.Fatalf("found %d rows with an arrow, want 2", len(cols))
+	}
+	if cols[0] != cols[1] {
+		t.Errorf("arrows at columns %v — the key column did not align its rows", cols)
 	}
 }
 

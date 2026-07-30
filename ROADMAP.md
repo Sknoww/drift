@@ -430,6 +430,13 @@ is; link its spec/ADR once one exists.
       what was the actual complaint. It stays a *seed* either way — the key is shown
       beside the ref it came from, `e` renames it, and a duplicate blocks the save with
       the row revealed
+      - **Area 19d replaced the fallback, and kept the threshold for the other half of this
+        argument.** The last-segment cut is gone: a deep path past the threshold is now
+        seeded with nothing at all, because the case this bullet did not have in front of it
+        is one where the last segment is a *real main's name* on somebody's ticket branch.
+        What survives verbatim is the reason the cut was never made unconditional —
+        `release/2.0` and `hotfix/2.0` must not both become `2.0` — and that is exactly why
+        19d kept `keySeedWidth` rather than dropping the threshold with the fallback
     - ✅ **A minimum usable width, declared rather than clamped.** `contentWidth` clamped
       to 1 and rendered into it, which produces garbage rather than a compressed view.
       Below **60 columns** every screen — dashboard and wizard alike — now draws one
@@ -893,13 +900,13 @@ is; link its spec/ADR once one exists.
       incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
       unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
       visible at rest and at the one moment it can still be stopped for free.
-      **19a and both halves of 19e have shipped**, so a wrong target is now visible on its
-      own screen, named on the way past at the one moment it can still be stopped for free,
-      and correctable in the tool. That closes everything the incident itself needed. What is
-      left is 19b (a *pairing* cannot be changed — real, but not implicated), 19c (fidelity)
-      and 19d (the wizard can still seed a key that lies about its ref — the deeper cause,
-      now mitigated rather than fixed: a bad pick is visible and repairable, but still
-      offerable)
+      **19a, 19d and both halves of 19e have shipped**, so a wrong target can no longer be
+      *offered* under a right-looking name, is visible on its own screen when one exists,
+      named on the way past at the one moment it can still be stopped for free, and
+      correctable in the tool. That closes the incident end to end — the cause, the missed
+      gate and the missing correction path. What is left is 19b (a *pairing* cannot be
+      changed — real, but not implicated) and 19c (fidelity), neither of which the incident
+      needed
     - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
       the work repo's reflog and its `config.json`. The roadmap's reading was right in every
       part — merging a branch into a source whose MR *targets* that branch cannot add commits
@@ -929,9 +936,9 @@ is; link its spec/ADR once one exists.
         it was told. It was told the wrong thing
       - **Three shipped decisions combined to tell it that**, each defensible alone, and the
         confluence is the finding:
-        1. `deriveKey` (`internal/ui/wizard.go:179`) falls back to the ref's **last path
-           segment** once the path is past `keySeedWidth`, so
-           `origin/fix/PSOT-22114-…/mvp-3` seeds the key `mvp-3`
+        1. `deriveKey` fell back to the ref's **last path segment** once the path was past
+           `keySeedWidth`, so `origin/fix/PSOT-22114-…/mvp-3` seeded the key `mvp-3`. This is
+           the one of the three that 19d removed; the other two are correct and stay
         2. The wizard sorts by **recency** (area 14), and an actively-developed feature branch
            sorts *above* a long-lived main, which by its nature moves less
         3. *Some* people in the repo end a branch with the main it targets, so those
@@ -1069,42 +1076,75 @@ is; link its spec/ADR once one exists.
       - **Not the cause of the incident**, and it should not be bundled with 19a/19b on that
         pretext. It is a fidelity question about matching a documented flow, and it can be
         settled on its own evidence
-    - ⏳ **19d — the wizard can seed a key that lies about its ref.** The first of the two
+    - ✅ **19d — the wizard could seed a key that lied about its ref.** The first of the two
       causes the diagnosis turned up, and the deeper one: `deriveKey`'s last-segment fallback
-      (`internal/ui/wizard.go:179`) plus area 14's recency sort plus a repo whose feature
-      branches end in their main's name produced a wizard row reading `mvp-3` that pointed at
+      plus area 14's recency sort plus a repo whose feature branches end in their main's name
+      produced a wizard row reading `mvp-3` that pointed at
       `origin/fix/PSOT-22114-…/mvp-3`. Every part of that behaved as designed. Area 15 chose
       the fallback deliberately and rejected cutting to the last segment *unconditionally* on
       exactly the right grounds — it collapses `release/2.0` and `hotfix/2.0` into two targets
       both called `2.0`. The case it did not have in front of it is the one where the last
       segment is not merely ambiguous but **actively wrong**: a real main's name attached to
-      something that is not a main
-      - **Open: is this the key's problem or the list's?** Two different fixes. Making the
-        *key* honest means never seeding a name the ref does not justify — but "justify" is a
-        heuristic about what a main looks like, and area 14 already declined exactly that
-        class of reasoning on the never-guess rule when it refused to narrow the wizard list
-        by recency. Making the *list* honest means the ref is never the small print: show it
-        at full weight beside the key, or refuse to seed a key at all for a ref with a deep
-        path and make the user type one. The second is more in keeping with how the project
-        has settled every prior version of this question
-      - **Open: should a ref that is plainly somebody's ticket branch be flagged rather than
-        filtered?** Flagging is not narrowing — area 14's settled distinction, and it survives
-        here: an advisory marker removes nothing and hides nothing, so a repo whose main
-        genuinely lives at a deep path still lists it and still works. What the marker keys
-        off is the open part, and it must not become a naming convention Drift enforces
-      - **Branch naming is per-person, not per-repo, which rules most of the answer out.**
+      something that is not a main. Both open questions were settled before a line was
+      written. No ADR: nothing here reverses a documented decision — area 15 chose a seeding
+      rule and this replaces it with a stricter one, which is the same direction of travel
+      - ✅ **Settled: the key's problem, and it is answered by an invariant rather than by a
+        heuristic.** `deriveKey` may now only ever hand back the ref's **whole** path after
+        the remote; where it cannot, it seeds **nothing** and the user names the target
+        (`e`). Putting a seeded key back under its remote reproduces the ref it came from,
+        and a key that cannot be reconstructed is a key naming something other than what it
+        points at. That is what makes this the key's problem and not the list's: no judgement
+        about what a main looks like is involved, so area 14's refusal to reason that way
+        (the never-guess rule that declined to narrow this very list) is not spent here
+      - ✅ **The list half was already built and was not what failed.** "Show the ref at full
+        weight beside the key" turned out to describe the screen as it stood — the ref has
+        always been on the row, in the ordinary foreground, sized to absorb what the key
+        column leaves. The incident happened with the ref on screen, so the lure was the
+        *key* reading `mvp-3` rather than the ref being small print. Worth recording, because
+        the roadmap offered emphasis as a candidate fix and the evidence rules it out
+      - ✅ **Depth decides, then width.** The rule as first stated ("terse or nothing") went
+        one bullet too far, and building it showed why: it refuses to name
+        `origin/release-2-stability` — a real main, honestly named, in the very repo this
+        area came from — while buying no honesty for it. A single-segment path *is* the ref's
+        name at any length; nothing was dropped to reach it, and `keyColWidth` bounds it. Only
+        a multi-segment path has a shorter form to be tempted by, so `keySeedWidth` now gates
+        that case alone — which is also what keeps area 15's reason intact, since `release/2.0`
+        and `hotfix/2.0` still survive whole rather than collapsing to `2.0`
+      - ✅ **An unnamed row states what it lacks**, in the key column's own place
+        (`name it (e)`) — a blank cell reads as a rendering fault. Quiet until the row is
+        selected, `⚠` once it is: a ref nobody picked is missing nothing, and a repo of
+        deep-pathed feature branches must not open first-run setup on a screenful of alarms
+        about rows the user has never touched. That is the pairing checklist's grammar
+        exactly, where `⚠ pick a target` appears only on an included candidate — and the
+        blocked save names the **ref**, never the key, on 19a's rule. `keyColWidth` measures
+        what the column *draws* rather than the key behind it, or the prompt would overflow a
+        column sized to an empty string and put every `←` on the screen out of line
+      - ✅ **Settled: no advisory marker, and flagging was admissible — it just had nothing
+        left to flag.** Area 14's flagging-vs-narrowing distinction survives here and was not
+        the reason: an advisory marker removes nothing. It lost on what it would key off. The
+        only convention-free signal available — a last segment repeating another offered ref's
+        name — is exactly what refusing to seed already neutralises, so the marker would be a
+        second, weaker signal for a hazard that no longer exists. Keying one off path depth
+        instead puts the same glyph on somebody's ticket branch and on a legitimate deep main
+        (`origin/releases/2024/lts-maintenance`), which Drift cannot tell apart without
+        enforcing a naming convention. The wizard also has no `?` overlay, so a new glyph
+        there would be one with nowhere to be explained (DESIGN.md §3)
+      - **Branch naming is per-person, not per-repo, which is what ruled the rest out.**
         The work repo has no house convention: one person suffixes the target, another writes
         it out in full, others do neither. So there is no lexical pattern to key off, and
         anything trained on one person's habit would mislabel everyone else's branches in the
-        same list. What *is* stable is structural — path depth, how many segments the ref has
-        past the remote, whether the last segment repeats another offered ref's name — and a
-        signal that survives the naming question is the only kind worth building on. This is
-        the same shape as area 7's rule about never parsing git's English: read structure,
-        not prose
-      - **A test that would have caught it exists in shape already.** Area 16b pins that an
-        accent cannot widen its surface by accident; the equivalent here is a case asserting
-        that a seeded key round-trips to a ref a reader would recognise. Worth writing
-        whichever way the two questions above land
+        same list. What *is* stable is structural — path depth, and whether the last segment
+        repeats another offered ref's name — and the fix that shipped reads structure only:
+        how many segments the path has, and how wide it is. Same shape as area 7's rule about
+        never parsing git's English
+      - ✅ **The test is a property, not a table**, which is the form the round-trip needed.
+        A table of expectations would pass alongside any *new* shortening rule added later —
+        an initialism, a middle-elide, a last-segment fallback under another name — because
+        whoever added it would update the table in the same commit. Asserting that every
+        seeded key reconstructs its own ref cannot be satisfied that way. Alongside it, the
+        incident itself is pinned end to end: the deep ref is offered unnamed, its row says
+        so, selecting it blocks the save with the **ref** named, and naming it by hand saves
+        against the ref that was actually picked
     - ✅ **19e — a target's ref is write-once and invisible, so a wrong one cannot be seen or
       fixed.** The second cause, and the cheaper half. `Target.Ref` is written in exactly one
       place — the first-run wizard — and *was* rendered in exactly one, the wizard's own

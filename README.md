@@ -39,6 +39,12 @@ the ones that are your long-lived targets with `space`, rename a target's short 
 with `e`, and press `enter` to save. That writes `config.json` and drops you on the
 dashboard. Decline with `esc` and drift tells you where to hand-edit the file instead.
 
+Most refs arrive with a key already filled in, taken from the ref's name. A ref with a
+deeper path — `origin/fix/ABC-123-something/mvp-3` — arrives with **no** key and says
+`name it (e)`, because there is no short name drift can honestly cut out of that: the
+last segment would read `mvp-3`, which is a real target's name on somebody's ticket
+branch. Drift never offers a key it can't stand behind, so that one is yours to type.
+
 From the dashboard, `a` adds a ticket: type its ID, then pair each of its branches
 with the target that branch aims at. **The pairing is always yours to make** — drift
 never guesses a target from a branch name, so any branch naming style works.
