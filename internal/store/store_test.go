@@ -832,6 +832,104 @@ func TestSetTargetRefReportsAnUnknownKey(t *testing.T) {
 	}
 }
 
+// --- re-pairing a branch (roadmap 19b) ------------------------------------
+
+// The other half of a wrong target: SetTargetRef fixes what a key *points at*,
+// this fixes which target a branch *aims for*. One branch, and only that one —
+// the dashboard's cursor is on a row, so the write has to be too.
+func TestSetBranchTargetChangesOnlyThatBranch(t *testing.T) {
+	s := Store{Tickets: []Ticket{
+		{ID: "ABC-1", Branches: []TicketBranch{
+			{Branch: "abc-1-perf", TargetKey: "r2perf"},
+			{Branch: "abc-1-main", TargetKey: "r2perf"},
+		}},
+		{ID: "ABC-2", Branches: []TicketBranch{{Branch: "abc-2", TargetKey: "r2perf"}}},
+	}}
+
+	got, ok := s.SetBranchTarget("ABC-1", "abc-1-perf", "main")
+	if !ok {
+		t.Fatal("SetBranchTarget reported the branch missing")
+	}
+	if key := got.Tickets[0].Branches[0].TargetKey; key != "main" {
+		t.Errorf("abc-1-perf targetKey = %q, want main", key)
+	}
+	if key := got.Tickets[0].Branches[1].TargetKey; key != "r2perf" {
+		t.Errorf("the sibling branch on the same ticket changed to %q", key)
+	}
+	if key := got.Tickets[1].Branches[0].TargetKey; key != "r2perf" {
+		t.Errorf("another ticket's branch changed to %q", key)
+	}
+	// The branch name is what identifies the row; only its pairing is settable.
+	if name := got.Tickets[0].Branches[0].Branch; name != "abc-1-perf" {
+		t.Errorf("the branch name changed to %q", name)
+	}
+}
+
+// The copy rule, and it bites harder here than in SetTargetRef because there are
+// two slices to get wrong: Store is passed by value all over the UI, and the inner
+// Branches slice is shared by every copy of the Ticket holding it.
+func TestSetBranchTargetDoesNotWriteThroughTheOriginal(t *testing.T) {
+	s := Store{Tickets: []Ticket{{ID: "ABC-1", Branches: []TicketBranch{
+		{Branch: "abc-1", TargetKey: "r2perf"},
+	}}}}
+
+	if _, ok := s.SetBranchTarget("ABC-1", "abc-1", "main"); !ok {
+		t.Fatal("SetBranchTarget reported the branch missing")
+	}
+	if key := s.Tickets[0].Branches[0].TargetKey; key != "r2perf" {
+		t.Errorf("the original store was mutated: targetKey = %q", key)
+	}
+}
+
+// A selection gone stale is reported, never written blind — the same contract
+// SetTargetRef has, and the reason the caller holds a ticket ID and a branch name
+// rather than a row index.
+func TestSetBranchTargetReportsWhatIsMissing(t *testing.T) {
+	s := Store{Tickets: []Ticket{{ID: "ABC-1", Branches: []TicketBranch{
+		{Branch: "abc-1", TargetKey: "r2perf"},
+	}}}}
+
+	for _, c := range []struct {
+		name           string
+		ticket, branch string
+	}{
+		{"unknown ticket", "ABC-9", "abc-1"},
+		{"unknown branch", "ABC-1", "abc-9"},
+	} {
+		got, ok := s.SetBranchTarget(c.ticket, c.branch, "main")
+		if ok {
+			t.Errorf("%s: reported success", c.name)
+		}
+		if key := got.Tickets[0].Branches[0].TargetKey; key != "r2perf" {
+			t.Errorf("%s: still changed something: targetKey = %q", c.name, key)
+		}
+	}
+}
+
+// A pairing survives the round trip it exists for: the next run of Drift loads
+// what the re-pair wrote.
+func TestSetBranchTargetRoundTrip(t *testing.T) {
+	r := fakeRepo{dir: t.TempDir()}
+
+	s, _ := Store{Tickets: []Ticket{{ID: "ABC-1", Branches: []TicketBranch{
+		{Branch: "abc-1", TargetKey: "r2perf"},
+	}}}}.SetBranchTarget("ABC-1", "abc-1", "main")
+
+	if err := SaveState(context.Background(), r, s); err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := LoadState(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Tickets) != 1 || len(back.Tickets[0].Branches) != 1 {
+		t.Fatalf("state came back as %+v", back)
+	}
+	if key := back.Tickets[0].Branches[0].TargetKey; key != "main" {
+		t.Errorf("targetKey = %q after a round trip, want main", key)
+	}
+}
+
 // SaveConfig has a second caller now, and it overwrites a config that is already
 // good — the wizard's write only ever landed on a placeholder. What must not
 // change is that it validates first: an empty ref would leave every paired branch

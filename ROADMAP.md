@@ -900,13 +900,13 @@ is; link its spec/ADR once one exists.
       incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
       unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
       visible at rest and at the one moment it can still be stopped for free.
-      **19a, 19d and both halves of 19e have shipped**, so a wrong target can no longer be
-      *offered* under a right-looking name, is visible on its own screen when one exists,
-      named on the way past at the one moment it can still be stopped for free, and
-      correctable in the tool. That closes the incident end to end — the cause, the missed
-      gate and the missing correction path. What is left is 19b (a *pairing* cannot be
-      changed — real, but not implicated) and 19c (fidelity), neither of which the incident
-      needed
+      **19a, 19b, 19d and both halves of 19e have shipped**, so a wrong target can no
+      longer be *offered* under a right-looking name, is visible on its own screen when one
+      exists, named on the way past at the one moment it can still be stopped for free, and
+      correctable in the tool — in *both* of its fields, since 19b closed the pairing half
+      beside 19e's ref half. That closes the incident end to end — the cause, the missed
+      gate and the missing correction path. What is left is 19c (fidelity), which the
+      incident never needed
     - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
       the work repo's reflog and its `config.json`. The roadmap's reading was right in every
       part — merging a branch into a source whose MR *targets* that branch cannot add commits
@@ -1029,7 +1029,7 @@ is; link its spec/ADR once one exists.
         publishes nothing, so every step it takes is local and covered by the same unwind
         every halt already runs. Pinned, so the widening cannot creep across the split 17a
         spent itself establishing
-    - ⏳ **19b — a pair's target cannot be changed once it is made.** The target picker
+    - ✅ **19b — a pair's target cannot be changed once it is made.** The target picker
       exists but is reachable only from the pairing checklist inside the add flow
       (`ActionOpenPicker`, handled at `internal/ui/addflow.go:186`); the dashboard keymap has
       no equivalent — 19e's `t` opens the targets screen, whose `e` re-points a *target's*
@@ -1048,15 +1048,68 @@ is; link its spec/ADR once one exists.
         helped). This bullet previously claimed 19b was what turned the incident into a
         trap; that was written before the diagnosis and is wrong
       - **It is still real work, on its own merits.** Prevention (19a) and correction are
-        different jobs, and a mispaired branch is genuinely uncorrectable in the tool today.
-        It is also the cheapest of the three: the picker screen, the accelerators and the
-        store round-trip all exist, so the work is a dashboard entry point, a `TargetKey`
-        setter, and a save. It just is not urgent on this evidence
-      - **Open: re-pair the selected branch row only, or reopen the ticket's whole
-        checklist?** The row-only version matches how `s` and `u` already read the
-        selection and is one keypress from the thing being fixed. Reopening the checklist
-        reuses a whole screen unchanged but asks the user to re-confirm rows that were
-        never wrong
+        different jobs, and a mispaired branch was genuinely uncorrectable in the tool.
+        It was also the cheapest of the three: the picker, the accelerators and the store
+        round-trip all existed, so the work was a dashboard entry point, a `TargetKey`
+        setter, and a save. Shipped as `p` on a branch row: the picker over the dashboard,
+        `enter` or `1`–`9` to pick, and the write. New: `store.SetBranchTarget`,
+        `internal/ui/repair.go`, `ActionRepair`
+      - ✅ **Settled: the selected row only.** The row-only version matches how `s` and `u`
+        already read the selection and is one keypress from the thing being fixed;
+        reopening the ticket's checklist would reuse a whole screen unchanged but ask the
+        user to re-confirm rows that were never wrong. Building it added a second reason
+        the roadmap did not have: the checklist's save writes a *whole ticket*, so a
+        re-pair through it would rebuild every pairing on the ticket to change one, and
+        an included-but-unassigned row would block a correction that had nothing to do
+        with it. `SetBranchTarget` touches the one field on the one branch, which is what
+        the cursor was pointing at
+      - ✅ **One overlay in two places, not a second picker.** `pickerBody` became
+        `targetPickerBody`, taking its subject and the branch's current target as
+        arguments — they are the whole of what differs — so the checklist's `t` and the
+        dashboard's `p` render one body and share one keymap. Two renderings of the same
+        choice would be two things to keep in step, and DESIGN.md §2's rule is that an
+        overlay is an overlay wherever the user meets one
+        - **Sharing it exposed a drawn-but-dead accelerator.** The picker has always drawn
+          a digit beside each of the first nine targets, and `DefaultPickerKeys` never
+          bound them — pressing `2` inside the picker did nothing until you `esc`-ed back
+          to the checklist underneath, where the digits were live. Fixed rather than
+          worked around: the digits are bound where they are drawn, in both places, since
+          the alternative was a shared body whose accelerators worked on one screen and
+          not the other
+        - **The current target is marked, on 19e's own argument.** Its ref picker marks
+          the ref in force because a list with nothing distinguishing one row from another
+          cannot say what is being changed *from*. The cursor opening on that row is a
+          weaker version of the same signal and it vanishes the moment the user moves. A
+          word (`current`) rather than a glyph, since this overlay binds no `?` and a
+          glyph would have nowhere to be explained (DESIGN.md §3) — and the ref column is
+          now *sized* against it rather than left to `clipRow`, or a long ref would push
+          the one cell carrying the mark off the end
+      - ✅ **Settled: `enter` commits, and the re-point stays the one picker that asks.**
+        19e's confirmation was earned by reach — re-pointing a target silently re-bases
+        every paired branch's `↓behind`, which no row can show as it happens. Re-pairing
+        one branch re-bases one row, and that row shows its new target key the moment the
+        overlay closes. A `y/n` here would be a keypress spent on something already
+        visible, and it would make the *narrower* correction the more ceremonious one
+      - ✅ **No success notice, for the reason 19e gave and one more.** The row is the
+        feedback and it is permanent where a notice is transient — and the write starts a
+        sweep, whose arrival clears the status line, so a notice would be wiped by the
+        very work that proves the pairing took. A failed save, a stale selection and a
+        pick of the target already in force all *do* get one; the last is 19e's rule
+        verbatim, since it is the one outcome where "it worked" and "nothing happened"
+        leave the row identical
+      - ✅ **The model is updated before the write, which is deliberately the opposite of
+        19e's rule.** That rule is about `config.json`: a model holding a ref the file does
+        not makes the next sweep report correct-looking numbers about a target that is not
+        on disk. This is a pairing in `state.json` — the file `savePairing`, `doDelete` and
+        the note editor all write optimistically — and the sweep cannot measure the new
+        pairing at all until it is in the model. A failed write says so on the status line,
+        where the numbers it produced stay honest either way
+      - ✅ **`p`, and it sits behind the sweep in the help line.** `t` was already spent on
+        the targets screen, and `e` means "edit the selected row" on two other screens; a
+        branch is *paired* to a target, so it reads as its own verb. Its place in the lead
+        is measured rather than argued: the line is ordered by frequency, and a correction
+        made once loses its slot before `r` and `f` do — so 120 columns render exactly as
+        they shipped and `t targets` is what gives way at 140
     - ⏳ **19c — `u` merges the branch's own upstream, and the flow it is modelled on does
       not.** `shelveUpstreamCmd` (`internal/ui/shelve.go:849`) merges `origin/<branch>`
       into the branch before the target is merged at all. The manual sequence this verb

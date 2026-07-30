@@ -529,6 +529,50 @@ func (s Store) Ticket(id string) (Ticket, bool) {
 	return Ticket{}, false
 }
 
+// SetBranchTarget re-points one of a ticket's branches at another target,
+// reporting false when the ticket or the branch is no longer there — a caller
+// acting on a stale selection is told so rather than silently writing nothing.
+// The same contract as SetTargetRef, and for the same reason.
+//
+// Both slices are copied before either is changed, never written through: Store
+// is passed by value all over the UI, so an in-place edit would reach every copy
+// — including ones held by an in-flight Cmd.
+//
+// targetKey is not validated against the config here. The store's job is to
+// record the pairing the user made; whether a key names a configured target is
+// the dashboard's question, and it already answers it on every row
+// (branchStatus.known → "⚠ unknown target"). Validating here would also make a
+// hand-edited config that drops a target unloadable rather than merely wrong on
+// screen, which is the opposite of what area 6 landed on: surface it, never hide
+// it. The one caller offers only real targets to pick from (roadmap 19b).
+func (s Store) SetBranchTarget(ticketID, branch, targetKey string) (Store, bool) {
+	tickets := make([]Ticket, len(s.Tickets))
+	copy(tickets, s.Tickets)
+
+	for i := range tickets {
+		if tickets[i].ID != ticketID {
+			continue
+		}
+		branches := make([]TicketBranch, len(tickets[i].Branches))
+		copy(branches, tickets[i].Branches)
+
+		found := false
+		for j := range branches {
+			if branches[j].Branch == branch {
+				branches[j].TargetKey = targetKey
+				found = true
+			}
+		}
+		if !found {
+			return s, false
+		}
+		tickets[i].Branches = branches
+		s.Tickets = tickets
+		return s, true
+	}
+	return s, false
+}
+
 func writePlaceholder(path string) error {
 	return writeJSON(path, placeholderConfig())
 }

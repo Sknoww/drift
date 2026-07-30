@@ -57,7 +57,17 @@ func (m Model) screenView(panel, help string) string {
 
 // dashboardView is the ticket list — the home screen, and the backdrop the
 // delete confirmation is drawn into.
+//
+// The re-pair picker (19b) is drawn in the panel's place while it is open, the
+// same as the target picker over the pairing checklist. The ticket list is not
+// visible behind it, which is why the picker's header names the branch: an overlay
+// has to say what it is about, since the row it is about is what it covered.
 func (m Model) dashboardView() string {
+	if m.repair.open {
+		help := helpLine(m.styles, m.width,
+			[]string{"j/k move", "1–9 quick-target"}, []string{"enter re-pair", "esc back"})
+		return m.screenView(m.targetPickerBody(m.repair.branch, m.repair.from, m.repair.cursor), help)
+	}
 	return m.screenView(m.body(), m.help())
 }
 
@@ -469,12 +479,20 @@ func (m Model) statusLine() string {
 // drops. It is the one segment here that opens something you *read* rather than
 // something you do, so it is what the line can most afford to lose — and the
 // overlay it is elided into names it in full.
+//
+// `p re-pair` sits behind the sweep rather than beside `u` and `s`, and that is
+// the same ordering rule rather than an exception to it. This line is sorted by
+// *frequency*, not by kind: `p` is a doing verb, but it is a correction made once
+// for a pairing that was wrong, where `r` and `f` are pressed all day. Measured,
+// because it is the kind of claim that is cheap to get wrong — placing it here
+// leaves the line at 120 columns exactly as it shipped, and costs `t targets`
+// its slot at 140.
 func (m Model) help() string {
 	if m.screen == screenConfirmDelete {
 		return helpLine(m.styles, m.width, nil, []string{"y confirm", "n cancel"})
 	}
 	return helpLine(m.styles, m.width,
-		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "u update", "s shelve", "r refresh", "f fetch", "l local", "t targets"},
+		[]string{"j/k move", "enter expand/diff", "a add", "d delete", "u update", "s shelve", "r refresh", "f fetch", "p re-pair", "l local", "t targets"},
 		[]string{"? help", "q quit"})
 }
 
@@ -567,26 +585,78 @@ func (m Model) pairingBody() string {
 	return listBody(m.styles, m.width, m.height, header, rows, m.add.cursor)
 }
 
-// pickerBody lists every configured target for the selected candidate, showing
-// Key and Ref so a terse key is never ambiguous. The 1–9 accelerators are shown
-// against the first nine; the rest are reachable by moving the cursor.
+// pickerBody is the target picker over the pairing checklist, about the selected
+// candidate. A candidate assigned earlier in the same visit has its target marked
+// like any other current value — it is what re-opening the picker is for.
 func (m Model) pickerBody() string {
-	cand := ""
+	cand, current := "", ""
 	if ci, ok := m.add.selected(); ok {
 		cand = m.add.candidates[ci].branch
+		current = m.add.candidates[ci].targetKey
 	}
-	header := []string{m.styles.hint.Render("Target for " + cand), ""}
+	return m.targetPickerBody(cand, current, m.add.pickerCur)
+}
 
-	var rows []string
+// targetPickerRowFixed is what a picker row costs before its two variable
+// columns: the accelerator cell, the space after it, and the two separators
+// before the ref and before the current-target mark.
+const targetPickerRowFixed = 2 + 1 + 2 + 2
+
+// targetPickerBody lists every configured target for one branch, showing Key and
+// Ref so a terse key is never ambiguous. The 1–9 accelerators are shown against
+// the first nine; the rest are reachable by moving the cursor.
+//
+// One body for both places the overlay opens — over the pairing checklist and,
+// since 19b, over a dashboard branch row — because it is one overlay asking one
+// question. Two renderings of the same choice would be two things to keep in step,
+// and DESIGN.md §2's rule is that an overlay is an overlay wherever the user
+// meets one.
+//
+// The subject and the current target are named rather than read from either
+// screen's state: they are the whole of what differs between the two, and passing
+// them in is what lets the rest be shared.
+//
+// **The current target is marked**, which is 19e's argument about its ref picker
+// applied to this one: the cursor opens on the current value, but that signal is
+// gone the moment the user moves, and a list with nothing distinguishing one row
+// from another cannot say what is being changed *from*. It is a word rather than
+// a glyph because this overlay binds no `?` — a glyph here would be one with
+// nowhere to be explained (DESIGN.md §3).
+func (m Model) targetPickerBody(subject, current string, cursor int) string {
+	header := []string{m.styles.hint.Render("Target for " + subject), ""}
+
+	labels := make([]string, len(m.cfg.Targets))
+	for i, t := range m.cfg.Targets {
+		if current != "" && t.Key == current {
+			labels[i] = m.styles.help.Render(currentRefLabel)
+		}
+	}
+	labelWidth := widestCell(len(labels), 0, func(i int) string { return labels[i] })
+
+	// The label is a fixed cost paid before the ref, and the ref absorbs what is
+	// left — the allocation rule every row here follows (DESIGN.md §1). Sizing it
+	// is what keeps the mark on screen: left unsized, a long ref would push the one
+	// cell saying "this is the one you have now" off the end for clipRow to cut.
+	refWidth := widestCell(len(m.cfg.Targets), 0, func(i int) string { return m.cfg.Targets[i].Ref })
+	if cw := rowWidth(m.styles, m.width); cw > 0 {
+		if avail := cw - targetPickerRowFixed - m.targetKeyWidth - labelWidth; refWidth > avail {
+			if refWidth = avail; refWidth < minRefCol {
+				refWidth = minRefCol
+			}
+		}
+	}
+
+	rows := make([]string, len(m.cfg.Targets))
 	for i, t := range m.cfg.Targets {
 		acc := "  "
 		if i < 9 {
 			acc = fmt.Sprintf("%d ", i+1)
 		}
-		rows = append(rows, fmt.Sprintf("%s %s  %s",
-			m.styles.help.Render(acc), fit(t.Key, m.targetKeyWidth), m.styles.help.Render(t.Ref)))
+		rows[i] = fmt.Sprintf("%s %s  %s  %s",
+			m.styles.help.Render(acc), fit(t.Key, m.targetKeyWidth),
+			m.styles.help.Render(fit(t.Ref, refWidth)), labels[i])
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, m.add.pickerCur)
+	return listBody(m.styles, m.width, m.height, header, rows, cursor)
 }
 
 // candidateNameWidth sizes the checklist's name column: the widest candidate,

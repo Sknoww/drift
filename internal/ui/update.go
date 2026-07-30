@@ -223,6 +223,12 @@ func (m Model) activeKeys() Keymap {
 		}
 		return m.keys.targets
 	default:
+		if m.repair.open {
+			// The re-pair picker shadows the dashboard's keymap, and it is the *same*
+			// keymap the pairing checklist's picker uses: one overlay, one body, one
+			// set of keys (DefaultPickerKeys).
+			return m.keys.picker
+		}
 		return m.keys.dashboard
 	}
 }
@@ -294,6 +300,9 @@ func (m Model) dispatch(action Action) (tea.Model, tea.Cmd) {
 // screens are not built yet report where they are headed rather than doing
 // nothing silently.
 func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
+	if m.repair.open {
+		return m.dispatchRepair(action)
+	}
 	switch action {
 	case ActionMoveUp:
 		if m.cursor > 0 {
@@ -348,6 +357,9 @@ func (m Model) dispatchDashboard(action Action) (tea.Model, tea.Cmd) {
 
 	case ActionTargets:
 		return m.openTargets()
+
+	case ActionRepair:
+		return m.beginRepair()
 	}
 	return m, nil
 }

@@ -248,7 +248,30 @@ func (m Model) dispatchPicker(action Action) (tea.Model, tea.Cmd) {
 		m.add.picker = false
 		return m, nil
 	}
+
+	// The 1–9 accelerators act here too, not only on the checklist underneath: the
+	// picker draws a digit beside each of the first nine targets, and a drawn
+	// accelerator that does nothing until you esc back is a row telling you about a
+	// key that isn't bound. Same wording, same effect, one screen in.
+	if idx, ok := pickTargetIndex(action); ok {
+		m = m.assignTarget(idx)
+		if _, valid := m.selectedTargetSlot(idx); valid {
+			m.add.picker = false
+		}
+		return m, nil
+	}
 	return m, nil
+}
+
+// selectedTargetSlot reports the target an accelerator digit names, and whether
+// the slot is filled at all. It is what keeps a digit past the configured targets
+// from *closing* the picker: assignTarget already refuses and says so, and an
+// overlay that shut on a refusal would read as having assigned something.
+func (m Model) selectedTargetSlot(idx int) (store.Target, bool) {
+	if idx < 0 || idx >= len(m.cfg.Targets) {
+		return store.Target{}, false
+	}
+	return m.cfg.Targets[idx], true
 }
 
 // toggleCandidate includes or excludes the selected candidate. Excluding it

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -289,6 +290,54 @@ func TestPickerAssignsChosenTarget(t *testing.T) {
 	}
 	if c := m.add.candidates[0]; !c.included || c.targetKey != "main" {
 		t.Errorf("picker assign: %+v", c)
+	}
+}
+
+// The picker draws a digit beside each of the first nine targets, so the digits
+// have to act *there* and not only on the checklist underneath. Until 19b shared
+// one body between this overlay and the dashboard's, they were drawn dead: pressing
+// 2 in the picker did nothing until you esc-ed back out of it.
+func TestPickerAcceleratorsAreLiveWhereTheyAreDrawn(t *testing.T) {
+	for n := 1; n <= 9; n++ {
+		if got, ok := DefaultPickerKeys().action(strconv.Itoa(n)); !ok || got != ActionPickTarget(n) {
+			t.Errorf("picker %d -> %q, %v; want %q", n, got, ok, ActionPickTarget(n))
+		}
+	}
+
+	m := pairingModel(t, "NEW-9", "new-9-a")
+	next, _ := m.dispatch(ActionOpenPicker)
+	m = next.(Model)
+	if !strings.Contains(m.View(), "2 ") {
+		t.Fatalf("the picker does not draw the accelerators it binds; got:\n%s", m.View())
+	}
+
+	next, _ = m.dispatch(ActionPickTarget(2))
+	m = next.(Model)
+	if m.add.picker {
+		t.Error("the accelerator left the picker open")
+	}
+	if c := m.add.candidates[0]; !c.included || c.targetKey != "main" {
+		t.Errorf("2 in the picker assigned %+v, want main", c)
+	}
+}
+
+// A digit past the configured targets refuses and says so, and the picker stays
+// open: the user pressed a key meaning "that one", so closing would read as having
+// chosen something.
+func TestPickerAcceleratorPastTheTargetsKeepsItOpen(t *testing.T) {
+	m := pairingModel(t, "NEW-9", "new-9-a")
+	next, _ := m.dispatch(ActionOpenPicker)
+	next, _ = next.(Model).dispatch(ActionPickTarget(5))
+	m = next.(Model)
+
+	if !m.add.picker {
+		t.Error("an empty slot closed the picker")
+	}
+	if c := m.add.candidates[0]; c.included || c.targetKey != "" {
+		t.Errorf("an empty slot assigned a target: %+v", c)
+	}
+	if !strings.Contains(m.notice, "no target in that slot") {
+		t.Errorf("notice = %q, want it to say the slot is empty", m.notice)
 	}
 }
 

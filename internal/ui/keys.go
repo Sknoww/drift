@@ -89,6 +89,20 @@ const (
 	// action so a name has to mean exactly one thing. They share the `e` key on
 	// their respective screens because both edit the selected row.
 	ActionRepoint Action = "repoint" // e: point the selected target at another ref
+
+	// Re-pairing a branch (19b), from the dashboard. Deliberately *not*
+	// ActionOpenPicker reused, even though it opens the same overlay over the same
+	// targets and writes the same field: on the pairing checklist a pick is
+	// provisional until enter saves the ticket, and here it is written the moment
+	// it is made. That is the distinction between `s` and `u` — same mechanism,
+	// different commitment — and the help table being generated per action means
+	// the two have to be able to say so separately.
+	//
+	// `p` rather than `t`, which the dashboard already spends on the targets
+	// screen, and rather than the `e` the wizard and the targets screen use for
+	// "edit the selected row": this pairs a branch to a target, so it reads as its
+	// own verb rather than borrowing a meaning from another screen.
+	ActionRepair Action = "repair" // p: pair the selected branch to another target
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -302,6 +316,7 @@ func DefaultDashboardKeys() Keymap {
 		"l":     ActionLocalOnly,
 		"s":     ActionShelve,
 		"u":     ActionUpdate,
+		"p":     ActionRepair,  // the checklist's t, on the one row it applies to
 		"t":     ActionTargets, // the pairing checklist's own t opens a target picker
 
 		"?":      ActionHelp,
@@ -344,8 +359,18 @@ func DefaultPairingKeys() Keymap {
 
 // DefaultPickerKeys binds the target picker overlay — the same move/confirm/
 // cancel shape as the dashboard, so the overlay needs no learning.
+//
+// One keymap for both places the overlay opens: over the pairing checklist
+// (ActionOpenPicker) and over the dashboard (ActionRepair, 19b). They render one
+// body and answer one question — which target — so a rebind that moved the cursor
+// keys in one and not the other would be a bug, not a customization.
+//
+// The 1–9 accelerators are bound *here* as well as on the checklist underneath,
+// because the body draws them: the picker has always shown a digit beside each of
+// the first nine targets, and until 19b shared the body those digits only worked
+// after esc-ing back to the checklist. A drawn accelerator has to be a live one.
 func DefaultPickerKeys() Keymap {
-	return Keymap{
+	k := Keymap{
 		"j":      ActionMoveDown,
 		"down":   ActionMoveDown,
 		"k":      ActionMoveUp,
@@ -354,6 +379,10 @@ func DefaultPickerKeys() Keymap {
 		"esc":    ActionCancel,
 		"ctrl+c": ActionQuit,
 	}
+	for n := 1; n <= 9; n++ {
+		k[strconv.Itoa(n)] = ActionPickTarget(n)
+	}
+	return k
 }
 
 // DefaultConfirmDeleteKeys binds the delete confirmation: y/enter commit, n/esc

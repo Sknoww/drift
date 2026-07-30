@@ -38,6 +38,7 @@ var actionText = map[Action]string{
 	ActionToggleCandidate: "include / exclude the selected row",
 	ActionFilter:          "narrow the list — type to match, esc clears",
 	ActionOpenPicker:      "choose a target for it",
+	ActionRepair:          "re-pair the selected branch to another target",
 	ActionEditKey:         "rename the target key",
 	ActionRepoint:         "point this target at a different ref",
 	ActionNextFile:        "next colliding file (wraps)",
@@ -68,7 +69,10 @@ var actionOrder = []Action{
 	ActionNextFile, ActionPrevFile, ActionDeclare,
 	ActionHoldLocal, ActionRelease, ActionEditNote,
 	ActionConfirm, ActionCancel,
-	ActionUpdate, ActionShelve,
+	// The three things you do to a branch row, kept adjacent: two run git, one
+	// corrects the pairing they both read. Grouping by the row they act on beats
+	// grouping by whether git is involved — the reader is looking at that row.
+	ActionUpdate, ActionShelve, ActionRepair,
 	ActionAdd, ActionDelete, ActionRefresh, ActionFetch, ActionLocalOnly, ActionTargets,
 	ActionHelp, ActionQuit,
 }

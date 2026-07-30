@@ -128,6 +128,7 @@ type Model struct {
 	diff          diffState       // unmergeable diff panel, live only on screenDiff
 	local         localOnlyState  // local-only manager, live only on screenLocalOnly
 	shelve        shelveState     // the shelve sequence and the report it leaves behind
+	repair        repairState     // 19b: the target picker open over a dashboard branch row
 
 	status  map[string]branchStatus
 	current string // checked-out branch, "" when detached

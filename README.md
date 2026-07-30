@@ -95,6 +95,7 @@ rebindable without a code change.
 | `d` | delete the selected ticket |
 | `u` | update — bring the selected branch up to date and publish it |
 | `s` | shelve — merge the target into this branch, here; nothing is published |
+| `p` | re-pair the selected branch to another target (`1`–`9` pick directly) |
 | `l` | manage local-only changes |
 | `t` | show the configured targets and the refs they point at |
 | `f` | fetch, then refresh (`esc` aborts an in-flight fetch) |
@@ -110,6 +111,10 @@ rebindable without a code change.
 | `t` | choose a target for it |
 | `1`–`9` | assign the Nth configured target directly |
 | `enter` / `esc` | save / back out |
+
+The target picker `t` opens is the same overlay `p` opens on the dashboard: `j`/`k`
+move, `1`–`9` pick directly, `enter` takes the highlighted one, `esc` backs out.
+The target the branch aims at now is marked `current`.
 
 **Diff panel** (`enter` on a branch with collisions)
 

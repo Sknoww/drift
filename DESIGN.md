@@ -475,6 +475,7 @@ Dashboard:
 | `esc` | Cancel an in-flight fetch (no-op when idle) |
 | `u` | Update: bring the selected branch up to date and publish it (area 17) |
 | `s` | Shelve: merge the target into the checked-out branch, publish nothing (area 7) |
+| `p` | Re-pair the selected branch row to another target (19b) |
 | `l` | Manage local-only changes (area 6) |
 | `t` | Show the configured targets and the refs they point at (19e) |
 | `?` | Keys and glyphs for the current screen |
@@ -518,10 +519,37 @@ problem and is not (`CandidateBranches` already narrows to branches containing t
 ID), and filters anyway: one list screen that filters and one that does not is a worse
 tool than either.
 
-Target picker overlay: `j` / `k` move, `enter` selects, `esc` cancels — deliberately
-the same shape as the dashboard, so the overlay needs no learning. Targets past the
-9th are reachable only through the picker, which is exactly why it's the mechanism and
-the number keys are only a shortcut.
+Target picker overlay: `j` / `k` move, `1`–`9` pick directly, `enter` selects, `esc`
+cancels — deliberately the same shape as the dashboard, so the overlay needs no
+learning. Targets past the 9th are reachable only through the picker, which is exactly
+why it's the mechanism and the number keys are only a shortcut.
+
+**It is one overlay in two places** (19b): over the pairing checklist, where `t` chooses
+a target for a candidate, and over the dashboard, where `p` re-pairs a branch row.
+One body, one keymap — two renderings of the same choice would be two things to keep in
+step. The accelerators are bound *inside* it and not only on the checklist underneath,
+because the body draws a digit beside each of the first nine targets: a drawn accelerator
+has to be a live one. The target the branch aims at now is marked `current`, which is
+19e's argument about its ref picker applied here — the cursor opens on that row, but that
+signal is gone as soon as the user moves, and a list of targets with nothing
+distinguishing one from another cannot say what is being changed *from*. A word rather
+than a glyph, since this overlay binds no `?` and a glyph would have nowhere to be
+explained.
+
+**`p` commits on `enter`, with no confirmation, and that is the rule rather than the
+exception** — the re-point below is still the one picker in Drift that asks. What earned
+it a `y`/`n` was reach: re-pointing a target silently re-bases *every* paired branch's
+`↓behind`. Re-pairing one branch re-bases one row, and that row shows its new target key
+the moment the overlay closes. There is no success notice for the same reason: the row is
+the feedback, permanently, where a notice would be wiped by the sweep the write itself
+starts. Picking the target the branch already aims at is said out loud instead of written
+— the one outcome where "it worked" and "nothing happened" leave the row identical.
+
+The two fields are corrected on different screens on purpose, and the split is worth
+keeping straight. A **target's `Ref`** (config.json) is what a key points at — `e` on the
+targets screen. A **branch's `TargetKey`** (state.json) is which target it aims for — `p`
+on the dashboard. Neither screen can fix the other's field, and 19's incident needed the
+first while 19b is the second.
 
 Targets screen (19e):
 
