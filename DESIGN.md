@@ -489,6 +489,28 @@ the same shape as the dashboard, so the overlay needs no learning. Targets past 
 9th are reachable only through the picker, which is exactly why it's the mechanism and
 the number keys are only a shortcut.
 
+Targets screen (19e):
+
+| Key | Action |
+|---|---|
+| `j` / `k` / arrows | Move |
+| `e` | Point the selected target at a different ref |
+| `esc` | Back to the dashboard |
+| `q` / `ctrl+c` | Quit |
+
+`enter` is deliberately **unbound** here. It means "commit this screen" everywhere else,
+and this screen has nothing to commit — editing the selected row is `e`, which is what it
+already means on the first-run wizard. `e` opens a ref picker (the wizard's list again:
+`RemoteBranches`, recency-sorted, with the age column and `/`), then a `y`/`n` before the
+write. **The confirmation is the one place a picker in Drift does not commit on `enter`**,
+and the reason is the same one 19a widened `u`'s prompt for: the write is local and
+reversible, but it silently re-bases every dashboard row's `↓behind` onto a different ref,
+and that is the one effect no row can show as it happens. Both refs are named — the *from*
+as prominently as the *to*, since the whole finding behind the area is that the ref being
+replaced is the one nobody has seen. `e` reaches the **ref alone**: a target's key is what
+every pairing in `state.json` references, so renaming one there would orphan them silently
+(see roadmap 19b).
+
 Diff panel (area 5):
 
 | Key | Action |

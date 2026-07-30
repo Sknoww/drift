@@ -421,15 +421,51 @@ func (c Config) Target(key string) (Target, bool) {
 	return Target{}, false
 }
 
+// SetTargetRef points the target keyed key at ref, reporting false when no
+// target carries that key — a caller acting on a stale selection is told so
+// rather than silently writing nothing.
+//
+// The slice is copied before it is changed, never written through, for the
+// reason SetLocalOnlyNote copies its own: Config is passed by value all over the
+// UI, and an in-place edit would reach every copy.
+//
+// Ref alone is settable, and that is a constraint rather than an omission. Every
+// pairing in state.json references its target by Key (TicketBranch.TargetKey),
+// so renaming a key here would orphan those pairings silently — a second job
+// with its own hazard. Ref is the field a wrong target is wrong *in*: it is
+// written once by the first-run wizard and, until this existed, correctable
+// only by hand-editing config.json with Drift closed (roadmap 19e).
+func (c Config) SetTargetRef(key, ref string) (Config, bool) {
+	targets := make([]Target, len(c.Targets))
+	copy(targets, c.Targets)
+
+	found := false
+	for i := range targets {
+		if targets[i].Key == key {
+			targets[i].Ref = ref
+			found = true
+		}
+	}
+	if !found {
+		return c, false
+	}
+	c.Targets = targets
+	return c, true
+}
+
 // SaveConfig writes cfg to the first entry on the search path, the same file
-// LoadConfig seeds a placeholder into. It is the first-run wizard's write path
-// (roadmap area 4): the wizard builds real targets from real refs, so Drift
-// writes the config the user would otherwise hand-edit.
+// LoadConfig seeds a placeholder into. It has two callers, and they are the two
+// halves of the same rule — show real refs and let the user choose: the
+// first-run wizard, which builds every target from a real remote ref (area 4),
+// and the targets screen's re-point, which repairs one that turned out to name
+// the wrong one (19e).
 //
 // It validates before writing, so a bad set of targets (none, empty fields,
 // duplicate keys) is reported rather than persisted into a broken config. It
-// does not itself guard against overwriting a good config — callers reach it
-// only after LoadConfig has reported the repo unconfigured.
+// does not itself guard against overwriting a good config: the wizard reaches it
+// only after LoadConfig has reported the repo unconfigured, and the re-point
+// deliberately does overwrite — a config it has already loaded and validated,
+// with exactly one field changed.
 func SaveConfig(ctx context.Context, r gitDirer, cfg Config) error {
 	if err := cfg.validate(); err != nil {
 		return err

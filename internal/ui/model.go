@@ -153,10 +153,13 @@ type Model struct {
 	showHelp   bool
 	helpOffset int
 
-	// The targets screen's cursor (19e). A bare int rather than a state struct,
-	// the same as helpOffset above: the screen reads the config it was opened
-	// over and keeps nothing else.
+	// The targets screen's cursor (19e). A bare int, the same as helpOffset above:
+	// the list itself reads the config it was opened over and keeps nothing else.
+	// The re-point flow beside it does need state — the refs it offers, its own
+	// cursor and filter, and the pending pick — so that is its own struct, live
+	// only while `e` has something open.
 	targetsCur int
+	repoint    repointState
 
 	notice string // transient one-line hint or error under the panel
 	err    error  // last status-sweep error, shown until the next good sweep

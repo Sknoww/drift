@@ -255,6 +255,48 @@ func releaseLocalCmd(repo *git.Repo, path string, tracked bool) tea.Cmd {
 	}
 }
 
+// remoteRefsMsg carries the repo's remote-tracking refs back to the re-point
+// picker (19e). It is the same offer the first-run wizard is built from, and for
+// the same reason: a target is compared against its origin/<name> ref, so the
+// refs under refs/remotes are the only honest set to choose one from.
+type remoteRefsMsg struct {
+	refs []git.RemoteBranch
+	err  error
+}
+
+// loadRemoteRefsCmd lists the remote-tracking refs off the UI thread. No fetch:
+// every ref it can offer is one that already exists locally, so the picker's
+// list is complete without the network — and how *fresh* a ref is stays the
+// dashboard's `f`, which is a different question from which ref a target names.
+func loadRemoteRefsCmd(repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		got, err := repo.RemoteBranches(context.Background())
+		return remoteRefsMsg{refs: got, err: err}
+	}
+}
+
+// repointMsg reports a completed re-point of one target's ref (19e). It carries
+// the whole config it wrote rather than the one field: Update folds that in only
+// once the write has succeeded, so the model can never hold a target the file on
+// disk does not agree with — which matters more here than anywhere else in the
+// package, because the next status sweep measures every branch against it.
+type repointMsg struct {
+	cfg      store.Config
+	key      string
+	from, to string
+	err      error
+}
+
+// repointCmd writes the re-pointed config. cfg is already the updated one, built
+// by store.SetTargetRef before the Cmd was made, so SaveConfig's validate runs
+// over exactly what will land.
+func repointCmd(repo *git.Repo, cfg store.Config, key, from, to string) tea.Cmd {
+	return func() tea.Msg {
+		err := store.SaveConfig(context.Background(), repo, cfg)
+		return repointMsg{cfg: cfg, key: key, from: from, to: to, err: err}
+	}
+}
+
 // saveStateMsg reports the result of persisting state.json.
 type saveStateMsg struct{ err error }
 

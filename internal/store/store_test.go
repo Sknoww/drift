@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -774,5 +775,86 @@ func TestLocalOnlyRoundTrip(t *testing.T) {
 	}
 	if strings.Contains(string(data), "localOnly") {
 		t.Errorf("state.json = %s, want no localOnly key when nothing is annotated", data)
+	}
+}
+
+// --- re-pointing a target (roadmap 19e) -----------------------------------
+
+func TestSetTargetRefChangesOnlyThatTarget(t *testing.T) {
+	cfg := Config{Targets: []Target{
+		{Key: "mvp-3", Ref: "origin/fix/PSOT-22114-PickHistory/mvp-3"},
+		{Key: "r2stab", Ref: "origin/release-2-stability"},
+	}}
+
+	got, ok := cfg.SetTargetRef("mvp-3", "origin/mvp-3")
+	if !ok {
+		t.Fatal("SetTargetRef reported the key missing")
+	}
+	if tgt, _ := got.Target("mvp-3"); tgt.Ref != "origin/mvp-3" {
+		t.Errorf("mvp-3 ref = %q, want the new one", tgt.Ref)
+	}
+	// The key is not the re-point's to change: every pairing in state.json
+	// references a target by key, so touching one would orphan them silently.
+	if tgt, _ := got.Target("mvp-3"); tgt.Key != "mvp-3" {
+		t.Errorf("mvp-3 key = %q, want it untouched", tgt.Key)
+	}
+	if tgt, _ := got.Target("r2stab"); tgt.Ref != "origin/release-2-stability" {
+		t.Errorf("r2stab ref = %q, want it untouched", tgt.Ref)
+	}
+	if err := got.validate(); err != nil {
+		t.Errorf("the re-pointed config does not validate: %v", err)
+	}
+}
+
+// The copy rule, and it is not academic: Config is passed by value all over the
+// UI, so an in-place edit of the targets slice would reach every copy — including
+// the one the model is still rendering from before the write has landed.
+func TestSetTargetRefDoesNotWriteThroughTheOriginal(t *testing.T) {
+	cfg := Config{Targets: []Target{{Key: "main", Ref: "origin/main"}}}
+
+	if _, ok := cfg.SetTargetRef("main", "origin/trunk"); !ok {
+		t.Fatal("SetTargetRef reported the key missing")
+	}
+	if tgt, _ := cfg.Target("main"); tgt.Ref != "origin/main" {
+		t.Errorf("the original config was mutated: main ref = %q", tgt.Ref)
+	}
+}
+
+func TestSetTargetRefReportsAnUnknownKey(t *testing.T) {
+	cfg := Config{Targets: []Target{{Key: "main", Ref: "origin/main"}}}
+
+	got, ok := cfg.SetTargetRef("gone", "origin/trunk")
+	if ok {
+		t.Error("SetTargetRef reported success for a key that is not there")
+	}
+	if tgt, _ := got.Target("main"); tgt.Ref != "origin/main" {
+		t.Errorf("a missing key still changed something: main ref = %q", tgt.Ref)
+	}
+}
+
+// SaveConfig has a second caller now, and it overwrites a config that is already
+// good — the wizard's write only ever landed on a placeholder. What must not
+// change is that it validates first: an empty ref would leave every paired branch
+// comparing against nothing.
+func TestSaveConfigRejectsAnEmptyRepointedRef(t *testing.T) {
+	r := fakeRepo{dir: t.TempDir()}
+
+	cfg, ok := Config{Targets: []Target{{Key: "main", Ref: "origin/main"}}}.SetTargetRef("main", "")
+	if !ok {
+		t.Fatal("SetTargetRef reported the key missing")
+	}
+	err := SaveConfig(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("SaveConfig accepted a target with an empty ref")
+	}
+	if !strings.Contains(err.Error(), "main") {
+		t.Errorf("the error does not name the target: %v", err)
+	}
+	paths, err := Resolve(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths.Config); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("a rejected config was written anyway")
 	}
 }

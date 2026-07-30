@@ -123,6 +123,13 @@ rebindable without a code change.
 | `n` | note why it's held |
 | `esc` | back to the dashboard |
 
+**Targets** (`t`)
+
+| Key | Does |
+|---|---|
+| `e` | point the selected target at a different ref (`/` filters, then `y` confirms) |
+| `esc` | back to the dashboard |
+
 ## What the features do
 
 **Shelve** (`s`) runs the whole sequence on the checked-out branch in one keystroke:
@@ -177,8 +184,9 @@ your other tools' config, in `~/.config/drift/`.
 
 ### Per repo
 
-- **`config.json`** — yours to hand-edit. Targets, unmergeable classes, and where
-  declarations may be written.
+- **`config.json`** — yours to hand-edit, except for a target's `ref`, which `t` then `e`
+  re-points from inside drift. Targets, unmergeable classes, and where declarations may be
+  written.
 - **`state.json`** — drift's. Tracked tickets and local-only notes.
 
 ```json
@@ -197,7 +205,11 @@ your other tools' config, in `~/.config/drift/`.
 }
 ```
 
-`targets` is unbounded — two is just this example. `declare.destinations` allow-lists
+`targets` is unbounded — two is just this example. A target's `ref` is the one thing here
+you don't have to edit by hand: `t` shows what each target actually points at, and `e`
+points one somewhere else, picked from the repo's own refs. That matters because a `key`
+can read perfectly while the `ref` behind it names the wrong branch — and until you look,
+every `↓behind` on the dashboard is measured against that wrong branch. `declare.destinations` allow-lists
 where `w` may write; omit the key entirely and both destinations are offered. A team
 with no committed `.gitattributes` lists only `"local"`, and the shared destination
 stops being offered at all, so it can never be picked by accident.

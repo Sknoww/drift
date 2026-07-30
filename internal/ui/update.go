@@ -61,6 +61,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shelveMsg:
 		return m.applyShelve(msg)
 
+	case remoteRefsMsg:
+		return m.applyRemoteRefs(msg), nil
+
+	case repointMsg:
+		return m.applyRepoint(msg)
+
 	case saveStateMsg:
 		if msg.err != nil {
 			m.notice = "save failed: " + msg.err.Error()
@@ -79,14 +85,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // typing reports whether a text field is live, so an unbound key is a keystroke
-// rather than a no-op. Three screens qualify: ID entry, where the whole screen
-// is the field; the local-only note editor open over its list; and the pairing
-// checklist's filter field, which has to swallow `space`, `t` and 1–9 or an
-// incremental query could never contain them.
+// rather than a no-op. Four screens qualify: ID entry, where the whole screen is
+// the field; the local-only note editor open over its list; the pairing
+// checklist's filter field; and the re-point picker's filter field. The last two
+// have to swallow `space`, `t`, `e` and 1–9 or an incremental query could never
+// contain them — and a ref is exactly the kind of string that does.
 func (m Model) typing() bool {
 	return m.screen == screenAddID ||
 		(m.screen == screenLocalOnly && m.local.note.open) ||
-		(m.screen == screenPairing && !m.add.picker && m.add.filter.open)
+		(m.screen == screenPairing && !m.add.picker && m.add.filter.open) ||
+		(m.screen == screenTargets && m.repoint.open && !m.repoint.confirm && m.repoint.filter.open)
 }
 
 // feedField routes a keystroke to whichever field typing() found live. The
@@ -97,6 +105,11 @@ func (m Model) feedField(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.screen == screenPairing && m.add.filter.open {
 		f, cmd := m.add.filter.typed(msg)
 		m.add = m.add.applyFilter(f)
+		return m, cmd
+	}
+	if m.screen == screenTargets && m.repoint.filter.open {
+		f, cmd := m.repoint.filter.typed(msg)
+		m.repoint = m.repoint.applyFilter(f)
 		return m, cmd
 	}
 	var cmd tea.Cmd
@@ -196,6 +209,18 @@ func (m Model) activeKeys() Keymap {
 		}
 		return m.keys.shelve
 	case screenTargets:
+		switch {
+		case m.repoint.confirm:
+			// The confirmation shadows the picker's keymap while it is open, exactly
+			// as the stash plan shadows the shelve report's.
+			return m.keys.confirmRepoint
+		case m.repoint.open && m.repoint.filter.open:
+			// Only the filter's control keys act while it has focus; every other key
+			// falls through typing() into the query.
+			return m.keys.filter
+		case m.repoint.open:
+			return m.keys.repoint
+		}
 		return m.keys.targets
 	default:
 		return m.keys.dashboard

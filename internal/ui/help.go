@@ -39,6 +39,7 @@ var actionText = map[Action]string{
 	ActionFilter:          "narrow the list — type to match, esc clears",
 	ActionOpenPicker:      "choose a target for it",
 	ActionEditKey:         "rename the target key",
+	ActionRepoint:         "point this target at a different ref",
 	ActionNextFile:        "next colliding file (wraps)",
 	ActionPrevFile:        "previous colliding file (wraps)",
 	ActionDeclare:         "declare this file unmergeable to git",
@@ -63,7 +64,7 @@ var actionText = map[Action]string{
 // action can never silently drop it from the help.
 var actionOrder = []Action{
 	ActionMoveUp, ActionMoveDown, ActionFilter,
-	ActionToggleExpand, ActionToggleCandidate, ActionOpenPicker, ActionEditKey,
+	ActionToggleExpand, ActionToggleCandidate, ActionOpenPicker, ActionEditKey, ActionRepoint,
 	ActionNextFile, ActionPrevFile, ActionDeclare,
 	ActionHoldLocal, ActionRelease, ActionEditNote,
 	ActionConfirm, ActionCancel,
@@ -204,6 +205,9 @@ func (m Model) glyphLegend() []helpEntry {
 		// no legend rather than the dashboard's — explaining signals that are not
 		// on the screen you are on teaches the wrong thing, which is the same rule
 		// that has each glyph drawn in its own role's colour.
+		//
+		// The re-point confirmation is covered by the same nil: it draws two refs and
+		// a question, and its picker's age column is a value rather than a glyph.
 		return nil
 	}
 	return []helpEntry{
@@ -255,6 +259,13 @@ func (m Model) screenName() string {
 		}
 		return "shelve"
 	case screenTargets:
+		// The picker binds no help key at all (a momentary choice step carries its
+		// own one-line help), so only the confirmation can be named here. It is named
+		// rather than left as "targets" for the reason the update confirmation is: the
+		// overlay opened over a y/n has to be about the y/n.
+		if m.repoint.confirm {
+			return "re-point confirmation"
+		}
 		return "targets"
 	default:
 		return "dashboard"

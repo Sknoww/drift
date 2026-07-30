@@ -82,6 +82,13 @@ const (
 	// every other screen-opening action has one — the help table is generated
 	// per action, so a name has to describe exactly one thing.
 	ActionTargets Action = "targets" // t: show the targets and the refs they point at
+
+	// Re-pointing a target at a different ref (19e), from the targets screen. Its
+	// own verb rather than the wizard's ActionEditKey reused: that one renames a
+	// key, this one changes the ref behind it, and the help table is generated per
+	// action so a name has to mean exactly one thing. They share the `e` key on
+	// their respective screens because both edit the selected row.
+	ActionRepoint Action = "repoint" // e: point the selected target at another ref
 )
 
 // pickTargetPrefix builds the parametric "assign the Nth target" accelerator
@@ -118,57 +125,104 @@ type Keymap map[string]Action
 // overridable, so area 12 rebinds the add flow and the dashboard separately
 // without either leaking into the other.
 type keymaps struct {
-	dashboard     Keymap
-	addID         Keymap
-	pairing       Keymap
-	picker        Keymap
-	confirmDelete Keymap
-	wizard        Keymap
-	diff          Keymap
-	declare       Keymap
-	localOnly     Keymap
-	localAdd      Keymap
-	localNote     Keymap
-	shelve        Keymap
-	confirmStash  Keymap
-	filter        Keymap
-	targets       Keymap
+	dashboard      Keymap
+	addID          Keymap
+	pairing        Keymap
+	picker         Keymap
+	confirmDelete  Keymap
+	wizard         Keymap
+	diff           Keymap
+	declare        Keymap
+	localOnly      Keymap
+	localAdd       Keymap
+	localNote      Keymap
+	shelve         Keymap
+	confirmStash   Keymap
+	filter         Keymap
+	targets        Keymap
+	repoint        Keymap
+	confirmRepoint Keymap
 }
 
 func defaultKeymaps() keymaps {
 	return keymaps{
-		dashboard:     DefaultDashboardKeys(),
-		addID:         DefaultAddIDKeys(),
-		pairing:       DefaultPairingKeys(),
-		picker:        DefaultPickerKeys(),
-		confirmDelete: DefaultConfirmDeleteKeys(),
-		wizard:        DefaultWizardKeys(),
-		diff:          DefaultDiffKeys(),
-		declare:       DefaultDeclareKeys(),
-		localOnly:     DefaultLocalOnlyKeys(),
-		localAdd:      DefaultLocalAddKeys(),
-		localNote:     DefaultLocalNoteKeys(),
-		shelve:        DefaultShelveKeys(),
-		confirmStash:  DefaultConfirmStashKeys(),
-		filter:        DefaultFilterKeys(),
-		targets:       DefaultTargetsKeys(),
+		dashboard:      DefaultDashboardKeys(),
+		addID:          DefaultAddIDKeys(),
+		pairing:        DefaultPairingKeys(),
+		picker:         DefaultPickerKeys(),
+		confirmDelete:  DefaultConfirmDeleteKeys(),
+		wizard:         DefaultWizardKeys(),
+		diff:           DefaultDiffKeys(),
+		declare:        DefaultDeclareKeys(),
+		localOnly:      DefaultLocalOnlyKeys(),
+		localAdd:       DefaultLocalAddKeys(),
+		localNote:      DefaultLocalNoteKeys(),
+		shelve:         DefaultShelveKeys(),
+		confirmStash:   DefaultConfirmStashKeys(),
+		filter:         DefaultFilterKeys(),
+		targets:        DefaultTargetsKeys(),
+		repoint:        DefaultRepointKeys(),
+		confirmRepoint: DefaultConfirmRepointKeys(),
 	}
 }
 
-// DefaultTargetsKeys binds the targets screen (19e). It is a list you read, not
-// one you choose from, so it binds movement and the ways out and nothing else —
-// enter is deliberately absent rather than made a synonym for esc, since a key
-// that means "commit this screen" everywhere else must not quietly mean
-// something different here.
+// DefaultTargetsKeys binds the targets screen (19e): movement, `e` to point the
+// selected target at a different ref, and the ways out.
+//
+// enter stays deliberately unbound rather than made a synonym for `e` or for
+// esc. A key that means "commit this screen" everywhere else must not quietly
+// mean "edit the selected row" here — that is what `e` means on the first-run
+// wizard, and the two screens now read the same way.
 func DefaultTargetsKeys() Keymap {
 	return Keymap{
 		"j":      ActionMoveDown,
 		"down":   ActionMoveDown,
 		"k":      ActionMoveUp,
 		"up":     ActionMoveUp,
+		"e":      ActionRepoint,
 		"esc":    ActionCancel,
 		"?":      ActionHelp,
 		"q":      ActionQuit,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultRepointKeys binds the ref picker opened by `e` — the same
+// move/enter/esc shape as the target picker and the declare overlay, plus `/`,
+// since it offers every ref under refs/remotes and that is the one list area 14
+// found filtering load-bearing on.
+//
+// No `?`, the same as the target picker, the declare overlay and the hold
+// picker: a momentary choice step carries its own one-line help (DESIGN.md §2).
+// `q` is left unbound too — while a choice is open, backing out of it is esc.
+func DefaultRepointKeys() Keymap {
+	return Keymap{
+		"j":      ActionMoveDown,
+		"down":   ActionMoveDown,
+		"k":      ActionMoveUp,
+		"up":     ActionMoveUp,
+		"/":      ActionFilter,
+		"enter":  ActionConfirm,
+		"esc":    ActionCancel,
+		"ctrl+c": ActionQuit,
+	}
+}
+
+// DefaultConfirmRepointKeys binds the re-point confirmation — the y/n question
+// between picking a ref and config.json being rewritten.
+//
+// The delete confirmation's shape rather than a picker's, because it is a yes/no
+// and not a list, and `?` is bound for the reason it is bound on the stash plan
+// (area 17b): while a confirmation is on screen, the key that opens the help must
+// not also be the key that commits the write. The `?` overlay's "any key closes,
+// and is consumed" rule is what makes that hold.
+func DefaultConfirmRepointKeys() Keymap {
+	return Keymap{
+		"y":      ActionConfirm,
+		"enter":  ActionConfirm,
+		"n":      ActionCancel,
+		"esc":    ActionCancel,
+		"?":      ActionHelp,
 		"ctrl+c": ActionQuit,
 	}
 }

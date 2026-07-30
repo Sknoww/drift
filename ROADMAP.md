@@ -893,9 +893,13 @@ is; link its spec/ADR once one exists.
       incident; 19a is what failed to stop it; 19b is real but was not implicated; 19c is
       unrelated fidelity work. Build 19e and 19a first — together they make a wrong target
       visible at rest and at the one moment it can still be stopped for free.
-      **19e's showing half and 19a have both shipped**, so a wrong target is now visible
-      on its own screen *and* named on the way past. What is left is 19e's editing half,
-      19b, 19c and 19d — none of which are what the incident needed first
+      **19a and both halves of 19e have shipped**, so a wrong target is now visible on its
+      own screen, named on the way past at the one moment it can still be stopped for free,
+      and correctable in the tool. That closes everything the incident itself needed. What is
+      left is 19b (a *pairing* cannot be changed — real, but not implicated), 19c (fidelity)
+      and 19d (the wizard can still seed a key that lies about its ref — the deeper cause,
+      now mitigated rather than fixed: a bad pick is visible and repairable, but still
+      offerable)
     - ✅ **Settled: the `mvp-3` target's ref pointed at a feature branch.** Diagnosed from
       the work repo's reflog and its `config.json`. The roadmap's reading was right in every
       part — merging a branch into a source whose MR *targets* that branch cannot add commits
@@ -1020,10 +1024,10 @@ is; link its spec/ADR once one exists.
         spent itself establishing
     - ⏳ **19b — a pair's target cannot be changed once it is made.** The target picker
       exists but is reachable only from the pairing checklist inside the add flow
-      (`ActionOpenPicker`, handled at `internal/ui/addflow.go:186`); the dashboard keymap
-      (`internal/ui/keys.go:235`) has no equivalent — 19e's `t` opens the read-only targets
-      screen, which is a different question (what a target points at, not which target a
-      branch is paired to). `TargetKey` is written in exactly one
+      (`ActionOpenPicker`, handled at `internal/ui/addflow.go:186`); the dashboard keymap has
+      no equivalent — 19e's `t` opens the targets screen, whose `e` re-points a *target's*
+      ref, which is a different question (what a target points at, not which target a branch
+      is paired to). `TargetKey` is written in exactly one
       place — `savePairing` (`addflow.go:326`), which builds a fresh `store.Ticket` and
       appends it — and `store` exposes no setter, only the read-only `Ticket` accessor
       (`internal/store/store.go:487`). So a wrong pairing is visible on the dashboard and
@@ -1101,7 +1105,7 @@ is; link its spec/ADR once one exists.
         accent cannot widen its surface by accident; the equivalent here is a case asserting
         that a seeded key round-trips to a ref a reader would recognise. Worth writing
         whichever way the two questions above land
-    - 🛠️ **19e — a target's ref is write-once and invisible, so a wrong one cannot be seen or
+    - ✅ **19e — a target's ref is write-once and invisible, so a wrong one cannot be seen or
       fixed.** The second cause, and the cheaper half. `Target.Ref` is written in exactly one
       place — the first-run wizard — and *was* rendered in exactly one, the wizard's own
       picker row (`internal/ui/view.go:587`). The dashboard shows `br.TargetKey`
@@ -1109,7 +1113,8 @@ is; link its spec/ADR once one exists.
       looked *correct* on the screen the user lives in: the key said `mvp-3`, and `mvp-3` was
       what they wanted. The only route to a fix was hand-editing `config.json` with Drift
       closed — which is what the incident actually required, and it is a route nobody finds
-      without reading the source. **The showing half has shipped; editing is what is left.**
+      without reading the source. **Both halves have shipped: `t` shows the ref, `e` changes
+      it.**
       - **This is the correction path 19b was miscast as.** Same argument, different field:
         prevention and correction are separate jobs, and 19a alone would have left a user who
         already has a bad target editing JSON. Unlike 19b it is load-bearing on real evidence
@@ -1152,13 +1157,54 @@ is; link its spec/ADR once one exists.
         so the newest and least urgent segment sits last and is the first to go; every
         *doing* verb still survives to the 60-column floor, and `? help` — where everything
         elided lives — names both in full
-      - ⏳ **What is left: editing.** Re-running target selection against the current repo is
-        a screen that already exists, and reaching it from the targets row may be the whole
-        feature. It needs a `Target.Ref` setter in `store`, a `SaveConfig` round-trip, and
-        the rule below. A user who can now *see* a wrong ref still has to leave Drift to fix
-        one
-      - **Whatever is built must re-read, never assume.** The rule areas 5 and 6 both landed
-        on: after a write, ask git what is true rather than trusting what Drift just did. A
-        re-pointed target changes every row's `↓behind` at once, and a stale sweep would
-        report the old number against the new ref — the same class of lie as the declared
-        badge before it re-read `check-attr`
+      - ✅ **Editing: `e` on the row, and it re-points the ref alone.** The roadmap's guess
+        was "re-running target selection", and the shape that survived contact is narrower:
+        a **ref picker overlay** over the targets list — the same move/enter/esc overlay as
+        the target picker, the declare overlay and the hold picker — offering the wizard's
+        own list (`RemoteBranches`, recency-sorted, with the age column and `/`), then a
+        `y/n`, then the write. Re-running the *wizard* was rejected on inspection: it
+        replaces the whole config, so it would discard keys the user had already renamed,
+        and a changed key orphans every `targetKey` in `state.json`. New: `store.SetTargetRef`,
+        `internal/ui/targets.go`'s `repointState`, `ActionRepoint`, and two keymaps
+        - **Ref only, and that is a constraint rather than an omission.** A key is what every
+          pairing in `state.json` references, so renaming one here would silently orphan
+          them — the *other* field's correction path, and 19b's job. `store.SetTargetRef`
+          exposes the one field on purpose, and the header still names `config.json` so a
+          user who reads `e` and assumes it reaches the key finds out where it doesn't
+        - **The write is confirmed, and 19a's argument is why it isn't waved through.** Every
+          other picker in Drift commits on `enter`, and this one does not: the pick is local
+          and reversible, but it silently re-bases *every* row's `↓behind` onto a different
+          ref, which is the one effect a row cannot show as it happens. The overlay names
+          both refs, and the **from** is as load-bearing as the **to** — the whole finding is
+          that the ref being replaced is the one the user has never seen, because its key
+          read correctly. Both bound by 19a's `boundRef`, so a long one loses its *tail*
+        - **Read-only until the last moment, and there is no partial refusal.** The picker,
+          the pick and the confirmation all touch nothing, so declining has nothing to undo —
+          area 7's central mechanic, applied to a two-step flow that only writes on `y`
+        - **The re-sweep is local, not a fetch, and the reason is a finding.** The picker can
+          only offer refs already under `refs/remotes`, so a ref you can pick is one you
+          already have: there is nothing a fetch would make *resolvable*, only fresher, which
+          is `f`'s question and not this one. Folding a network round trip into a config
+          correction would also make it fail offline for nothing, and `applyStatus` clears
+          the notice on every completed sweep — so a fetch path would routinely replace the
+          re-point's own message with "fetch failed"
+        - **No success notice at all: the row is the feedback.** It shows the new ref the
+          moment the config folds in, which is permanent where a notice is transient — and
+          making the ref legible at rest is the whole reason this area exists. A *failed*
+          write does get one, and nothing clears it, since a failed write starts no sweep
+        - **The model is not updated until the write succeeds.** The Cmd carries the whole new
+          config and `applyRepoint` folds it in only on success. Optimism is cheap almost
+          everywhere else in the package and expensive here: the very next sweep measures
+          every branch against that ref, so a model ahead of the file would report correct
+          numbers about a target that does not exist on disk
+        - **Picking the ref already configured is said out loud, not written.** It is the one
+          outcome where "it worked" and "nothing happened" leave the row identical, so the
+          screen has to be what tells them apart — and the picker marks the current ref for
+          the same reason, since a list of refs otherwise cannot say what you are changing
+          *from*
+      - ✅ **It re-reads rather than assuming.** The rule areas 5 and 6 both landed on: after
+        a write, ask git what is true rather than trusting what Drift just did. A re-pointed
+        target changes every row's `↓behind` at once, and a stale sweep would report the old
+        number against the new ref — the same class of lie as the declared badge before it
+        re-read `check-attr`. The sweep id advances with it, so an in-flight sweep against the
+        *old* ref cannot land afterwards and clobber the new one
