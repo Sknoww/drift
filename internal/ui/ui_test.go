@@ -1857,6 +1857,54 @@ func TestCandidatesExcludeWhatIsAlreadyHeld(t *testing.T) {
 	}
 }
 
+// The hold picker reserved the widest detail out of the path's budget and then
+// rendered each detail unpadded, so the reservation bought alignment nothing and
+// cost the path thirty cells on every row — the dogfooding complaint that
+// survived removing the column caps (roadmap area 20).
+func TestHoldPickerReservesOnlyWhatItsRowsSpend(t *testing.T) {
+	const width = 110
+
+	m := localModel()
+	m.width, m.height = width, 40
+	m.local.add = addLocalState{
+		open:   true,
+		loaded: true,
+		candidates: []localCandidate{
+			{path: "main-connector/src/main/java/com/teamviewer/connector/Log4j2Configurer.java", tracked: true},
+			{path: "main-connector/src/main/resources/application-local.properties", staged: true},
+		},
+	}
+
+	view := m.localAddBody()
+
+	// The path the reservation used to eat: 74 cells, and the panel has room.
+	if !strings.Contains(view, m.local.add.candidates[0].path) {
+		t.Errorf("the path was elided at %d columns with room to spare:\n%s", width, view)
+	}
+	// The reason a staged change is refused is stated once, off the rows.
+	if !strings.Contains(view, "a hold can't cover the index") {
+		t.Errorf("the header dropped the reason a staged change is refused:\n%s", view)
+	}
+	if !strings.Contains(view, "staged — unstage it first") {
+		t.Errorf("the row stopped naming the fix:\n%s", view)
+	}
+}
+
+// A header line about a case the list does not contain is noise.
+func TestHoldPickerExplainsStagedOnlyWhenThereIsOne(t *testing.T) {
+	m := localModel()
+	m.width, m.height = 110, 40
+	m.local.add = addLocalState{
+		open:       true,
+		loaded:     true,
+		candidates: []localCandidate{{path: "scratch.md"}},
+	}
+
+	if view := m.localAddBody(); strings.Contains(view, "cover the index") {
+		t.Errorf("explained staged changes with none on the list:\n%s", view)
+	}
+}
+
 // skip-worktree hides the working tree, not the index — so holding a staged
 // change would look like protection and give none. It is refused, with the fix.
 func TestStagedCandidateIsRefused(t *testing.T) {

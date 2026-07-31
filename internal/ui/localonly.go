@@ -60,6 +60,18 @@ type addLocalState struct {
 	loaded     bool
 }
 
+// hasStaged reports whether any candidate is one the screen has to refuse. It is
+// what decides whether the header explains staged changes: the explanation is
+// worth a line when there is one on the list and is noise when there is not.
+func (a addLocalState) hasStaged() bool {
+	for _, c := range a.candidates {
+		if c.staged {
+			return true
+		}
+	}
+	return false
+}
+
 // localCandidate is one working-tree change on offer. staged is carried because
 // it is the one case a hold cannot honestly serve: skip-worktree hides the
 // working tree, not the index, so a staged change would still be committed.
@@ -385,12 +397,12 @@ func (m Model) localOnlyBody() string {
 		), "\n")
 	}
 
-	// The mechanism column is unbounded because its content is: two literals,
-	// neither of them user-supplied. The path column is the opposite — it is
-	// whatever the repo holds — so it is capped, and squeezed further to leave the
-	// note beside it something to occupy.
-	mechWidth := widestCell(len(m.local.entries), 0, func(i int) string { return m.local.entries[i].mechanism() })
-	pathWidth := widestCell(len(m.local.entries), maxPathCol, func(i int) string { return m.local.entries[i].path })
+	// The mechanism column takes its content's width: two literals, neither of
+	// them user-supplied. The path column is the opposite — it is whatever the
+	// repo holds — so it is squeezed against the note's floor, and takes its own
+	// content's width whenever the panel has the room (roadmap area 20).
+	mechWidth := widestCell(len(m.local.entries), func(i int) string { return m.local.entries[i].mechanism() })
+	pathWidth := widestCell(len(m.local.entries), func(i int) string { return m.local.entries[i].path })
 	if cw := rowWidth(m.styles, m.width); cw > 0 {
 		const fixed = 1 + 1 + 2 + 2 // glyph and the three separators
 		if avail := cw - fixed - mechWidth - minNameCol; pathWidth > avail {
@@ -428,8 +440,16 @@ func (m Model) localAddBody() string {
 	header := []string{
 		m.styles.hint.Render("Hold a change locally"),
 		m.styles.help.Render("It stays in your working tree on every branch, and never reaches a commit."),
-		"",
 	}
+	// The reason a staged change is refused is the same reason on every row that
+	// carries one, so it is stated once here rather than paid for in the detail
+	// column on every row — see candidateDetail. Only shown when there is one to
+	// explain: a header line about a case the list does not contain is noise.
+	if m.local.add.hasStaged() {
+		header = append(header,
+			m.styles.help.Render("A staged change can't be held — a hold can't cover the index."))
+	}
+	header = append(header, "")
 
 	if !m.local.add.loaded {
 		return strings.Join(append(header, m.styles.help.Render("scanning the working tree…")), "\n")
@@ -443,14 +463,22 @@ func (m Model) localAddBody() string {
 	// The detail cell is what this screen is for — it names the primitive, or
 	// refuses a staged change — so it is costed first and the path takes what is
 	// left, the same ordering the pairing checklist uses.
+	//
+	// **Reserve what the row spends, and spend what is reserved.** This did
+	// neither: it took the widest detail out of the path's budget and then
+	// rendered each detail unpadded, so a `tracked → skip-worktree` row bought
+	// alignment nothing and cost the path thirty cells — with the caps gone, that
+	// reservation was what still held the path column to 45 at 110 columns
+	// (roadmap area 20). The refusal was shortened to the width of the two it sits
+	// beside, and the details are padded to the column that pays for them.
 	details := make([]string, len(m.local.add.candidates))
 	for i, c := range m.local.add.candidates {
 		details[i] = m.candidateDetail(c)
 	}
-	width := widestCell(len(m.local.add.candidates), maxPathCol,
+	detailWidth := widestCell(len(details), func(i int) string { return details[i] })
+	width := widestCell(len(m.local.add.candidates),
 		func(i int) string { return m.local.add.candidates[i].path })
 	if cw := rowWidth(m.styles, m.width); cw > 0 {
-		detailWidth := widestCell(len(details), 0, func(i int) string { return details[i] })
 		if avail := cw - 2 - detailWidth; width > avail {
 			if width = avail; width < minNameCol {
 				width = minNameCol
@@ -459,15 +487,22 @@ func (m Model) localAddBody() string {
 	}
 	var rows []string
 	for i, c := range m.local.add.candidates {
-		rows = append(rows, fmt.Sprintf("%s  %s", m.styles.branch.Render(fit(c.path, width)), details[i]))
+		rows = append(rows, fmt.Sprintf("%s  %s",
+			m.styles.branch.Render(fit(c.path, width)), fit(details[i], detailWidth)))
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, m.local.add.cursor)
 }
 
 // candidateDetail says what holding this change would do — or why it can't.
+//
+// The refusal states what is wrong and how to fix it, and stops there. *Why* a
+// hold cannot cover the index is the same sentence on every staged row, so it is
+// in the screen's header — a column is sized by its longest cell, and a
+// per-row explanation of a per-screen fact was being paid for by every path on
+// the list (roadmap area 20).
 func (m Model) candidateDetail(c localCandidate) string {
 	if c.staged {
-		return m.styles.errText.Render("staged — unstage it first; a hold can't cover the index")
+		return m.styles.errText.Render("staged — unstage it first")
 	}
 	if c.tracked {
 		return m.styles.help.Render("tracked   → skip-worktree")

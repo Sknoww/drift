@@ -122,22 +122,47 @@ the home row. "Looks like raw text output" is a bug.
   - Windowing is a **render** concern only. A row selected and then scrolled out of view
     is still selected and still saved — the same "never guess" rule as pairing.
 - **Every column bounds its own cells** ✅ — one helper (`fit` in `internal/ui/columns.go`)
-  renders a cell in exactly the width its column was given: truncated with an ellipsis
-  when it is wider, padded when it is narrower, **measured in display cells and
-  ANSI-aware**. Before it the package had two padding helpers that disagreed on how to
-  measure (one `lipgloss.Width`, one `len()`) and *neither truncated*, so a column was
-  only ever capped against over-padding — a 60-character branch name in a column "capped"
-  at 32 rendered all 60 and shoved the status cluster off the right-hand end.
+  renders a cell in exactly the width its column was given: elided when it is wider,
+  padded when it is narrower, **measured in display cells and ANSI-aware**. Before it the
+  package had two padding helpers that disagreed on how to measure (one `lipgloss.Width`,
+  one `len()`) and *neither truncated*, so a column was only ever capped against
+  over-padding — a 60-character branch name in a column "capped" at 32 rendered all 60 and
+  shoved the status cluster off the right-hand end.
   - **The order of allocation is the rule.** A row's fixed cost is paid first, then the
     cell that carries the row's *point* — the status cluster on the dashboard, `⚠ pick a
     target` on the pairing checklist, the primitive on the hold picker — and the
     name/path column absorbs what is left. A long name shortens itself; the signal it
     was meant to sit beside never gives way. Inverting that is what the pass fixed.
-  - **A cap is a ceiling, not a width.** A column shorter than its cap still shrinks to
-    its content, and one squeezed by a narrow terminal shrinks below the cap to a floor.
-    Caps exist only on columns whose content is user- or repo-supplied; a column of
-    literals (a destination label, a hold's mechanism) is unbounded because its content
-    is.
+  - **A column caps itself against the row, never against a constant** ✅ — the rule above
+    run to completion (area 20). Five constants used to ceiling the user-supplied columns
+    (a branch name at 32, a held path at 48), and a ceiling that never grows is sized to
+    protect a narrow terminal and taxes a wide one: at 110 columns a 56-cell branch name
+    was cut to 32 with forty cells sitting empty beside it. A column is now
+    `min(its content, what the row has left)`; the `min*Col` **floors** stay, because a
+    floor is a different thing from a ceiling and the squeeze path still needs one. The
+    accepted cost, stated so it is not rediscovered as a regression: one long value sets
+    the column for every row, so short rows carry a ragged gap out to the cell beside
+    them. A gap is legible, a truncated path is not.
+    - **Reserve what the row spends, and spend what is reserved.** The hold picker did
+      neither — it took the widest detail out of the path's budget and rendered each
+      detail unpadded, so a `tracked → skip-worktree` row bought alignment nothing and
+      cost the path thirty cells. A per-row explanation of a per-screen fact is the shape
+      to watch for: the reason a staged change is refused moved to the header, and the
+      column is padded to what it reserves.
+  - **Long values are cut where they carry the least meaning** ✅ — `elide` keeps as much
+    of the head as fits plus the final segment, `…` between: `main-connector/src/main/…/
+    Log4j2Configurer.java`, `update/PSOT-2222…-to-vscode-mvp3`. A tail cut removes exactly
+    the half being read — for a path the identity, for a branch name under a
+    `…-to-vscode-mvp3` convention the *target*, which is the half a dashboard row exists
+    to let you check. The tail is a whole final segment when it fits in half the budget
+    and a character-level cut when the last segment *is* the long part (a branch name
+    carries no interior `/`, so a boundary-only rule degenerates to a tail cut).
+    - **Head-weighted is what reconciles this with 19a**, which rejected a middle-elide
+      for hiding the half worth reading. That objection was to an even split or a
+      first-segment-only keep; the tail here can never take more than half the budget, so
+      `origin/fix/PSOT-22114-…` — the half that gives a wrong target away — is what the
+      arithmetic guarantees, and `/mvp-3` comes back beside it rather than instead of it.
+      The rule to hold onto is the one 19a was defending: **the head must survive.**
   - `clipRow` (Windowing, above) stays underneath as the **backstop**. It clips blind —
     whatever overflows off the right-hand end — so reaching it means dropping a trailing
     cell rather than ellipsising in place. A column that sizes itself never does.
@@ -431,10 +456,12 @@ repo is unconfigured — DESIGN reuses the checklist + `Key`←`Ref` shape, not 
   - **The ref, never the key** — the one word the whole of 19a rests on. A target's key
     is a label the user chose and its ref is what gets merged; the dashboard shows the
     key, so a key reading correctly over the wrong branch is invisible until the merge is
-    published. A ref too long for the line **ellipsises at its tail**:
-    `origin/fix/PSOT-22114-…` is what gives a wrong target away, and the trailing
-    `/mvp-3` is what made it look right, so a middle-elide would hide the half worth
-    reading. The push destination is named on the same argument — an upstream under a
+    published. A ref too long for the line **keeps its head**: `origin/fix/PSOT-22114-…`
+    is what gives a wrong target away, and the trailing `/mvp-3` is what made it look
+    right. That was a tail cut until area 20 made it a head-weighted elide (§1), which
+    keeps the same half and adds the suffix back; what is still forbidden is
+    `origin/…/mvp-3`, the misleading half alone. The push destination is named on the
+    same argument — an upstream under a
     different name is exactly the assumption a bare "publish it" would leave standing.
   - The guarantee line under a dirty plan is what ADR 0002 kept when it traded away
     "Drift never checks anything out", and this is the one screen where it has to be

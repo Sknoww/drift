@@ -201,11 +201,14 @@ func New(repo *git.Repo, paths store.Paths, cfg store.Config, st store.Store, pr
 
 // widestTargetKey drives the status-cluster column width. The target label is
 // variable-width and unbounded in count, so the column is computed, never fixed
-// (DESIGN.md §1) — but bounded, since a key is terse only by intent and nothing
-// in the config enforces it. Measured in display cells: a key is user-supplied
-// text, and byte length would misalign every column beside it.
+// (DESIGN.md §1). It is the *content's* width and nothing more: a key is terse
+// only by intent, and what stops a long one from crowding the row is each
+// screen's own allocation, which squeezes this column against the floor beside
+// it rather than clamping it to a constant a wide terminal has room for
+// (roadmap area 20). Measured in display cells: a key is user-supplied text, and
+// byte length would misalign every column beside it.
 func widestTargetKey(cfg store.Config) int {
-	return widestCell(len(cfg.Targets), maxTargetCol, func(i int) string { return cfg.Targets[i].Key })
+	return widestCell(len(cfg.Targets), func(i int) string { return cfg.Targets[i].Key })
 }
 
 // Init starts the spinner and the first status sweep.

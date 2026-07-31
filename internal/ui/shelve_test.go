@@ -909,11 +909,15 @@ func TestThePlanNamesTheTargetRefAndNeverOnlyItsKey(t *testing.T) {
 	}
 }
 
-func TestALongTargetRefLosesItsTailAndKeepsItsHead(t *testing.T) {
-	// `origin/fix/PSOT-22114-…` is what gives a wrong target away; the trailing
-	// `/mvp-3` is what made it look right. So the ref ellipsises at its tail, and
-	// this is pinned because the obvious "improvement" is a middle-elide that shows
-	// `origin/…/mvp-3` and hides the one half worth reading (roadmap 19a, 19e).
+func TestALongTargetRefKeepsItsHead(t *testing.T) {
+	// `origin/fix/PSOT-22114-…` is what gives a wrong target away, so the head is
+	// what an elide must never spend — the whole of 19a and 19e in one assertion.
+	//
+	// It used to be pinned as "and the tail must go", because a tail cut was the
+	// only rule that kept the head. Area 20's elide keeps both: the head fills its
+	// budget and the final segment rides along behind it. What is still forbidden
+	// is `origin/…/mvp-3` — the misleading half alone — and that is exactly what
+	// the head assertion below rules out.
 	m := beginUpdateOn(updateModel())
 	m.width, m.height = minTerminalWidth, 24
 	m.shelve.targetRef = "origin/fix/PSOT-22114-PickHistory-API-response-for-audit/mvp-3"
@@ -923,8 +927,10 @@ func TestALongTargetRefLosesItsTailAndKeepsItsHead(t *testing.T) {
 	if !strings.Contains(view, "merge in origin/fix/PSOT-2") {
 		t.Errorf("the ref's head was cut; it is the half that gives a wrong target away:\n%s", view)
 	}
-	if strings.Contains(view, "/mvp-3") {
-		t.Errorf("the misleading tail survived, so the ref was elided in the middle:\n%s", view)
+	for _, line := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(line); w > minTerminalWidth {
+			t.Errorf("a %d-cell line at the %d-column floor:\n%s", w, minTerminalWidth, view)
+		}
 	}
 }
 

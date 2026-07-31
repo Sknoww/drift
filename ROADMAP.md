@@ -1356,14 +1356,18 @@ is; link its spec/ADR once one exists.
         number against the new ref — the same class of lie as the declared badge before it
         re-read `check-attr`. The sweep id advances with it, so an in-flight sweep against the
         *old* ref cannot land afterwards and clobber the new one
-20. ⏳ **Long values are cut where they carry their meaning, and the columns are capping
+20. 🛠️ **Long values are cut where they carry their meaning, and the columns are capping
     themselves rather than the terminal.** Found by dogfooding on a wide work terminal: on the
     hold picker, seven consecutive rows rendered as
     `main-connector/src/main/java/com/teamviewer/con…` — the same 47 cells, seven times, naming
     seven different files. The dashboard has the same defect against branch names, and it is the
     worse half: the pairing it is there to let you check is the one thing it hides. Three causes,
     only one of which is the truncation it looks like.
-    - ⏳ **The caps are the bug, and they are upside down.** `columns.go:80-86` pins five
+    - **Split in two. 20a — the three causes below — has shipped**; what remains is the detail
+      line (the width-independent floor), which is independent of them and touches all eleven
+      `listBody` call sites. Splitting kept the session honest and let 20a be dogfooded before
+      20b commits every list screen to reserving a line
+    - ✅ **The caps are the bug, and they are upside down.** `columns.go:80-86` pins five
       constants — `maxNameCol 32`, `maxTargetCol 20`, `maxKeyCol 24`, `maxPathCol 48`,
       `maxPatternCol 40` — and every column is `min(widest value, cap)`, squeezed further if the
       panel is tight. The cap is a hard ceiling that **never grows**. At ~110 columns a 56-cell
@@ -1386,14 +1390,33 @@ is; link its spec/ADR once one exists.
         now sets the column for every row, so short rows carry a ragged gap out to the detail
         cell. That is what the caps were buying. It was weighed against a column that lies and
         lost — a gap is legible, a truncated path is not
-    - ⏳ **The hold picker starves its path column with width no row spends.**
+      - **`widestCell` lost its `max` parameter with them**, since every caller then passed 0.
+        Leaving the parameter would have left the mechanism in place with nothing using it —
+        an invitation to reintroduce the bug one call site at a time
+      - **One column gained a bound as the caps went**, and it is not a contradiction: the
+        target picker sized its key column *only* by `maxTargetCol`, so removing the constant
+        left a hand-typed key able to take the whole row. It is now squeezed against the ref's
+        floor — the row's allocation doing the job the constant was doing by accident
+    - ✅ **The hold picker starves its path column with width no row spends.**
       `localonly.go:451-459` reserves `detailWidth` — the widest detail across all candidates,
       which is `"staged — unstage it first; a hold can't cover the index"` at 53 cells — out of
       what the path column may have. The detail is then **not** padded to that width when
       rendered, so on every `tracked → skip-worktree` row (23 cells) the reservation buys
       alignment nothing and costs the path 30 cells. Reserve what the row spends, or pay for the
       alignment the reservation implies — not neither
-    - ⏳ **The tail is the wrong end, and 19a is *amended* rather than carved out.** `fit`
+      - **Measured, and it turned out to be the binding constraint on that screen**: with the
+        caps gone the path column still had only 45 cells at 110 columns, barely past the 48
+        the cap had been giving it. Removing the caps did not fix the screen the complaint came
+        from — this did
+      - **Both halves, in the end.** The refusal was shortened to `staged — unstage it first`,
+        the width of the two details it sits beside, and the detail column is now padded to
+        what it reserves. *Why* a hold cannot cover the index is the same sentence on every
+        staged row, so it moved to the header — stated once, and only when the list actually
+        holds a staged change. Paths go from 45 cells to 75 at 110 columns
+      - The full reason survives verbatim in the notice raised when a staged hold is actually
+        attempted, alongside the `git restore --staged` that fixes it. Shortening the *column*
+        never meant shortening the answer
+    - ✅ **The tail is the wrong end, and 19a is *amended* rather than carved out.** `fit`
       (`columns.go:35`) always calls `ansi.Truncate(s, w, "…")`: tail-cut. For a path the tail is
       the identity and the head is boilerplate. For a branch name under this repo's convention
       the tail is the **target** — `…-to-vscode-mvp3` — which is precisely what the dashboard row
@@ -1422,6 +1445,20 @@ is; link its spec/ADR once one exists.
         name fits whole at 110 columns. This rule governs the narrow terminal and the
         pathological length, which is the right job for it — and is why it is listed third
         despite being the visible symptom
+      - **The first implementation of the rule was worse than the tail cut it replaced**, and
+        it failed loudly in the existing tests rather than on a work repo — which is the
+        argument for having pinned 19a's string in three places. Keeping only *whole* leading
+        segments in the head meant a ref whose second segment is enormous
+        (`origin/fix/PSOT-22114-…-for-audit/mvp-3`) got a head of `origin/fix/` and left twenty
+        cells of its budget unspent: **19a's feared string, produced by the rule written to
+        avoid it**. The head fills its budget by characters now, and is only trimmed back to a
+        boundary when the fragment hanging off the end is under 4 cells — `PSOT-22114-PickHistor`
+        is the ticket, `ja` is noise. The two mechanics are a choice about the *tail*; the head
+        is always as much as fits
+      - **Head-weighted is arithmetic, not a preference, and it is what makes the amendment
+        safe**: the tail may never take more than half the budget, so the head is provably the
+        larger half at every width. Pinned by walking 19a's own ref across every width the
+        elide runs at
     - ⏳ **A detail line under the list, as the width-independent floor.** Some values do not fit
       at any terminal size, and Drift currently offers nowhere to read one — no pan, no expand, no
       peek. `listBody` (`window.go:101`) already owns the space beneath the rows and already knows
@@ -1438,9 +1475,12 @@ is; link its spec/ADR once one exists.
         the exact defect `listChrome`'s comment already calls out for the status line
         (`window.go:26-32`), reintroduced one line lower. `listChrome` goes to 6 and
         `listCapacity` inherits it
-    - ⏳ **What this costs in tests.** `fit`'s contract changes, so `columns_test.go` is rewritten
-      rather than extended, and the elide rule needs its own cases at both mechanics and at the
-      boundary between them. `window_test.go` covers the reserved-but-blank detail line and the
-      capacity arithmetic. The screen tests that assert rendered widths — `ui_test.go`,
-      `targets_test.go`, `wizard_test.go`, `shelve_test.go` — assert against the caps today and
-      will fail loudly, which is the correct outcome and the bulk of the work
+    - **What this cost in tests.** `fit`'s contract changed, so `columns_test.go` was rewritten
+      rather than extended, and the elide rule has its own cases at both mechanics and at the
+      boundary between them. Four screen tests asserted the old rule and failed loudly, which
+      was the correct outcome: three were pinning the head (they now pass on better output),
+      and `TestALongTargetRefLosesItsTailAndKeepsItsHead` was pinning the *tail cut itself* —
+      it is now `…KeepsItsHead`, asserting the half that was always the point. `wizard_test.go`
+      swapped a cap for the panel bound the cap was standing in for
+      - 20b still owes `window_test.go` the reserved-but-blank detail line and the capacity
+        arithmetic

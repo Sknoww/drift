@@ -1169,13 +1169,17 @@ func planQuestion(dirty bool) string {
 }
 
 // boundRef renders a ref at the end of a plan line, bounded to what the line has
-// left so a long one ellipsises at its **tail** rather than being cut blind.
+// left so a long one elides rather than being cut blind.
 //
-// The end that goes is the decision, not a detail. `origin/fix/PSOT-22114-…` is
-// what gives a wrong target away; the trailing `/mvp-3` is the part that made it
-// look right in the first place. So this must never become a middle-elide that
-// shows `origin/…/mvp-3` and hides the one half worth reading — which is exactly
-// what someone "improving" it would reach for.
+// What goes is the decision, not a detail, and this comment used to name a
+// middle-elide as the thing never to reach for. Area 20 reached for it, with the
+// amendment that makes it safe: the elide is **head-weighted**, so
+// `origin/fix/PSOT-22114-…` — the half that gives a wrong target away — is what
+// it is arithmetically guaranteed to keep, and the trailing `/mvp-3` that made
+// the ref look right comes back beside it rather than instead of it. The rule to
+// hold onto is the one 19a was really defending: the head must survive. A blind
+// tail cut satisfies that and drops the suffix; `…/mvp-3` alone would satisfy
+// neither and is what the elide's head-weighting exists to rule out.
 //
 // Before the first WindowSizeMsg the width is unknown, and nothing is bounded
 // against a guess: the ref goes out whole and clipPanelLine is the backstop.

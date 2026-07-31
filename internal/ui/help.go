@@ -387,7 +387,7 @@ func (m Model) helpBody() string {
 	// are generated from the keymap and the glyph legend — this is the one column
 	// in the package whose content is not user- or repo-supplied.
 	all := append(append([]helpEntry{}, entries...), legend...)
-	width := widestCell(len(all), 0, func(i int) string { return all[i].keys })
+	width := widestCell(len(all), func(i int) string { return all[i].keys })
 
 	lines := []string{
 		m.styles.hint.Render("Keys — " + m.screenName()),

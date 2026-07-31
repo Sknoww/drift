@@ -478,9 +478,11 @@ func (m Model) declarePatternBody() string {
 	}
 
 	// A pattern is a glob from config or a path from the repo — both unbounded, so
-	// the column is capped and the reason beside it ("config: workflows", "this
-	// file only") keeps its place.
-	width := widestCell(len(d.patterns), maxPatternCol, func(i int) string { return d.patterns[i].pattern })
+	// the column is squeezed against the floor of the reason beside it ("config:
+	// workflows", "this file only"), which is what keeps that reason on the row.
+	// Nothing caps it above that: a pattern the panel has room for is drawn whole
+	// (roadmap area 20).
+	width := widestCell(len(d.patterns), func(i int) string { return d.patterns[i].pattern })
 	if cw := contentWidth(m.styles, m.width); cw > 0 {
 		if avail := cw - 2 - minNameCol; width > avail {
 			if width = avail; width < minNameCol {
@@ -508,7 +510,7 @@ func (m Model) declareDestBody() string {
 	}
 
 	// Unbounded: a destination label is one of two literals, not repo content.
-	width := widestCell(len(d.dests), 0, func(i int) string { return d.dests[i].Label() })
+	width := widestCell(len(d.dests), func(i int) string { return d.dests[i].Label() })
 	var rows []string
 	for _, dest := range d.dests {
 		rows = append(rows, fmt.Sprintf("%s  %s",

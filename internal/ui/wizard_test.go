@@ -221,13 +221,17 @@ func TestWizardKeyColumnFitsThePrompt(t *testing.T) {
 // The wizard's key column is the one that padded every row past the panel width
 // in area 14's measurements. deriveKey stopped seeding long keys; this stops a
 // hand-typed one (e accepts 64 characters) doing the same.
+//
+// The panel is what bounds it, not a constant: area 20 removed the 24-cell cap,
+// so what this asserts is the thing the cap was standing in for — the ref keeps
+// a usable share whatever the key does.
 func TestWizardKeyColumnIsBounded(t *testing.T) {
 	m := wizardWith("origin/main", "origin/develop")
 	m.width, m.height = 100, 24
 	m.targets[0].key = strings.Repeat("x", 60)
 
-	if got := m.keyColWidth(m.visible()); got > maxKeyCol {
-		t.Errorf("key column = %d, want at most %d", got, maxKeyCol)
+	if got, avail := m.keyColWidth(m.visible()), rowWidth(m.styles, m.width)-wizardRowFixed-minNameCol; got > avail {
+		t.Errorf("key column = %d, want at most %d — it left the ref nothing", got, avail)
 	}
 
 	view := m.View()

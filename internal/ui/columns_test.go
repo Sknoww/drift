@@ -24,7 +24,7 @@ func TestFitRendersExactlyItsColumnWidth(t *testing.T) {
 	}{
 		{"main", 8, "main    "},    // short: padded
 		{"main", 4, "main"},        // exact: untouched
-		{"feature/x", 6, "featu…"}, // long: truncated, and the ellipsis is part of the budget
+		{"feature/x", 6, "fea…/x"}, // long: elided, and the ellipsis is part of the budget
 		{"main", 0, ""},
 	}
 	for _, c := range cases {
@@ -79,18 +79,127 @@ func TestPadLeftMeasuresDisplayWidth(t *testing.T) {
 	}
 }
 
-func TestWidestCellHonoursItsCap(t *testing.T) {
+func TestWidestCellIsTheContentAndNothingElse(t *testing.T) {
 	cells := []string{"a", "bbbbbbbbbb", "cc"}
 	at := func(i int) string { return cells[i] }
 
-	if got := widestCell(len(cells), 0, at); got != 10 {
-		t.Errorf("unbounded widestCell = %d, want 10", got)
+	if got := widestCell(len(cells), at); got != 10 {
+		t.Errorf("widestCell = %d, want 10", got)
 	}
-	if got := widestCell(len(cells), 4, at); got != 4 {
-		t.Errorf("capped widestCell = %d, want 4", got)
+	if got := widestCell(0, at); got != 0 {
+		t.Errorf("widestCell over no cells = %d, want 0", got)
 	}
-	if got := widestCell(len(cells), 40, at); got != 10 {
-		t.Errorf("a cap above the content = %d, want 10 — a cap is a ceiling, not a width", got)
+}
+
+// --- the elide rule ----------------------------------------------------------
+
+// The rule in one line: keep as much of the head as fits, plus the final
+// segment, `…` between. Both mechanics and the boundary between them.
+func TestElideKeepsTheHeadAndTheFinalSegment(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		w    int
+		want string
+	}{
+		{
+			// The dogfooding case: seven rows that all rendered as the same 47
+			// cells because the tail cut removed the only part that differed.
+			name: "cuts at a slash boundary when the last segment fits",
+			in:   "main-connector/src/main/java/com/teamviewer/connector/Log4j2Configurer.java",
+			w:    47,
+			want: "main-connector/src/main/…/Log4j2Configurer.java",
+		},
+		{
+			// A boundary-only rule degenerates to today's behaviour here, since
+			// there is no interior slash to cut at — and drops the target suffix
+			// the dashboard row exists to let you check.
+			name: "falls back to a character cut when the last segment is the long part",
+			in:   "update/PSOT-22223/audit-workflow-migration-to-vscode-mvp3",
+			w:    32,
+			want: "update/PSOT-2222…-to-vscode-mvp3",
+		},
+		{
+			name: "a value with no slash at all is cut in the middle",
+			in:   "audit-workflow-migration-to-vscode-mvp3",
+			w:    20,
+			want: "audit-work…code-mvp3",
+		},
+		{
+			// The head spends its whole budget rather than falling back to the
+			// last boundary it can reach — the failure the first version of this
+			// rule had, which left `origin/fix/…/mvp-3` and twenty empty cells.
+			name: "the head fills its budget through a long segment",
+			in:   "origin/fix/PSOT-22114-PickHistory-API-rewrite-for-audit/mvp-3",
+			w:    38,
+			want: "origin/fix/PSOT-22114-PickHisto…/mvp-3",
+		},
+		{
+			// `…/x` with three cells spent on nothing is the shape the trim
+			// exists to prevent — but only when the fragment says nothing.
+			name: "a fragment too short to name anything is trimmed to its boundary",
+			in:   "src/ab/main-connector-log4j.java",
+			w:    16,
+			want: "src/ab/…4j.java",
+		},
+		{"nothing to keep whole in front of it", "a-very-long-first-segment/x", 12, "a-very-lo…/x"},
+		{"nothing to do", "main", 10, "main"},
+		{"exactly the width", "main", 4, "main"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := elide(c.in, c.w)
+			if got != c.want {
+				t.Errorf("elide(%q, %d) =\n  %q, want\n  %q", c.in, c.w, got, c.want)
+			}
+			if w := lipgloss.Width(got); w > c.w {
+				t.Errorf("elide(%q, %d) is %d cells wide", c.in, c.w, w)
+			}
+		})
+	}
+}
+
+// The amendment to 19a, pinned as its own test because it is the whole of the
+// argument for changing the rule at all. 19a's charge was that a middle-elide
+// hides the half worth reading; head-weighting is what answers it. The head is
+// what gives a wrong target away (`origin/fix/…`), and it survives at every
+// width the elide runs at — while the suffix a tail cut would have removed comes
+// back beside it, not instead of it.
+func TestElideIsHeadWeighted(t *testing.T) {
+	const ref = "origin/fix/PSOT-22114-PickHistory-API-rewrite-for-audit/mvp-3"
+
+	for w := 3; w < lipgloss.Width(ref); w++ {
+		got := elide(ref, w)
+		if lipgloss.Width(got) > w {
+			t.Fatalf("elide(ref, %d) is %d cells wide: %q", w, lipgloss.Width(got), got)
+		}
+
+		// The head is never the smaller half: whatever is kept before the
+		// ellipsis is at least what is kept after it.
+		head, tail, ok := strings.Cut(got, "…")
+		if !ok {
+			t.Fatalf("elide(ref, %d) = %q — nothing was elided", w, got)
+		}
+		if lipgloss.Width(head) < lipgloss.Width(tail) {
+			t.Errorf("elide(ref, %d) = %q — the tail took more than the head", w, got)
+		}
+	}
+
+	// At the width 19a's own example is drawn to, that means `origin/fix/` is on
+	// screen: the tell that a feature branch is masquerading as a release target.
+	if got := elide(ref, 24); !strings.HasPrefix(got, "origin/fix/") {
+		t.Errorf("elide(ref, 24) = %q, want it to lead with origin/fix/", got)
+	}
+}
+
+// Under three cells a head, an ellipsis and a tail do not fit, so there is no
+// middle to keep and the blunt cut is the only honest answer. It must still come
+// back at the width it was asked for rather than overflowing into the next cell.
+func TestElideAtImpossibleWidths(t *testing.T) {
+	for w := 0; w <= 4; w++ {
+		if got := lipgloss.Width(elide("origin/feature/x", w)); got > w {
+			t.Errorf("elide at width %d returned %d cells", w, got)
+		}
 	}
 }
 
@@ -133,8 +242,37 @@ func TestLongBranchNameKeepsTheStatusCluster(t *testing.T) {
 	}
 }
 
+// The other half of the same rule, and area 20's headline: the name column has
+// to *grow* as well as shrink. A 56-cell branch name was cut to 32 at 110
+// columns with forty cells sitting empty beside it, because the cap ran before
+// the arithmetic that would have reached them.
+func TestAWideTerminalDrawsALongBranchNameWhole(t *testing.T) {
+	const (
+		width = 110
+		name  = "update/PSOT-22223/audit-workflow-migration-to-vscode-mvp3"
+	)
+
+	m := newModel()
+	m.width, m.height = width, 24
+	m.store = store.Store{Tickets: []store.Ticket{{
+		ID:       "ABC-1",
+		Branches: []store.TicketBranch{{Branch: name, TargetKey: "mvp3"}},
+	}}}
+	m.expanded["ABC-1"] = true
+	m.status[statusKey("ABC-1", name)] = branchStatus{known: true, behind: 3, ahead: 1}
+
+	row := m.branchRow("ABC-1", m.store.Tickets[0].Branches[0], m.branchColumns())
+	if !strings.Contains(row, name) {
+		t.Errorf("a %d-cell name was elided at %d columns, with room to spare:\n%s",
+			lipgloss.Width(name), width, row)
+	}
+	if w := lipgloss.Width(row); w > rowWidth(m.styles, width) {
+		t.Errorf("row is %d cells wide, want at most %d", w, rowWidth(m.styles, width))
+	}
+}
+
 // A column is a ceiling, not a fixed width: short names must not be padded out
-// to the cap, or every dashboard is mostly whitespace.
+// to the widest value on another screen, or every dashboard is mostly whitespace.
 func TestBranchColumnsShrinkToTheirContent(t *testing.T) {
 	m := newModel()
 	m.width, m.height = 100, 24

@@ -591,11 +591,16 @@ func relativeAge(tip, now time.Time) string {
 }
 
 // keyColWidth aligns the key column at the widest cell, so the ← arrows line up —
-// bounded by its cap and by what the panel has left for the ref, since a key is
-// user-supplied (e renames it to anything) and one long one used to pad every
-// drawn row past the panel edge. That padding is what doubled the frame in area
-// 14's measurements; deriveKey stopped seeding the long ones, and this stops a
+// bounded by what the panel has left for the ref, since a key is user-supplied
+// (e renames it to anything) and one long one used to pad every drawn row past
+// the panel edge. That padding is what doubled the frame in area 14's
+// measurements; deriveKey stopped seeding the long ones, and this stops a
 // hand-typed one doing the same.
+//
+// The panel is the only bound now. The 24-cell cap that used to sit beside it
+// was a ceiling that never grew, so a wide terminal cut a key it had ample room
+// for (roadmap area 20) — and the squeeze below already covers the case the cap
+// was reached for.
 //
 // It measures what the column *draws*, not the key behind it: an unseeded row
 // carries the prompt (keyCell), and sizing to the raw key would leave the prompt
@@ -605,7 +610,7 @@ func relativeAge(tip, now time.Time) string {
 // screen, and widening it for a ref the filter is hiding would pad every drawn
 // row past a panel none of them need (DESIGN.md §1).
 func (m wizardModel) keyColWidth(visible []int) int {
-	w := widestCell(len(visible), maxKeyCol, func(i int) string {
+	w := widestCell(len(visible), func(i int) string {
 		text, _ := m.keyCell(m.targets[visible[i]])
 		return text
 	})

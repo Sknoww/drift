@@ -386,17 +386,22 @@ const targetRowFixed = 2 + 2
 // never on screen — so the key column takes its own bounded width first and the
 // ref takes everything after it.
 //
-// A ref longer than what is left ellipsises at its tail, which is the right end
-// to lose: `origin/fix/PSOT-22114-…` is the half that gives a wrong target away,
-// and the trailing `/mvp-3` is the half that made it look right. A middle-elide
-// here would show `origin/fix/…/mvp-3` and hide the one thing worth reading.
+// A ref longer than what is left elides head-weighted (fit → elide), and what
+// this comment used to warn against is now what it does — deliberately, and
+// amended rather than overruled (roadmap area 20). The warning was: never show
+// `origin/fix/…/mvp-3`, because `origin/fix/PSOT-22114-…` is the half that gives
+// a wrong target away and the trailing `/mvp-3` is the half that made it look
+// right. Re-read the string it objects to: it *does* show `origin/fix/`, which
+// is the tell. The objection was to a middle-elide that split evenly or kept the
+// first segment alone; head-weighted, the head 19e cares about survives and the
+// suffix comes with it. A tail cut is the rule that loses a half outright.
 func (m Model) targetColumns() targetCols {
 	key := m.targetKeyWidth
 
 	cw := rowWidth(m.styles, m.width)
 	if cw <= 0 {
 		// Size unknown: natural sizing, the same fallback branchColumns takes.
-		return targetCols{key: key, ref: widestCell(len(m.cfg.Targets), 0,
+		return targetCols{key: key, ref: widestCell(len(m.cfg.Targets),
 			func(i int) string { return m.cfg.Targets[i].Ref })}
 	}
 
@@ -510,9 +515,9 @@ func (m Model) repointBody() string {
 			labels[i] = m.styles.help.Render(currentRefLabel)
 		}
 	}
-	labelWidth := widestCell(len(labels), 0, func(i int) string { return labels[i] })
+	labelWidth := widestCell(len(labels), func(i int) string { return labels[i] })
 
-	refWidth := widestCell(len(vis), 0, func(i int) string { return r.refs[vis[i]].Ref })
+	refWidth := widestCell(len(vis), func(i int) string { return r.refs[vis[i]].Ref })
 	if cw := rowWidth(m.styles, m.width); cw > 0 {
 		if avail := cw - repointRowFixed - labelWidth; refWidth > avail {
 			if refWidth = avail; refWidth < minRefCol {
@@ -538,10 +543,12 @@ func (m Model) repointBody() string {
 // It names both refs, and the *from* is as load-bearing as the *to*: the whole
 // finding behind 19e is that a wrong ref reads as correct through its key, so the
 // value being replaced is the one the user has never seen. Both are bounded by
-// boundRef, which ellipsises at the **tail** — `origin/fix/PSOT-22114-…` is what
-// gives a wrong target away and the trailing `/mvp-3` is what made it look right,
-// so this must never become a middle-elide (19a settled that end, and this is the
-// same argument about the same string).
+// boundRef, which elides **head-weighted**: `origin/fix/PSOT-22114-…` is what
+// gives a wrong target away, so the head is what the rule protects. It reads as
+// a reversal of 19a and is an amendment to it — 19a's objection was to a
+// middle-elide that would drop the head, and area 20's keeps it while adding the
+// suffix back. What must never happen here is the head going, whichever
+// mechanism takes it.
 //
 // The prose is name-free and short enough to survive the 60-column floor without
 // clipping. Interpolating the key into it would put an unbounded value in the one

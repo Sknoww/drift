@@ -315,9 +315,14 @@ const branchRowFixed = 4 + 3 + 3 + 2 + 2 + 2 + 2
 //
 // The order of allocation *is* the fix. The status cluster is what a branch row
 // exists to show — it is costed first and never squeezed. The target column
-// takes what it needs, up to its cap. The branch name absorbs whatever is left
-// and ellipsises in place, so a long name shortens itself instead of shoving
-// the signals off the right-hand end for clipRow to cut (roadmap area 15).
+// takes what it needs. The branch name absorbs whatever is left and elides in
+// place, so a long name shortens itself instead of shoving the signals off the
+// right-hand end for clipRow to cut (roadmap area 15).
+//
+// "Whatever is left" is genuinely what is left. Area 15 capped this column at 32
+// cells, which protected a narrow terminal and taxed a wide one: at 110 columns
+// a 56-cell branch name was cut with forty cells sitting empty beside it, since
+// the clamp ran before the arithmetic below ever reached them (roadmap area 20).
 //
 // Widths are measured over every ticket, not just the expanded ones, so the
 // columns stay aligned down the whole dashboard as tickets expand and collapse
@@ -333,9 +338,6 @@ func (m Model) branchColumns() branchCols {
 				ab = w
 			}
 		}
-	}
-	if name > maxNameCol {
-		name = maxNameCol
 	}
 	target := m.targetKeyWidth
 
@@ -573,7 +575,7 @@ func (m Model) pairingBody() string {
 		}
 	}
 
-	nameWidth := m.candidateNameWidth(vis, widestCell(len(assigns), 0, func(i int) string { return assigns[i] }))
+	nameWidth := m.candidateNameWidth(vis, widestCell(len(assigns), func(i int) string { return assigns[i] }))
 	rows := make([]string, len(vis))
 	for i, ci := range vis {
 		box := "[ ]"
@@ -631,16 +633,29 @@ func (m Model) targetPickerBody(subject, current string, cursor int) string {
 			labels[i] = m.styles.help.Render(currentRefLabel)
 		}
 	}
-	labelWidth := widestCell(len(labels), 0, func(i int) string { return labels[i] })
+	labelWidth := widestCell(len(labels), func(i int) string { return labels[i] })
 
 	// The label is a fixed cost paid before the ref, and the ref absorbs what is
 	// left — the allocation rule every row here follows (DESIGN.md §1). Sizing it
 	// is what keeps the mark on screen: left unsized, a long ref would push the one
 	// cell saying "this is the one you have now" off the end for clipRow to cut.
-	refWidth := widestCell(len(m.cfg.Targets), 0, func(i int) string { return m.cfg.Targets[i].Ref })
+	//
+	// The key is squeezed against the ref's floor before the ref gives way at all,
+	// which is what the departed maxTargetCol used to do by accident: on this
+	// screen the key is what you are choosing, so it is costed first, but a key
+	// nothing enforces the terseness of must not be able to take the whole row
+	// (roadmap area 20).
+	keyWidth := m.targetKeyWidth
+	refWidth := widestCell(len(m.cfg.Targets), func(i int) string { return m.cfg.Targets[i].Ref })
 	if cw := rowWidth(m.styles, m.width); cw > 0 {
-		if avail := cw - targetPickerRowFixed - m.targetKeyWidth - labelWidth; refWidth > avail {
-			if refWidth = avail; refWidth < minRefCol {
+		avail := cw - targetPickerRowFixed - labelWidth
+		if keyWidth > avail-minRefCol {
+			if keyWidth = avail - minRefCol; keyWidth < 0 {
+				keyWidth = 0
+			}
+		}
+		if refWidth > avail-keyWidth {
+			if refWidth = avail - keyWidth; refWidth < minRefCol {
 				refWidth = minRefCol
 			}
 		}
@@ -653,17 +668,17 @@ func (m Model) targetPickerBody(subject, current string, cursor int) string {
 			acc = fmt.Sprintf("%d ", i+1)
 		}
 		rows[i] = fmt.Sprintf("%s %s  %s  %s",
-			m.styles.help.Render(acc), fit(t.Key, m.targetKeyWidth),
+			m.styles.help.Render(acc), fit(t.Key, keyWidth),
 			m.styles.help.Render(fit(t.Ref, refWidth)), labels[i])
 	}
 	return listBody(m.styles, m.width, m.height, header, rows, cursor)
 }
 
 // candidateNameWidth sizes the checklist's name column: the widest candidate,
-// bounded by its cap and by what the panel has left once the box, the
-// separators and the assignment cell are paid for. A long name ellipsises in
-// place rather than pushing "⚠ pick a target" — the one thing on the row that
-// blocks the save — off the end.
+// bounded only by what the panel has left once the box, the separators and the
+// assignment cell are paid for. A long name elides in place rather than pushing
+// "⚠ pick a target" — the one thing on the row that blocks the save — off the
+// end.
 //
 // Measured over the visible rows only: the column aligns what is on screen, so a
 // name the filter is hiding has no business padding the rows that are drawn
@@ -672,7 +687,7 @@ func (m Model) candidateNameWidth(visible []int, assignWidth int) int {
 	// box + the two separators around the name.
 	const fixed = 3 + 1 + 2
 
-	w := widestCell(len(visible), maxNameCol, func(i int) string {
+	w := widestCell(len(visible), func(i int) string {
 		return m.add.candidates[visible[i]].branch
 	})
 	cw := rowWidth(m.styles, m.width)
