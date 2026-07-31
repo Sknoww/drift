@@ -1356,3 +1356,91 @@ is; link its spec/ADR once one exists.
         number against the new ref — the same class of lie as the declared badge before it
         re-read `check-attr`. The sweep id advances with it, so an in-flight sweep against the
         *old* ref cannot land afterwards and clobber the new one
+20. ⏳ **Long values are cut where they carry their meaning, and the columns are capping
+    themselves rather than the terminal.** Found by dogfooding on a wide work terminal: on the
+    hold picker, seven consecutive rows rendered as
+    `main-connector/src/main/java/com/teamviewer/con…` — the same 47 cells, seven times, naming
+    seven different files. The dashboard has the same defect against branch names, and it is the
+    worse half: the pairing it is there to let you check is the one thing it hides. Three causes,
+    only one of which is the truncation it looks like.
+    - ⏳ **The caps are the bug, and they are upside down.** `columns.go:80-86` pins five
+      constants — `maxNameCol 32`, `maxTargetCol 20`, `maxKeyCol 24`, `maxPathCol 48`,
+      `maxPatternCol 40` — and every column is `min(widest value, cap)`, squeezed further if the
+      panel is tight. The cap is a hard ceiling that **never grows**. At ~110 columns a 56-cell
+      branch name (`update/PSOT-22223/audit-workflow-migration-to-vscode-mvp3`) is cut to 32 with
+      ~40 cells sitting empty to its right: `branchColumns` (`view.go:325`) computes a perfectly
+      good `avail` and then never reaches it, because `name` was clamped before the arithmetic
+      began. Area 15's own comment says the caps are "ceilings, not fixed widths — a column whose
+      content is shorter still shrinks to fit", which is true and is only half a rule: it shrinks
+      and never grows. Sized to protect a narrow terminal, they now tax a wide one
+      - **The fix is the allocation rule area 15 already established, run to completion**: fixed
+        cost first, then the cell carrying the row's point, then the name/path column absorbs
+        what is left — where "what is left" is genuinely what is left, not `min(that, 32)`. The
+        constants go; `minNameCol`/`minRefCol` stay, since a floor is a different thing from a
+        ceiling and the squeeze path still needs one
+      - **Three screens already do this and are the proof it works.** The targets list
+        (`targets.go:394`), the target picker (`view.go:640`) and the repoint picker
+        (`targets.go:515`) size their ref column as "everything after the costed cells", with no
+        constant anywhere. They are the screens that have never had this complaint
+      - **The accepted cost, stated so it is not rediscovered as a regression**: one long value
+        now sets the column for every row, so short rows carry a ragged gap out to the detail
+        cell. That is what the caps were buying. It was weighed against a column that lies and
+        lost — a gap is legible, a truncated path is not
+    - ⏳ **The hold picker starves its path column with width no row spends.**
+      `localonly.go:451-459` reserves `detailWidth` — the widest detail across all candidates,
+      which is `"staged — unstage it first; a hold can't cover the index"` at 53 cells — out of
+      what the path column may have. The detail is then **not** padded to that width when
+      rendered, so on every `tracked → skip-worktree` row (23 cells) the reservation buys
+      alignment nothing and costs the path 30 cells. Reserve what the row spends, or pay for the
+      alignment the reservation implies — not neither
+    - ⏳ **The tail is the wrong end, and 19a is *amended* rather than carved out.** `fit`
+      (`columns.go:35`) always calls `ansi.Truncate(s, w, "…")`: tail-cut. For a path the tail is
+      the identity and the head is boilerplate. For a branch name under this repo's convention
+      the tail is the **target** — `…-to-vscode-mvp3` — which is precisely what the dashboard row
+      exists to let you check against its `TargetKey` column. Cutting it removes the half being
+      verified. One rule replaces it package-wide: a **head-weighted middle-elide** — keep as
+      much of the head as fits, plus the final segment, `…` between
+      - **This is not the middle-elide 19a rejected, and the distinction has to be written down
+        or this gets reverted in six months citing the roadmap.** 19a's test case is
+        `origin/fix/PSOT-22114-…` versus `origin/fix/…/mvp-3`, and its charge is that a
+        middle-elide "hides the one half worth reading". Look at the second string: it does not
+        hide the head — it shows `origin/fix/`, which *is* the tell that a feature branch is
+        masquerading as a release target. 19a's argument assumed an even split or a
+        first-segment-only keep. Head-weighted, it passes 19a's own test **and** preserves the
+        target suffix, which is why the package gets one rule instead of two
+      - **Two mechanics inside the one rule, because the convention needs both.** Prefer cutting
+        at `/` boundaries when the last segment is short enough to keep whole — paths land as
+        `main-connector/src/main/…/Log4j2Configurer.java`. Fall back to a character-level middle
+        cut when the last segment *is* the long part, which is the branch case:
+        `audit-workflow-migration-to-vscode-mvp3` carries no interior `/`, so a
+        boundary-only elide degenerates to today's behaviour and drops the target
+      - **Rewrite the three pinned warnings, not just the code.** `targets.go:389`,
+        `targets.go:541` and `shelve.go:1172` each warn the next reader off a middle-elide by
+        name, and 19a's entry says it twice. Each has to record the amendment and its reasoning —
+        a comment that contradicts the code is worse than no comment
+      - **Elide is the backstop now, not the mechanism.** With the caps gone, a 56-cell branch
+        name fits whole at 110 columns. This rule governs the narrow terminal and the
+        pathological length, which is the right job for it — and is why it is listed third
+        despite being the visible symptom
+    - ⏳ **A detail line under the list, as the width-independent floor.** Some values do not fit
+      at any terminal size, and Drift currently offers nowhere to read one — no pan, no expand, no
+      peek. `listBody` (`window.go:101`) already owns the space beneath the rows and already knows
+      the selected index, so the selected row's full value goes there, wrapped, in `help` style.
+      One change, every list screen: dashboard, pairing checklist, target picker, targets, repoint,
+      local-only, hold picker, both declare overlays, wizard
+      - **`listBody` needs the value, and cannot derive it.** It receives rows already rendered
+        and styled, so the full string has to be passed in — a new parameter across all eleven
+        call sites (`view.go:144,585,659`, `targets.go:450,532`, `localonly.go:410,464`,
+        `diff.go:496,517`, `wizard.go:521`). The dashboard's is the awkward one: its selection
+        moves between ticket rows and branch rows, so it supplies whichever the cursor is on
+      - **Reserve the line always; draw it only when the value is elided.** Drawing it
+        conditionally without reserving it makes the visible row count jump as the cursor moves —
+        the exact defect `listChrome`'s comment already calls out for the status line
+        (`window.go:26-32`), reintroduced one line lower. `listChrome` goes to 6 and
+        `listCapacity` inherits it
+    - ⏳ **What this costs in tests.** `fit`'s contract changes, so `columns_test.go` is rewritten
+      rather than extended, and the elide rule needs its own cases at both mechanics and at the
+      boundary between them. `window_test.go` covers the reserved-but-blank detail line and the
+      capacity arithmetic. The screen tests that assert rendered widths — `ui_test.go`,
+      `targets_test.go`, `wizard_test.go`, `shelve_test.go` — assert against the caps today and
+      will fail loudly, which is the correct outcome and the bulk of the work
