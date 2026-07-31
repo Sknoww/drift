@@ -452,7 +452,13 @@ func (m Model) targetsBody() string {
 			m.styles.target.Render(fit(t.Key, cols.key)),
 			m.styles.branch.Render(fit(t.Ref, cols.ref)))
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, m.targetsCur)
+	// The ref carries the row here, so it is also what the detail line reports —
+	// the same choice the picker makes, arrived at from the opposite weighting.
+	detail := ""
+	if c := m.targetsCur; c >= 0 && c < len(m.cfg.Targets) {
+		detail = m.cfg.Targets[c].Ref
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, m.targetsCur, detail)
 }
 
 // currentRefLabel marks the ref the target already points at. The picker is a
@@ -534,7 +540,11 @@ func (m Model) repointBody() string {
 			m.styles.branch.Render(fit(b.Ref, refWidth)),
 			labels[i])
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, r.cursor)
+	detail := ""
+	if c := r.cursor; c >= 0 && c < len(vis) {
+		detail = r.refs[vis[c]].Ref
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, r.cursor, detail)
 }
 
 // repointConfirmBody is the y/n between a picked ref and config.json being

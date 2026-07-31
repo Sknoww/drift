@@ -1356,17 +1356,17 @@ is; link its spec/ADR once one exists.
         number against the new ref — the same class of lie as the declared badge before it
         re-read `check-attr`. The sweep id advances with it, so an in-flight sweep against the
         *old* ref cannot land afterwards and clobber the new one
-20. 🛠️ **Long values are cut where they carry their meaning, and the columns are capping
+20. ✅ **Long values are cut where they carry their meaning, and the columns are capping
     themselves rather than the terminal.** Found by dogfooding on a wide work terminal: on the
     hold picker, seven consecutive rows rendered as
     `main-connector/src/main/java/com/teamviewer/con…` — the same 47 cells, seven times, naming
     seven different files. The dashboard has the same defect against branch names, and it is the
     worse half: the pairing it is there to let you check is the one thing it hides. Three causes,
     only one of which is the truncation it looks like.
-    - **Split in two. 20a — the three causes below — has shipped**; what remains is the detail
-      line (the width-independent floor), which is independent of them and touches all eleven
-      `listBody` call sites. Splitting kept the session honest and let 20a be dogfooded before
-      20b commits every list screen to reserving a line
+    - **Split in two, and both halves have shipped.** 20a was the three causes below; 20b was
+      the detail line (the width-independent floor), independent of them and touching every
+      `listBody` call site. Splitting kept the session honest and let 20a be dogfooded before
+      20b committed every list screen to reserving a line
     - ✅ **The caps are the bug, and they are upside down.** `columns.go:80-86` pins five
       constants — `maxNameCol 32`, `maxTargetCol 20`, `maxKeyCol 24`, `maxPathCol 48`,
       `maxPatternCol 40` — and every column is `min(widest value, cap)`, squeezed further if the
@@ -1459,22 +1459,67 @@ is; link its spec/ADR once one exists.
         safe**: the tail may never take more than half the budget, so the head is provably the
         larger half at every width. Pinned by walking 19a's own ref across every width the
         elide runs at
-    - ⏳ **A detail line under the list, as the width-independent floor.** Some values do not fit
-      at any terminal size, and Drift currently offers nowhere to read one — no pan, no expand, no
-      peek. `listBody` (`window.go:101`) already owns the space beneath the rows and already knows
-      the selected index, so the selected row's full value goes there, wrapped, in `help` style.
-      One change, every list screen: dashboard, pairing checklist, target picker, targets, repoint,
+    - ✅ **20b — a detail line under the list, as the width-independent floor.** Some values do
+      not fit at any terminal size, and Drift offered nowhere to read one — no pan, no expand, no
+      peek. `listBody` (`window.go`) already owned the space beneath the rows and already knew
+      the selected index, so the selected row's full value goes there, in `help` style. One
+      change, every list screen: dashboard, pairing checklist, target picker, targets, repoint,
       local-only, hold picker, both declare overlays, wizard
-      - **`listBody` needs the value, and cannot derive it.** It receives rows already rendered
-        and styled, so the full string has to be passed in — a new parameter across all eleven
-        call sites (`view.go:144,585,659`, `targets.go:450,532`, `localonly.go:410,464`,
-        `diff.go:496,517`, `wizard.go:521`). The dashboard's is the awkward one: its selection
-        moves between ticket rows and branch rows, so it supplies whichever the cursor is on
+      - **`listBody` needs the value, and cannot derive it.** It receives rows already fitted and
+        styled, so what a column had to cut is gone by the time it sees them — the full string is
+        a new parameter across all ten call sites. The dashboard's was the awkward one, as
+        expected: its selection moves between ticket rows and branch rows, so it supplies
+        whichever the cursor is on, picked *where the walk finds the cursor* rather than
+        re-derived afterwards. That pulled `ticketText` out of `ticketRow`, so the row and its
+        detail cannot spell the same headline two ways — see the redundancy rule below for why
+        two spellings would be a bug rather than a duplication
       - **Reserve the line always; draw it only when the value is elided.** Drawing it
         conditionally without reserving it makes the visible row count jump as the cursor moves —
         the exact defect `listChrome`'s comment already calls out for the status line
-        (`window.go:26-32`), reintroduced one line lower. `listChrome` goes to 6 and
-        `listCapacity` inherits it
+        (`window.go:26-32`), reintroduced one line lower
+      - ✅ **Settled: one line, not wrapped — the entry's two halves did not fund each other.**
+        "Wrapped" and "`listChrome` goes to 6" are a contradiction: a value that fits no width
+        fits no single line either, so wrapping it costs two or three, and a detail whose height
+        follows the selected value makes the row count jump *in the other axis* — the same defect
+        the reserve-always rule exists to prevent, reintroduced where that rule was not looking.
+        Two fixed lines was the real alternative and it was weighed on what it costs: ~208 cells
+        at 110 columns against ~104, bought by charging every list screen a second line on every
+        terminal forever (17 rows instead of 19 at height 24). One line takes the panel's whole
+        width — against the ~40 a name column can spare, which is the complaint — and elides with
+        20a's head-weighted rule when even that is not enough. A floor, stated as a floor
+      - ✅ **`detailLines` is its own constant, not `listChrome` going to 6.** The roadmap said
+        `listChrome` inherits it, and building it found why it must not: `listChrome` is the frame
+        *around* a panel, and the `?` overlay sits in that same frame (`helpViewportHeight`) — but
+        an overlay has no rows and no cursor, so it has no detail line, and charging it one would
+        cost it a key row for something it never draws. Area 15 measured that overlay to a flat 23
+        lines at height 24; quietly taking one back would have undone the measurement. The line is
+        costed where it is spent — `listBody` adds it to the list's own fixed header lines, which
+        is exactly what it is
+      - ✅ **Whether the value was elided is asked of the rendered row, never predicted.** The
+        obvious alternative is for each screen to report what its column budget did, which puts
+        the answer a long way from the cut and gets it wrong the first time a screen gains a
+        column. Testing the drawn row (`strings.Contains` against the stripped, clipped line)
+        catches every way a value can lose its tail — a column that fitted itself, *and* `clipRow`
+        cutting a row no budget anticipated — and it is why the redundancy rule holds: a row
+        already showing the value whole draws nothing, because a value shown twice reads as two
+        values rather than as one
+      - **One value per row, and which one is the allocation rule read backwards.** A row can have
+        two columns that elide; the detail reports the one the row's own budget spends *last*. On
+        both target screens that is the ref — costed first on the targets list because it carries
+        the row, costed last on the picker because the key is what you are choosing, and the
+        unbounded one either way. Elsewhere it is the path, the pattern, the branch. The
+        destination overlay passes nothing: its labels are two literals, so no column can be too
+        narrow for them — and it still reserves the line, because the reservation is the frame's
+        rather than the value's
+      - The line is drawn **after** `selectBand`, never inside it: it is *about* the selected row,
+        not part of it, and painting it with the same background would read as a second selected
+        line. It carries the selection gutter in front of it like the edge markers do, so its
+        budget is the gutter plus a row's — the panel exactly
+      - **What this cost in tests.** `window_test.go` got the reserved-but-blank line and the
+        capacity arithmetic it was owed, plus the redundancy rule, the elide-rather-than-wrap
+        bound and the no-selection/no-value cases. `band_test.go`'s every-treatment assertion now
+        passes an over-long detail through the same fixture, so the new line is measured against
+        the panel by the test that already guarded every other line in it
     - **What this cost in tests.** `fit`'s contract changed, so `columns_test.go` was rewritten
       rather than extended, and the elide rule has its own cases at both mechanics and at the
       boundary between them. Four screen tests asserted the old rule and failed loudly, which
@@ -1482,5 +1527,3 @@ is; link its spec/ADR once one exists.
       and `TestALongTargetRefLosesItsTailAndKeepsItsHead` was pinning the *tail cut itself* —
       it is now `…KeepsItsHead`, asserting the half that was always the point. `wizard_test.go`
       swapped a cap for the panel bound the cap was standing in for
-      - 20b still owes `window_test.go` the reserved-but-blank detail line and the capacity
-        arithmetic

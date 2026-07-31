@@ -419,7 +419,11 @@ func (m Model) localOnlyBody() string {
 			m.styles.help.Render(fit(h.mechanism(), mechWidth)),
 			m.styles.target.Render(h.note)))
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, m.local.cursor)
+	detail := ""
+	if c := m.local.cursor; c >= 0 && c < len(m.local.entries) {
+		detail = m.local.entries[c].path
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, m.local.cursor, detail)
 }
 
 // heldGlyph marks which primitive holds a path. The tracked one is filled and
@@ -490,7 +494,13 @@ func (m Model) localAddBody() string {
 		rows = append(rows, fmt.Sprintf("%s  %s",
 			m.styles.branch.Render(fit(c.path, width)), fit(details[i], detailWidth)))
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, m.local.add.cursor)
+	// The screen the whole area was raised from: seven consecutive rows reading
+	// `main-connector/src/main/java/com/teamviewer/con…`. The path is the value.
+	detail := ""
+	if c := m.local.add.cursor; c >= 0 && c < len(m.local.add.candidates) {
+		detail = m.local.add.candidates[c].path
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, m.local.add.cursor, detail)
 }
 
 // candidateDetail says what holding this change would do — or why it can't.

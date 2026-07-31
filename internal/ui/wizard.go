@@ -518,7 +518,14 @@ func (m wizardModel) body() string {
 			m.styles.help.Render("←"),
 			m.styles.branch.Render(t.ref))
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, m.cursor)
+	// The ref, which this screen renders unfitted and leaves to clipRow — so on
+	// the repo this area exists for it is the value most often cut, and the one
+	// the wizard is asking the user to recognise.
+	detail := ""
+	if c := m.cursor; c >= 0 && c < len(vis) {
+		detail = m.targets[vis[c]].ref
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, m.cursor, detail)
 }
 
 func (m wizardModel) help() string {

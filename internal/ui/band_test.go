@@ -192,14 +192,17 @@ func TestEveryTreatmentKeepsTheSelectedRowInsideThePanel(t *testing.T) {
 			rw := rowWidth(s, width)
 
 			// Rows built to exactly what a row has to spend, as every screen's
-			// column budget builds them.
+			// column budget builds them. Over-long on purpose, so the detail line
+			// is drawn too and is measured by the same assertion — it is one more
+			// line inside the panel and must fit like any other.
+			long := strings.Repeat("x", rw+20)
 			rows := make([]string, 40)
 			for i := range rows {
-				rows[i] = fit(strings.Repeat("x", rw+20), rw)
+				rows[i] = fit(long, rw)
 			}
 
 			for _, cursor := range []int{0, 7, len(rows) - 1} {
-				out := listBody(s, width, height, []string{"header"}, rows, cursor)
+				out := listBody(s, width, height, []string{"header"}, rows, cursor, long)
 				for i, line := range strings.Split(out, "\n") {
 					if w := lipgloss.Width(line); w > cw {
 						t.Errorf("cursor %d: line %d is %d wide, panel is %d", cursor, i, w, cw)
@@ -218,10 +221,11 @@ func TestMarkerTreatmentMarksOnlyTheSelectedRow(t *testing.T) {
 	s := newStyles(store.Prefs{})
 
 	rows := []string{"alpha", "bravo", "charlie"}
-	lines := strings.Split(listBody(s, 100, 24, nil, rows, 1), "\n")
-	if len(lines) != len(rows) {
-		t.Fatalf("got %d lines for %d rows", len(lines), len(rows))
+	lines := strings.Split(listBody(s, 100, 24, nil, rows, 1, "bravo"), "\n")
+	if len(lines) != len(rows)+detailLines {
+		t.Fatalf("got %d lines for %d rows and %d detail", len(lines), len(rows), detailLines)
 	}
+	lines = lines[:len(rows)] // the detail line carries no marker and is asserted elsewhere
 
 	for i, line := range lines {
 		marked := strings.Contains(line, bandMarkerGlyph)

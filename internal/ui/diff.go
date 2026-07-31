@@ -495,7 +495,11 @@ func (m Model) declarePatternBody() string {
 		rows = append(rows, fmt.Sprintf("%s  %s",
 			m.styles.target.Render(fit(p.pattern, width)), m.styles.help.Render(p.why)))
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
+	detail := ""
+	if c := d.cursor; c >= 0 && c < len(d.patterns) {
+		detail = d.patterns[c].pattern
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, d.cursor, detail)
 }
 
 // declareDestBody asks where it goes, naming each destination's consequence
@@ -516,7 +520,10 @@ func (m Model) declareDestBody() string {
 		rows = append(rows, fmt.Sprintf("%s  %s",
 			m.styles.branch.Render(fit(dest.Label(), width)), m.styles.help.Render(dest.Detail())))
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, d.cursor)
+	// No detail value: a destination label is one of two literals, not repo
+	// content, so there is nothing here a column can be too narrow for. The line
+	// is still reserved — the reservation is the frame's, not the value's.
+	return listBody(m.styles, m.width, m.height, header, rows, d.cursor, "")
 }
 
 // diffViewportHeight is the rows left for the diff after the surrounding chrome

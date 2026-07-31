@@ -163,6 +163,26 @@ the home row. "Looks like raw text output" is a bug.
       `origin/fix/PSOT-22114-…` — the half that gives a wrong target away — is what the
       arithmetic guarantees, and `/mvp-3` comes back beside it rather than instead of it.
       The rule to hold onto is the one 19a was defending: **the head must survive.**
+  - **A detail line under the list, as the width-independent floor** ✅ — every list screen
+    reserves one line beneath its rows, and the selected row's *full* value goes there in
+    the `help` style when the row could not show it (`listBody` / `detailValue`). Elision
+    decides which half of a value survives a column; this is where you read the half it
+    cut, and it is the only answer that does not depend on the terminal being wide enough.
+    - **Reserved always, drawn only when the value was elided.** A line that appeared and
+      vanished with the cursor would make the panel grow and shrink as you move — the
+      defect the status line's one-line rule already guards against, one line lower. For
+      the same reason it is **one** line rather than wrapped: a detail whose *height*
+      followed the selected value has the identical defect in the other axis. It takes the
+      panel's whole width and falls back to the head-weighted elide above when even that
+      is not enough, so it is a floor rather than a guarantee.
+    - **Whether the value was elided is asked of the rendered row, never predicted.** The
+      row is what the user is looking at, so it is what the question is about — and testing
+      it catches a column that fitted itself *and* `clipRow` cutting a row no budget
+      anticipated. A row already showing the value whole draws nothing: the same value
+      twice reads as two values.
+    - It is drawn **after** the selection band, never inside it. The detail is *about* the
+      selected row, not part of it, and one background across both would read as two
+      selected lines.
   - `clipRow` (Windowing, above) stays underneath as the **backstop**. It clips blind —
     whatever overflows off the right-hand end — so reaching it means dropping a trailing
     cell rather than ellipsising in place. A column that sizes itself never does.

@@ -105,6 +105,12 @@ func (m Model) header() string {
 }
 
 // body is the ticket list, or the empty-state teach line when nothing is tracked.
+//
+// The detail line's value is the awkward one on this screen, because the cursor
+// moves between two kinds of row: a branch row's value is its branch name, a
+// ticket row's is the headline text. It is picked where the cursor is found
+// rather than re-derived afterwards — the walk already knows which kind it
+// landed on, and asking twice is how the two answers drift apart.
 func (m Model) body() string {
 	if len(m.store.Tickets) == 0 {
 		return m.emptyState()
@@ -114,10 +120,11 @@ func (m Model) body() string {
 	sel, selOK := m.selectedRow() // the semantic cursor row
 
 	var rows []string
-	selected := -1
+	selected, detail := -1, ""
 	for ti, t := range m.store.Tickets {
 		if selOK && !sel.isBranch() && sel.ticket == ti {
 			selected = len(rows) // the ticket headline is the selected row
+			detail = ticketText(t)
 		}
 		rows = append(rows, m.ticketRow(t))
 
@@ -133,6 +140,7 @@ func (m Model) body() string {
 			for bi, br := range t.Branches {
 				if selOK && sel.isBranch() && sel.ticket == ti && sel.branch == bi {
 					selected = len(rows) // a branch row is selectable in its own right
+					detail = br.Branch
 				}
 				rows = append(rows, m.branchRow(t.ID, br, cols))
 			}
@@ -141,7 +149,7 @@ func (m Model) body() string {
 			}
 		}
 	}
-	return listBody(m.styles, m.width, m.height, nil, rows, selected)
+	return listBody(m.styles, m.width, m.height, nil, rows, selected, detail)
 }
 
 // panelStyle is the bordered panel sized to span the terminal.
@@ -292,11 +300,21 @@ func (m Model) ticketRow(t store.Ticket) string {
 		affordance = "▾"
 	}
 
-	line := affordance + " " + t.ID
-	if t.Title != "" {
-		line += "  " + t.Title
+	return m.styles.ticket.Render(affordance + " " + ticketText(t))
+}
+
+// ticketText is the headline a ticket row carries, without the expand
+// affordance in front of it: the ID, and the title when there is one.
+//
+// It is shared with the detail line rather than reassembled there, so the two
+// cannot say different things about the same ticket — the detail is only ever
+// drawn when it is *not* a substring of the drawn row, and two spellings of the
+// headline would make that test answer for a string the screen never held.
+func ticketText(t store.Ticket) string {
+	if t.Title == "" {
+		return t.ID
 	}
-	return m.styles.ticket.Render(line)
+	return t.ID + "  " + t.Title
 }
 
 // branchCols is the width budget for the dashboard's branch rows: the two
@@ -584,7 +602,14 @@ func (m Model) pairingBody() string {
 		}
 		rows[i] = fmt.Sprintf("%s %s  %s", box, fit(m.add.candidates[ci].branch, nameWidth), assigns[i])
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, m.add.cursor)
+	// The cursor indexes the *visible* rows, so the detail comes from vis rather
+	// than from candidates — the same indirection every other read on this screen
+	// makes once a filter is applied (filter.go).
+	detail := ""
+	if c := m.add.cursor; c >= 0 && c < len(vis) {
+		detail = m.add.candidates[vis[c]].branch
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, m.add.cursor, detail)
 }
 
 // pickerBody is the target picker over the pairing checklist, about the selected
@@ -671,7 +696,15 @@ func (m Model) targetPickerBody(subject, current string, cursor int) string {
 			m.styles.help.Render(acc), fit(t.Key, keyWidth),
 			m.styles.help.Render(fit(t.Ref, refWidth)), labels[i])
 	}
-	return listBody(m.styles, m.width, m.height, header, rows, cursor)
+	// The ref, not the key: the key is costed first here because it is what you
+	// are choosing, so the ref is the cell that gives way, and it is the unbounded
+	// one either way. One row carries two values that can elide, and the detail
+	// line takes the one the allocation above spends last.
+	detail := ""
+	if cursor >= 0 && cursor < len(m.cfg.Targets) {
+		detail = m.cfg.Targets[cursor].Ref
+	}
+	return listBody(m.styles, m.width, m.height, header, rows, cursor, detail)
 }
 
 // candidateNameWidth sizes the checklist's name column: the widest candidate,

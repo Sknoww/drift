@@ -31,6 +31,27 @@ import (
 // screen without one simply keeps a spare line at the bottom.
 const listChrome = 5
 
+// detailLines is what listBody reserves beneath the rows for the selected row's
+// full value (roadmap area 20b).
+//
+// **It is not folded into listChrome, and that is the point.** listChrome is the
+// frame *around* a panel, which the `?` overlay sits inside as much as a list
+// does (helpViewportHeight) — but the overlay has no rows and no cursor, so it
+// has no detail line, and charging it one would cost the overlay a key row for
+// something it never draws. The detail line belongs to the list body, so it is
+// costed where it is spent: listBody adds it to the list's own fixed header
+// lines, which is exactly what it is.
+//
+// One line, and so a floor rather than a guarantee. The line gets the panel's
+// whole width — ~104 cells at 110 columns, against the ~40 a name column can
+// spare — and elides with the same head-weighted rule everything else uses when
+// even that is not enough. Wrapping it to two or three would read better on a
+// pathological path and cost every list screen those lines on every terminal,
+// forever; worse, a detail whose height followed the selected value would make
+// the visible row count jump as the cursor moved — the defect the reserve-always
+// rule below exists to prevent, reintroduced in the axis it was not looking at.
+const detailLines = 1
+
 // listCapacity is how many row lines a list panel can draw: the terminal height
 // less the shared chrome and the list's own fixed header lines. It reports 0
 // before the first WindowSizeMsg — the size is genuinely unknown then, and
@@ -98,8 +119,15 @@ func rowWindow(n, selected, capacity int) (start, end int) {
 // selected indexes rows, not the assembled lines; pass -1 for a list with no
 // active selection. The band is re-derived against the window, so it lands on
 // the right line however far down the list the cursor is.
-func listBody(s styles, width, height int, header, rows []string, selected int) string {
-	start, end := rowWindow(len(rows), selected, listCapacity(height, headerLines(s, width, header)))
+//
+// detail is the selected row's full, unstyled value — the branch name, the path,
+// the ref. It cannot be derived here: rows arrive already fitted and styled, so
+// what a column had to cut is gone by the time this sees it. Pass "" for a
+// screen with no such value (the destination overlay's two literals) or for a
+// list with no selection.
+func listBody(s styles, width, height int, header, rows []string, selected int, detail string) string {
+	start, end := rowWindow(len(rows), selected,
+		listCapacity(height, headerLines(s, width, header)+detailLines))
 
 	// The selection gutter, blank on every row but the cursor's. It is drawn
 	// here rather than by selectBand because every row needs it, not just the
@@ -119,18 +147,54 @@ func listBody(s styles, width, height int, header, rows []string, selected int) 
 	if selected >= start && selected < end {
 		band = len(lines) + (selected - start)
 	}
+	shown, shownOK := "", false
 	for i, row := range rows[start:end] {
 		lead := blank
 		if g > 0 && start+i == selected {
 			lead = s.selMark.Render(bandMarkerGlyph) + strings.Repeat(" ", g-1)
 		}
-		lines = append(lines, lead+clipRow(s, width, row))
+		clipped := clipRow(s, width, row)
+		if start+i == selected {
+			shown, shownOK = clipped, true
+		}
+		lines = append(lines, lead+clipped)
 	}
 
 	if end < len(rows) {
 		lines = append(lines, blank+s.help.Render(fmt.Sprintf("↓ %d more", len(rows)-end)))
 	}
-	return strings.Join(selectBand(s, width, lines, band), "\n")
+
+	lines = selectBand(s, width, lines, band)
+	// After the band, never inside it: the detail is *about* the selected row, not
+	// part of it, and painting it with the same background would read as a second
+	// selected line. Appended unconditionally — an empty string is the reserved
+	// blank, which is the whole of the reserve-always rule.
+	lines = append(lines, blank+detailValue(s, width, detail, shown, shownOK))
+	return strings.Join(lines, "\n")
+}
+
+// detailValue is the detail line's content: the selected row's full value when
+// the row could not show it, and nothing when it could.
+//
+// **Whether it was elided is asked of the rendered row, not predicted.** The
+// alternative is for each screen to report what its column budget did, which
+// puts the answer a long way from the cut and gets it wrong the first time a
+// screen gains a column — and a detail line that disagrees with the row above it
+// is worse than none, since a value shown twice reads as two values. Testing the
+// drawn row catches every way the value can lose its tail: a column that fitted
+// itself, and clipRow cutting a row no budget anticipated.
+//
+// A row that is not on screen has nothing to be redundant with, so a selection
+// outside the window draws no detail rather than one about a row the user cannot
+// see — the same rule area 14's filter follows when it hides a selected row.
+func detailValue(s styles, width int, detail, shown string, shownOK bool) string {
+	if detail == "" || !shownOK || strings.Contains(ansi.Strip(shown), detail) {
+		return ""
+	}
+	if w := rowWidth(s, width); w > 0 {
+		detail = elide(detail, w)
+	}
+	return s.help.Render(detail)
 }
 
 // headerLines is what a list's fixed header really costs in terminal lines.

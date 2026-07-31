@@ -85,8 +85,8 @@ func TestListBodyMarksBothClippedEdges(t *testing.T) {
 	for i := range rows {
 		rows[i] = fmt.Sprintf("row-%03d", i)
 	}
-	// height 25 - 5 chrome - 1 header = 19 rows of budget.
-	body := listBody(newStyles(store.Prefs{}), 80, 25, []string{"header"}, rows, 50)
+	// height 25 - 5 chrome - 1 header - 1 detail = 18 rows of budget.
+	body := listBody(newStyles(store.Prefs{}), 80, 25, []string{"header"}, rows, 50, "row-050")
 
 	if !strings.Contains(body, "↑ ") || !strings.Contains(body, "↓ ") {
 		t.Errorf("a list clipped at both ends must say so; got:\n%s", body)
@@ -98,7 +98,7 @@ func TestListBodyMarksBothClippedEdges(t *testing.T) {
 		t.Errorf("rows outside the window were drawn; got:\n%s", body)
 	}
 	if got, want := strings.Count(body, "\n")+1, 20; got != want {
-		t.Errorf("body = %d lines, want %d (1 header + 19 budget)", got, want)
+		t.Errorf("body = %d lines, want %d (1 header + 18 budget + 1 detail)", got, want)
 	}
 }
 
@@ -106,11 +106,140 @@ func TestListBodyMarksBothClippedEdges(t *testing.T) {
 // band. Passing -1 must not be read as "row zero".
 func TestListBodyWithoutASelection(t *testing.T) {
 	rows := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
-	body := listBody(newStyles(store.Prefs{}), 80, 12, nil, rows, -1)
+	body := listBody(newStyles(store.Prefs{}), 80, 12, nil, rows, -1, "")
 
 	if !strings.Contains(body, "a") || strings.Contains(body, "h") {
 		t.Errorf("an unselected list should window from the top; got:\n%s", body)
 	}
+}
+
+// --- the detail line (roadmap area 20b) -------------------------------------
+
+// The floor the area exists for: a value no column could show is readable under
+// the list, whole. The row above it is cut; the line below it is not.
+func TestTheDetailLineCarriesAValueTheRowCouldNotShow(t *testing.T) {
+	s := newStyles(store.Prefs{})
+	const long = "main-connector/src/main/java/com/teamviewer/connector/logging/Log4j2Configurer.java"
+
+	rows := []string{fit(long, 40), fit("short.txt", 40)}
+	body := listBody(s, 110, 24, nil, rows, 0, long)
+
+	last := lastLine(body)
+	if !strings.Contains(last, long) {
+		t.Errorf("the detail line does not carry the value it exists for:\n%q", last)
+	}
+	if lipgloss.Width(rows[0]) >= lipgloss.Width(long) {
+		t.Fatal("the fixture row is not actually cut — the test asserts nothing")
+	}
+}
+
+// The redundancy rule: a row that already shows the value in full has nothing to
+// explain, and repeating it there would read as a second value rather than as
+// the same one.
+func TestTheDetailLineIsBlankWhenTheRowShowsTheValueWhole(t *testing.T) {
+	s := newStyles(store.Prefs{})
+
+	rows := []string{fit("feature/short", 40), fit("other", 40)}
+	if got := lastLine(listBody(s, 110, 24, nil, rows, 0, "feature/short")); strings.TrimSpace(got) != "" {
+		t.Errorf("a whole value was repeated under its own row: %q", got)
+	}
+}
+
+// **The reserve-always rule, which is the whole reason the line is unconditional.**
+// Drawing it only when there is something to say makes the panel grow and shrink
+// as the cursor moves between a cut row and a whole one — the defect listChrome's
+// own comment calls out for the status line, one line lower down.
+func TestTheDetailLineIsReservedWhetherOrNotItIsDrawn(t *testing.T) {
+	s := newStyles(store.Prefs{})
+	const long = "update/PSOT-22223/audit-workflow-migration-to-vscode-mvp3"
+
+	rows := []string{fit(long, 20), fit("brief", 20)}
+	cut := listBody(s, 110, 24, nil, rows, 0, long)
+	whole := listBody(s, 110, 24, nil, rows, 1, "brief")
+
+	if a, b := strings.Count(cut, "\n"), strings.Count(whole, "\n"); a != b {
+		t.Errorf("the panel changed height with the cursor: %d lines cut, %d whole", a+1, b+1)
+	}
+	if got := lastLine(whole); strings.TrimSpace(got) != "" {
+		t.Errorf("the reserved line should be blank here, got %q", got)
+	}
+}
+
+// A value too long even for the whole panel is elided by the package's one rule
+// rather than wrapping. One line was the budget; wrapping would spend a second
+// the frame never counted, which is how a header wrapping ran the wizard off the
+// top of the terminal in area 15.
+func TestTheDetailLineElidesRatherThanWrapping(t *testing.T) {
+	s := newStyles(store.Prefs{})
+	const width = 80
+	long := strings.Repeat("a/very-long-segment", 20)
+
+	body := listBody(s, width, 24, nil, []string{fit(long, 20)}, 0, long)
+	// Measured against the panel, not against a row: the line carries the
+	// selection gutter in front of it like the edge markers do, so its budget is
+	// the gutter plus what a row has — which is the panel exactly.
+	last := lastLine(body)
+	if w, cw := lipgloss.Width(last), contentWidth(s, width); w > cw {
+		t.Errorf("the detail line is %d wide, the panel is %d — it would wrap", w, cw)
+	}
+	if !strings.Contains(last, "…") {
+		t.Errorf("an over-long detail should say what it cut: %q", last)
+	}
+}
+
+// A list with no selection has no row the detail could be about, and a screen
+// whose values are literals has no value to report. Both still reserve the line.
+func TestTheDetailLineIsBlankWithoutASelectionOrAValue(t *testing.T) {
+	s := newStyles(store.Prefs{})
+	rows := []string{"alpha", "bravo"}
+
+	for _, tc := range []struct {
+		name     string
+		selected int
+		detail   string
+	}{
+		{"no selection", -1, "alpha"},
+		{"no value", 0, ""},
+	} {
+		body := listBody(s, 110, 24, nil, rows, tc.selected, tc.detail)
+		if got := lastLine(body); strings.TrimSpace(got) != "" {
+			t.Errorf("%s: want a blank reserved line, got %q", tc.name, got)
+		}
+		if got, want := strings.Count(body, "\n")+1, len(rows)+detailLines; got != want {
+			t.Errorf("%s: body = %d lines, want %d", tc.name, got, want)
+		}
+	}
+}
+
+// The capacity arithmetic: the detail line comes out of the same budget the rows
+// do, so a list that overflows draws one row fewer than it did before 20b rather
+// than one line more than the terminal holds.
+func TestTheDetailLineIsPaidForOutOfTheRowBudget(t *testing.T) {
+	s := newStyles(store.Prefs{})
+	const height = 25
+
+	rows := make([]string, 100)
+	for i := range rows {
+		rows[i] = fmt.Sprintf("row-%03d", i)
+	}
+	header := []string{"header"}
+
+	body := listBody(s, 80, height, header, rows, 50, "row-050")
+	got := strings.Count(body, "\n") + 1
+
+	want := len(header) + listCapacity(height, len(header)+detailLines) + detailLines
+	if got != want {
+		t.Errorf("body = %d lines, want %d", got, want)
+	}
+	if got > height-listChrome+len(header) {
+		t.Errorf("body = %d lines, more than the frame budgets at height %d", got, height)
+	}
+}
+
+// lastLine is the detail line: listBody always ends with it, drawn or blank.
+func lastLine(body string) string {
+	lines := strings.Split(body, "\n")
+	return lines[len(lines)-1]
 }
 
 // --- the wizard: the screen this area exists for ----------------------------
