@@ -173,6 +173,40 @@ if [[ "$WIZARD" == false ]]; then
   }
 }
 EOF
+
+  # The tool-written half. Without it the dashboard opens empty and none of the
+  # four branches above is reachable, so every case this script sets up goes
+  # unexercised — the pairing is deliberately never inferred from a branch name,
+  # so nothing seeds it implicitly. ABC-101 is the fan-out: one ticket, one
+  # branch per target.
+  cat > .git/drift/state.json <<'EOF'
+{
+  "tickets": [
+    {
+      "id": "ABC-101",
+      "title": "Fix the sync indicator",
+      "branches": [
+        { "branch": "ABC-101-main",   "targetKey": "main" },
+        { "branch": "ABC-101-r2perf", "targetKey": "r2perf" }
+      ]
+    },
+    {
+      "id": "ABC-202",
+      "title": "Tidy the settings pane",
+      "branches": [
+        { "branch": "ABC-202-main", "targetKey": "main" }
+      ]
+    },
+    {
+      "id": "ABC-303",
+      "title": "Bump the API client",
+      "branches": [
+        { "branch": "ABC-303-main", "targetKey": "main" }
+      ]
+    }
+  ]
+}
+EOF
 fi
 
 # --- the binary --------------------------------------------------------------
@@ -190,5 +224,6 @@ if [[ "$WIZARD" == true ]]; then
   echo "  unconfigured — the first-run wizard opens"
 else
   echo "  configured — targets main + r2perf, unmergeable globs for .uwe and .unity"
+  echo "  tracking   — ABC-101 (both targets), ABC-202, ABC-303"
 fi
 echo
