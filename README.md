@@ -1,6 +1,12 @@
 # drift
 
-A ticket-based git TUI.
+**A ticket-based git TUI — for when one ticket means one branch per long-lived main.**
+
+[![release](https://img.shields.io/github/v/release/Sknoww/drift?style=flat-square)](https://github.com/Sknoww/drift/releases)
+[![license](https://img.shields.io/github/license/Sknoww/drift?style=flat-square)](LICENSE)
+[![go](https://img.shields.io/github/go-mod/go-version/Sknoww/drift?style=flat-square)](go.mod)
+
+![drift](docs/demo.gif)
 
 Drift sits one layer above git and organizes work by **ticket** instead of by flat
 branch list. It's built for codebases with several long-lived "main" branches in
@@ -10,7 +16,13 @@ and neither do general-purpose git tools — which is exactly why they bury you.
 
 It also treats **unmergeable** files — Unity scenes, `.pbxproj`, Power BI workbooks,
 notebooks, low-code exports — as a first-class concept rather than a special case,
-and kills as much of the manual reconciliation dance as can be killed.
+and kills as much of the manual reconciliation dance as can be killed. Drift shows
+you which of them a merge will land on **before** you start, and gets out of the way
+of the reconciliation itself.
+
+**Drift is for you if:** you maintain two or more release/LTS/version branches at
+once · one ticket routinely becomes three branches you have to keep straight · your
+repo has files git cannot merge and every collision costs a manual redo.
 
 ## Install
 
