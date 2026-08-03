@@ -3,3 +3,6 @@
 
 # GoReleaser build output.
 /dist
+
+# Launch copy — local only, not for the public repo
+LAUNCH.md
