@@ -1,12 +1,19 @@
-# drift
+<div align="center">
+<pre>
+                          __     _ ______
+                     ____/ /____(_) __/ /_
+                    / __  / ___/ / /_/ __/
+                   / /_/ / /  / / __/ /_
+                   \__,_/_/  /_/_/  \__/
+--------------------------------------------------------------
+A ticket-based git TUI for repos with several long-lived mains
+</pre>
 
-**A ticket-based git TUI — for when one ticket means one branch per long-lived main.**
-
-[![release](https://img.shields.io/github/v/release/Sknoww/drift?style=flat-square)](https://github.com/Sknoww/drift/releases)
-[![license](https://img.shields.io/github/license/Sknoww/drift?style=flat-square)](LICENSE)
-[![go](https://img.shields.io/github/go-mod/go-version/Sknoww/drift?style=flat-square)](go.mod)
+[![Release](https://img.shields.io/github/v/release/Sknoww/drift?color=blue)](https://github.com/Sknoww/drift/releases) [![Go Reference](https://pkg.go.dev/badge/github.com/Sknoww/drift.svg)](https://pkg.go.dev/github.com/Sknoww/drift) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ![drift](docs/demo.gif)
+
+</div>
 
 Drift sits one layer above git and organizes work by **ticket** instead of by flat
 branch list. It's built for codebases with several long-lived "main" branches in
